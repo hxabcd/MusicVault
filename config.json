@@ -1,0 +1,24 @@
+{
+  "cookie": "",
+  "workspace": "./workspace",
+  "playlist_id": null,
+  "only_sync": false,
+  "only_process": false,
+  "force": false,
+  "include_translation": true,
+  "text_cleaning": {
+    "enabled": true
+  },
+  "workers": {
+    "download": null,
+    "process": null,
+    "ffmpeg_threads": null
+  },
+  "lyrics": {
+    "lossy_lrc_encodings": [
+      "gb2312",
+      "gb18030",
+      "utf-8-sig"
+    ]
+  }
+}
