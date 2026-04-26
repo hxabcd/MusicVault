@@ -7,7 +7,7 @@ from typing import Any
 from musicvault.core.options import RunOptions
 from musicvault.shared.utils import load_json, save_json
 
-DEFAULT_LOSSY_LRC_ENCODINGS = ("gb2312", "gb18030", "utf-8-sig")
+DEFAULT_LOSSY_LRC_ENCODINGS = ("gb18030", "utf-8-sig")
 
 
 @dataclass(slots=True)
@@ -20,7 +20,7 @@ class AppConfig:
     download_workers: int | None = None
     process_workers: int | None = None
     ffmpeg_threads: int | None = None
-    lossy_lrc_encodings: tuple[str, ...] = ("gb2312", "gb18030", "utf-8-sig")
+    lossy_lrc_encodings: tuple[str, ...] = ("gb18030", "utf-8-sig")
 
     @property
     def downloads_dir(self) -> Path:

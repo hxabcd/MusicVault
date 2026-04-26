@@ -10,7 +10,7 @@ from musicvault.adapters.processors.decryptor import Decryptor
 from musicvault.adapters.processors.lyrics import (
     build_lossless_lyrics,
     build_lossy_lyrics,
-    write_gb2312_lrc,
+    write_gb18030_lrc,
 )
 from musicvault.adapters.processors.metadata_writer import MetadataWriter
 from musicvault.adapters.processors.organizer import Organizer
@@ -151,7 +151,7 @@ class ProcessService:
 
         self.metadata.write(lossless_path, track_info, lyric_text=lossless_lyrics, is_lossless=True)
         self.metadata.write(lossy_path, track_info, lyric_text=None, is_lossless=False)
-        write_gb2312_lrc(lossy_path, lossy_lyrics, encodings=self.cfg.lossy_lrc_encodings)
+        write_gb18030_lrc(lossy_path, lossy_lyrics, encodings=self.cfg.lossy_lrc_encodings)
 
         if downloaded.is_ncm and decoded.exists():
             decoded.unlink()
