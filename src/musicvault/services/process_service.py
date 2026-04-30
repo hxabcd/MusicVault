@@ -88,18 +88,17 @@ class ProcessService:
 
     def _process_local(self, include_translation: bool, force: bool) -> None:
         raw_files = list(self._iter_downloads())
-        index_path = self.cfg.state_dir / "file_track_index.json"
-        file_index = load_json(index_path, {})
-        if raw_files and not isinstance(file_index, dict):
-            file_index = {}
-        if raw_files and not file_index:
+        processed = load_json(self.cfg.processed_state_file, {})
+        if raw_files and not isinstance(processed, dict):
+            processed = {}
+        if raw_files and not processed:
             output_warn(
-                f"下载目录有 {len(raw_files)} 个文件，但 file_track_index.json 为空，"
+                f"下载目录有 {len(raw_files)} 个文件，但 processed_files.json 为空，"
                 "无法匹配 track_id。请先执行 sync 建立索引。"
             )
         pending: list[tuple[Path, int]] = []
         for raw_file in raw_files:
-            track_id = self._guess_track_id(raw_file, index=file_index)
+            track_id = self._guess_track_id(raw_file, index=processed)
             if track_id is None:
                 logger.info("跳过文件：无法推断 track_id，文件=%s", raw_file.name)
                 continue
@@ -249,22 +248,54 @@ class ProcessService:
     def _guess_track_id(self, file_path: Path, index: Mapping[str, object] | None = None) -> int | None:
         index_map: Mapping[str, object]
         if index is None:
-            index_path = self.cfg.state_dir / "file_track_index.json"
+            index_path = self.cfg.processed_state_file
             loaded = load_json(index_path, {})
             index_map = loaded if isinstance(loaded, dict) else {}
         else:
             index_map = index
 
         rel = workspace_rel_path(file_path, self.cfg.workspace_path)
-        raw = index_map.get(rel)
-        if raw is None or not isinstance(raw, (int, str)):
-            return None
-        try:
-            return int(raw)
-        except (TypeError, ValueError):
-            return None
+        entry = index_map.get(rel)
+        if isinstance(entry, dict):
+            try:
+                return int(entry.get("track_id", 0))
+            except (TypeError, ValueError):
+                return None
+        # 兼容旧格式：value 直接是 track_id (int 或 str)
+        if isinstance(entry, (int, str)):
+            try:
+                return int(entry)
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    def _migrate_file_track_index(self) -> None:
+        """一次性迁移：将旧 file_track_index.json 的数据合并到 processed_files.json。"""
+        old_path = self.cfg.state_dir / "file_track_index.json"
+        if not old_path.exists():
+            return
+        old_index = load_json(old_path, {})
+        if not isinstance(old_index, dict):
+            old_path.unlink()
+            return
+
+        processed = load_json(self.cfg.processed_state_file, {})
+        if not isinstance(processed, dict):
+            processed = {}
+        for rel_path, track_id_raw in old_index.items():
+            if rel_path in processed:
+                entry = processed[rel_path]
+                if isinstance(entry, dict) and "track_id" not in entry:
+                    entry["track_id"] = track_id_raw
+            else:
+                processed[rel_path] = {"track_id": track_id_raw}
+
+        save_json(self.cfg.processed_state_file, processed)
+        old_path.unlink()
+        logger.info("已将 file_track_index.json 迁移到 processed_files.json，共 %s 条", len(old_index))
 
     def _load_processed_index(self) -> dict[str, dict[str, object]]:
+        self._migrate_file_track_index()
         loaded = load_json(self.cfg.processed_state_file, {})
         if not isinstance(loaded, dict):
             return {}
@@ -344,7 +375,11 @@ class ProcessService:
             }
             for ll, ly in link_targets
         ]
+        # 保留已存在的 track_id（由 sync 阶段写入）
+        existing = processed_index.get(rel)
+        track_id = existing.get("track_id") if isinstance(existing, dict) else None
         processed_index[rel] = {
+            "track_id": track_id,
             "source_mtime_ns": stat.st_mtime_ns,
             "source_size": stat.st_size,
             "lossless": workspace_rel_path(lossless_path, self.cfg.workspace_path),

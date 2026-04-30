@@ -257,31 +257,25 @@ def _cleanup_playlist_files(pid: int, cfg: Config) -> None:
                         value["links"] = filtered
                         processed[key] = value
 
+        # 提取被移除条目的 track_id，同步清理 synced_tracks.json
+        removed_track_ids: set[int] = set()
         for key in removed_source_keys:
+            entry = processed[key]
+            if isinstance(entry, dict):
+                try:
+                    removed_track_ids.add(int(entry.get("track_id", 0)))
+                except (TypeError, ValueError):
+                    pass
             del processed[key]
         save_json(cfg.processed_state_file, processed)
 
-        # 同步清理 file_track_index.json 与 synced_tracks.json
-        if removed_source_keys:
-            file_index = load_json(cfg.state_dir / "file_track_index.json", {})
-            removed_track_ids: set[int] = set()
-            if isinstance(file_index, dict):
-                for key in removed_source_keys:
-                    tid_raw = file_index.pop(key, None)
-                    if tid_raw is not None:
-                        try:
-                            removed_track_ids.add(int(tid_raw))
-                        except (TypeError, ValueError):
-                            pass
-                save_json(cfg.state_dir / "file_track_index.json", file_index)
-
-            if removed_track_ids:
-                synced = load_json(cfg.synced_state_file, {"ids": []})
-                if isinstance(synced, dict):
-                    existing = {int(x) for x in synced.get("ids", []) if isinstance(x, (int, str))}
-                    cleaned = existing - removed_track_ids
-                    if cleaned != existing:
-                        save_json(cfg.synced_state_file, {"ids": sorted(cleaned)})
+        if removed_track_ids:
+            synced = load_json(cfg.synced_state_file, {"ids": []})
+            if isinstance(synced, dict):
+                existing = {int(x) for x in synced.get("ids", []) if isinstance(x, (int, str))}
+                cleaned = existing - removed_track_ids
+                if cleaned != existing:
+                    save_json(cfg.synced_state_file, {"ids": sorted(cleaned)})
 
     if deleted_dirs:
         output_success(f"已删除 [bold]{dir_name}[/bold] 的音乐文件（{deleted_dirs} 个目录）")

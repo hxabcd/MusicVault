@@ -54,23 +54,23 @@ class SyncService:
 
     def _cleanup_stale_state(self) -> None:
         """清理源文件已不存在的过期索引条目，避免阻止重新下载"""
-        index_path = self.cfg.state_dir / "file_track_index.json"
-        file_index = load_json(index_path, {})
-        if not isinstance(file_index, dict) or not file_index:
+        processed = load_json(self.cfg.processed_state_file, {})
+        if not isinstance(processed, dict) or not processed:
             return
 
         stale_ids: set[int] = set()
-        for rel_path, track_id_raw in list(file_index.items()):
+        for rel_path, value in list(processed.items()):
             source_file = self.cfg.workspace_path / str(rel_path)
             if not source_file.exists():
-                try:
-                    stale_ids.add(int(track_id_raw))
-                except (TypeError, ValueError):
-                    pass
-                del file_index[rel_path]
+                if isinstance(value, dict):
+                    try:
+                        stale_ids.add(int(value.get("track_id", 0)))
+                    except (TypeError, ValueError):
+                        pass
+                del processed[rel_path]
 
         if stale_ids:
-            save_json(index_path, file_index)
+            save_json(self.cfg.processed_state_file, processed)
             state = load_json(self.cfg.synced_state_file, {"ids": []})
             if isinstance(state, dict):
                 existing = {int(x) for x in state.get("ids", []) if isinstance(x, (int, str))}
@@ -113,12 +113,14 @@ class SyncService:
         logger.info("下载准备完成：可下载=%s 跳过=%s", len(pending), skipped)
 
         downloaded = self._run_download_batch(pending, track_playlists)
-        index_path = self.cfg.state_dir / "file_track_index.json"
-        file_index = load_json(index_path, {})
+        processed_path = self.cfg.processed_state_file
+        processed = load_json(processed_path, {})
+        if not isinstance(processed, dict):
+            processed = {}
         for item in downloaded:
             rel = workspace_rel_path(Path(item.source_file), self.cfg.workspace_path)
-            file_index[rel] = item.track.id
-        save_json(index_path, file_index)
+            processed[rel] = {"track_id": item.track.id}
+        save_json(processed_path, processed)
         return downloaded
 
     def _run_download_batch(
@@ -170,13 +172,14 @@ class SyncService:
 
 def _save_partial_downloads(cfg: Config, results: list[DownloadedTrack]) -> None:
     """Save partially completed downloads to state files so the next run skips them."""
-    # file_track_index.json
-    index_path = cfg.state_dir / "file_track_index.json"
-    file_index = load_json(index_path, {})
+    processed_path = cfg.processed_state_file
+    processed = load_json(processed_path, {})
+    if not isinstance(processed, dict):
+        processed = {}
     for item in results:
         rel = workspace_rel_path(Path(item.source_file), cfg.workspace_path)
-        file_index[rel] = item.track.id
-    save_json(index_path, file_index)
+        processed[rel] = {"track_id": item.track.id}
+    save_json(processed_path, processed)
 
     # synced_tracks.json
     state = load_json(cfg.synced_state_file, {"ids": []})
