@@ -89,3 +89,4 @@ class DownloadedTrack:
     track: Track
     source_file: str
     is_ncm: bool
+    playlist_ids: list[int] = field(default_factory=list)

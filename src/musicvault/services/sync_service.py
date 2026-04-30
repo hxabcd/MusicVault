@@ -21,22 +21,41 @@ class SyncService:
         self.downloader = downloader
         self.workers = max(1, workers)
 
-    def run_sync(self, cookie: str, playlist_id: int | None = None) -> list[DownloadedTrack]:
+    def run_sync(self, cookie: str, playlist_ids: list[int]) -> list[DownloadedTrack]:
         user = self.api.login_with_cookie(cookie)
-        selected_playlist = playlist_id or self._resolve_favorites(user)
-        tracks = self.api.get_playlist_tracks(selected_playlist)
-        new_tracks = self._diff_tracks(tracks)
-        downloaded = self._sync_tracks(new_tracks)
+        target_ids = playlist_ids or self._resolve_liked_playlist(user)
+        logger.info("将同步 %s 个歌单", len(target_ids))
+
+        # 收集歌单元数据 + 建立 track → playlist_ids 映射
+        playlist_index = load_json(self.cfg.state_dir / "playlists.json", {})
+        track_playlists: dict[int, list[int]] = {}
+        all_tracks: dict[int, Track] = {}
+
+        for pid in target_ids:
+            info = self.api.get_playlist_info(pid)
+            playlist_index[str(pid)] = {"name": info["name"], "track_count": info["track_count"]}
+            tracks = self.api.get_playlist_tracks(pid)
+            for track in tracks:
+                all_tracks[track.id] = track
+                track_playlists.setdefault(track.id, []).append(pid)
+
+        save_json(self.cfg.state_dir / "playlists.json", playlist_index)
+
+        unique = list(all_tracks.values())
+        logger.info("歌单曲目合计：%s 首（去重后）", len(unique))
+
+        new_tracks = self._diff_tracks(unique)
+        downloaded = self._sync_tracks(new_tracks, track_playlists)
         self._mark_synced(downloaded)
         return downloaded
 
-    def _resolve_favorites(self, user: LoginResult) -> int:
+    def _resolve_liked_playlist(self, user: LoginResult) -> list[int]:
         playlists = self.api.list_user_playlists(user.user_id)
         for item in playlists:
             if item.get("specialType") == 5:
-                return int(item["id"])
+                return [int(item["id"])]
         if playlists:
-            return int(playlists[0]["id"])
+            return [int(playlists[0]["id"])]
         raise RuntimeError("当前账号无可用歌单")
 
     def _diff_tracks(self, tracks: list[Track]) -> list[Track]:
@@ -44,7 +63,9 @@ class SyncService:
         synced_ids = {int(x) for x in state.get("ids", [])}
         return [track for track in tracks if track.id not in synced_ids]
 
-    def _sync_tracks(self, tracks: list[Track]) -> list[DownloadedTrack]:
+    def _sync_tracks(
+        self, tracks: list[Track], track_playlists: dict[int, list[int]]
+    ) -> list[DownloadedTrack]:
         if not tracks:
             logger.info("同步阶段无新增曲目，跳过下载")
             return []
@@ -61,7 +82,7 @@ class SyncService:
             pending.append((track, url))
         logger.info("下载准备完成：可下载=%s 跳过=%s", len(pending), skipped)
 
-        downloaded = self._run_download_batch(pending)
+        downloaded = self._run_download_batch(pending, track_playlists)
         index_path = self.cfg.state_dir / "file_track_index.json"
         file_index = load_json(index_path, {})
         for item in downloaded:
@@ -70,7 +91,11 @@ class SyncService:
         save_json(index_path, file_index)
         return downloaded
 
-    def _run_download_batch(self, tasks: list[tuple[Track, str]]) -> list[DownloadedTrack]:
+    def _run_download_batch(
+        self,
+        tasks: list[tuple[Track, str]],
+        track_playlists: dict[int, list[int]],
+    ) -> list[DownloadedTrack]:
         if not tasks:
             logger.info("下载队列为空，无需执行")
             return []
@@ -87,7 +112,9 @@ class SyncService:
             for future in as_completed(future_map):
                 idx, track = future_map[future]
                 try:
-                    results.append(future.result())
+                    item = future.result()
+                    item.playlist_ids = track_playlists.get(track.id, [])
+                    results.append(item)
                     bp.advance(success=True, idx=idx, item_name=track.name)
                 except Exception as exc:
                     bp.advance(success=False, idx=idx, item_name=track.name)

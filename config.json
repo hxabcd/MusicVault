@@ -1,7 +1,7 @@
 {
   "cookie": "",
   "workspace": "./workspace",
-  "playlist_id": null,
+  "playlist_ids": [],
   "only_sync": false,
   "only_process": false,
   "force": false,

@@ -12,6 +12,7 @@ from musicvault.core.config import Config
 from musicvault.services.process_service import ProcessService
 from musicvault.services.sync_service import SyncService
 from musicvault.shared.tui_progress import console, ok
+from musicvault.shared.utils import load_json
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +52,13 @@ class RunService:
         only_sync = command == "sync"
         only_process = command == "process"
 
+        playlist_index: dict[str, dict[str, object]] = {}
         downloaded: list = []
         if not only_process:
-            downloaded = self.sync_service.run_sync(cookie=cookie, playlist_id=self.cfg.playlist_id)
+            downloaded = self.sync_service.run_sync(cookie=cookie, playlist_ids=self.cfg.playlist_ids)
             if downloaded:
                 ok(f"下载了 [bold]{len(downloaded)}[/bold] 首新曲目")
+            playlist_index = load_json(self.cfg.state_dir / "playlists.json", {})
 
         if not only_sync:
             console.print()
@@ -63,6 +66,7 @@ class RunService:
                 downloaded=downloaded,
                 include_translation=self.cfg.include_translation,
                 force=self.cfg.force,
+                playlist_index=playlist_index,
             )
 
         console.print()

@@ -90,6 +90,16 @@ class PyncmClient:
         resp = _retry_api(self.user_api.GetUserPlaylists, user_id)
         return resp.get("playlist") or (resp.get("data") or {}).get("playlist") or []
 
+    def get_playlist_info(self, playlist_id: int) -> dict[str, Any]:
+        """获取歌单基本信息（id/name/track_count）"""
+        resp = _retry_api(self.playlist_api.GetPlaylistInfo, playlist_id)
+        playlist = resp.get("playlist") or (resp.get("data") or {}).get("playlist") or {}
+        return {
+            "id": playlist.get("id", playlist_id),
+            "name": playlist.get("name", str(playlist_id)),
+            "track_count": playlist.get("trackCount", 0),
+        }
+
     def get_playlist_tracks(self, playlist_id: int) -> list[Track]:
         """获取歌单曲目并标准化为 Track 列表"""
         resp = _retry_api(self.playlist_api.GetPlaylistInfo, playlist_id)

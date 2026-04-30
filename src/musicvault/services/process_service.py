@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -18,9 +19,11 @@ from musicvault.adapters.providers.pyncm_client import PyncmClient
 from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
 from musicvault.shared.tui_progress import BatchProgress
-from musicvault.shared.utils import load_json, save_json
+from musicvault.shared.utils import load_json, safe_filename, save_json
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_PLAYLIST = "未分类"
 
 
 class ProcessService:
@@ -45,12 +48,29 @@ class ProcessService:
         downloaded: list[DownloadedTrack],
         include_translation: bool,
         force: bool,
+        playlist_index: dict[str, dict[str, object]] | None = None,
     ) -> None:
         if downloaded:
-            tasks = [(Path(item.source_file), item.track) for item in downloaded]
+            playlist_index = playlist_index or {}
+            tasks: list[tuple[Path, Track, list[str]]] = []
+            for item in downloaded:
+                names = self._resolve_playlist_names(item.playlist_ids, playlist_index)
+                tasks.append((Path(item.source_file), item.track, names))
             self._run_process_batch(tasks, "处理中", include_translation, force)
             return
         self._process_local(include_translation, force)
+
+    def _resolve_playlist_names(
+        self,
+        playlist_ids: list[int],
+        playlist_index: Mapping[str, Mapping[str, object]],
+    ) -> list[str]:
+        names: list[str] = []
+        for pid in playlist_ids:
+            entry = playlist_index.get(str(pid))
+            name = str(entry["name"]) if entry and entry.get("name") else str(pid)
+            names.append(safe_filename(name))
+        return names or [_DEFAULT_PLAYLIST]
 
     def _process_local(self, include_translation: bool, force: bool) -> None:
         raw_files = list(self._iter_downloads())
@@ -65,16 +85,16 @@ class ProcessService:
             pending.append((raw_file, track_id))
 
         detail_map = self.api.get_tracks_detail([track_id for _, track_id in pending])
-        tasks: list[tuple[Path, Track]] = []
+        tasks: list[tuple[Path, Track, list[str]]] = []
         for raw_file, track_id in pending:
             track_info = detail_map.get(track_id) or self._fallback_track(track_id, raw_file.stem)
-            tasks.append((raw_file, track_info))
+            tasks.append((raw_file, track_info, [_DEFAULT_PLAYLIST]))
 
         self._run_process_batch(tasks, "处理中", include_translation, force)
 
     def _run_process_batch(
         self,
-        tasks: list[tuple[Path, Track]],
+        tasks: list[tuple[Path, Track, list[str]]],
         stage_name: str,
         include_translation: bool,
         force: bool,
@@ -95,15 +115,18 @@ class ProcessService:
 
         with ThreadPoolExecutor(max_workers=workers) as pool, BatchProgress(total=total, phase=stage_name) as bp:
             future_map = {
-                pool.submit(self._process_file, raw_file, track_info, include_translation): (idx, raw_file)
-                for idx, (raw_file, track_info) in enumerate(pending, start=1)
+                pool.submit(self._process_file, raw_file, track_info, include_translation, playlist_names): (
+                    idx,
+                    raw_file,
+                )
+                for idx, (raw_file, track_info, playlist_names) in enumerate(pending, start=1)
             }
 
             for future in as_completed(future_map):
                 idx, raw_file = future_map[future]
                 try:
-                    lossless_path, lossy_path = future.result()
-                    self._mark_processed(raw_file, lossless_path, lossy_path, processed_index)
+                    primary_lossless, primary_lossy, link_targets = future.result()
+                    self._mark_processed(raw_file, primary_lossless, primary_lossy, link_targets, processed_index)
                     bp.advance(success=True, idx=idx, item_name=raw_file.name)
                 except Exception as exc:
                     bp.advance(success=False, idx=idx, item_name=raw_file.name)
@@ -118,7 +141,8 @@ class ProcessService:
         raw_file: Path,
         prefetched_track: Track | None = None,
         include_translation: bool = True,
-    ) -> tuple[Path, Path]:
+        playlist_names: list[str] | None = None,
+    ) -> tuple[Path, Path, list[tuple[Path, Path]]]:
         track_info = prefetched_track
         track_id = prefetched_track.id if prefetched_track else None
         if track_info is None:
@@ -135,21 +159,53 @@ class ProcessService:
             is_ncm=raw_file.suffix.lower() == ".ncm",
         )
         decoded = self.decryptor.decrypt_if_needed(downloaded, self.cfg.workspace / "decoded")
-        lossless_path, lossy_path = self.organizer.route_audio(
-            decoded, track_info, self.cfg.lossless_dir, self.cfg.lossy_dir
+
+        names = playlist_names or [_DEFAULT_PLAYLIST]
+        primary_name = names[0]
+
+        lossless_dir = self.cfg.lossless_dir / primary_name
+        lossy_dir = self.cfg.lossy_dir / primary_name
+
+        primary_lossless, primary_lossy = self.organizer.route_audio(
+            decoded, track_info, lossless_dir, lossy_dir
         )
+
+        # 为多歌单的共享曲目创建硬链接
+        link_targets: list[tuple[Path, Path]] = []
+        for name in names[1:]:
+            alt_lossless_dir = self.cfg.lossless_dir / name
+            alt_lossy_dir = self.cfg.lossy_dir / name
+            alt_lossless_dir.mkdir(parents=True, exist_ok=True)
+            alt_lossy_dir.mkdir(parents=True, exist_ok=True)
+
+            link_lossless = alt_lossless_dir / primary_lossless.name
+            link_lossy = alt_lossy_dir / primary_lossy.name
+            self._hardlink_or_copy(primary_lossless, link_lossless)
+            self._hardlink_or_copy(primary_lossy, link_lossy)
+            link_targets.append((link_lossless, link_lossy))
 
         lyrics = self.api.get_track_lyrics(track_id)
         lossless_lyrics = build_lossless_lyrics(lyrics, include_translation=include_translation)
         lossy_lyrics = build_lossy_lyrics(lyrics, include_translation=include_translation)
 
-        self.metadata.write(lossless_path, track_info, lyric_text=lossless_lyrics, is_lossless=True)
-        self.metadata.write(lossy_path, track_info, lyric_text=None, is_lossless=False)
-        write_gb18030_lrc(lossy_path, lossy_lyrics, encodings=self.cfg.lossy_lrc_encodings)
+        self.metadata.write(primary_lossless, track_info, lyric_text=lossless_lyrics, is_lossless=True)
+        self.metadata.write(primary_lossy, track_info, lyric_text=None, is_lossless=False)
+        write_gb18030_lrc(primary_lossy, lossy_lyrics, encodings=self.cfg.lossy_lrc_encodings)
 
         if downloaded.is_ncm and decoded.exists():
             decoded.unlink()
-        return lossless_path, lossy_path
+        return primary_lossless, primary_lossy, link_targets
+
+    @staticmethod
+    def _hardlink_or_copy(src: Path, dst: Path) -> None:
+        if dst.exists():
+            return
+        try:
+            os.link(src, dst)
+        except OSError:
+            import shutil
+
+            shutil.copy2(src, dst)
 
     def _iter_downloads(self) -> Iterable[Path]:
         allowed = {".ncm", ".flac", ".mp3", ".m4a", ".aac", ".wav"}
@@ -195,20 +251,20 @@ class ProcessService:
 
     def _filter_pending(
         self,
-        tasks: list[tuple[Path, Track]],
+        tasks: list[tuple[Path, Track, list[str]]],
         processed_index: Mapping[str, Mapping[str, object]],
         force: bool,
-    ) -> tuple[list[tuple[Path, Track]], int]:
+    ) -> tuple[list[tuple[Path, Track, list[str]]], int]:
         if force:
             return tasks, 0
-        pending: list[tuple[Path, Track]] = []
+        pending: list[tuple[Path, Track, list[str]]] = []
         skipped = 0
-        for raw_file, track in tasks:
+        for raw_file, track, playlist_names in tasks:
             if self._is_processed(raw_file, processed_index):
                 skipped += 1
                 logger.info("跳过已处理文件：%s", raw_file.name)
                 continue
-            pending.append((raw_file, track))
+            pending.append((raw_file, track, playlist_names))
         return pending, skipped
 
     def _is_processed(self, raw_file: Path, processed_index: Mapping[str, Mapping[str, object]]) -> bool:
@@ -235,6 +291,7 @@ class ProcessService:
         raw_file: Path,
         lossless_path: Path,
         lossy_path: Path,
+        link_targets: list[tuple[Path, Path]],
         processed_index: dict[str, dict[str, object]],
     ) -> None:
         try:
@@ -245,11 +302,17 @@ class ProcessService:
             rel = str(raw_file.resolve().relative_to(self.cfg.workspace_path))
         except ValueError:
             rel = str(raw_file.resolve())
+        links_data = [
+            {"lossless": str(ll.resolve().relative_to(self.cfg.workspace_path)),
+             "lossy": str(ly.resolve().relative_to(self.cfg.workspace_path))}
+            for ll, ly in link_targets
+        ]
         processed_index[rel] = {
             "source_mtime_ns": stat.st_mtime_ns,
             "source_size": stat.st_size,
             "lossless": str(lossless_path.resolve().relative_to(self.cfg.workspace_path)),
             "lossy": str(lossy_path.resolve().relative_to(self.cfg.workspace_path)),
+            "links": links_data,
             "updated_at": int(time.time()),
         }
 

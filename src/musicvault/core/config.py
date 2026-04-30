@@ -13,7 +13,7 @@ DEFAULT_LOSSY_LRC_ENCODINGS = ("gb18030", "utf-8-sig")
 class Config:
     cookie: str = ""
     workspace: str = "./workspace"
-    playlist_id: int | None = None
+    playlist_ids: list[int] = field(default_factory=list)
     force: bool = False
     include_translation: bool = True
     text_cleaning_enabled: bool = True
@@ -72,12 +72,21 @@ class Config:
         if not isinstance(raw, dict):
             raise RuntimeError("配置文件格式错误（需为 JSON 对象）")
 
-        playlist_id = raw.get("playlist_id")
-        if playlist_id is not None:
-            try:
-                playlist_id = int(playlist_id)
-            except (TypeError, ValueError):
-                raise RuntimeError(f"playlist_id 格式错误：{playlist_id}") from None
+        playlist_ids = raw.get("playlist_ids") or raw.get("playlist_id")
+        if playlist_ids is None:
+            playlist_ids = []
+        elif isinstance(playlist_ids, int):
+            playlist_ids = [playlist_ids]
+        elif isinstance(playlist_ids, list):
+            parsed: list[int] = []
+            for pid in playlist_ids:
+                try:
+                    parsed.append(int(pid))
+                except (TypeError, ValueError):
+                    raise RuntimeError(f"playlist_ids 格式错误：{pid}") from None
+            playlist_ids = parsed
+        else:
+            raise RuntimeError(f"playlist_ids 格式错误：{playlist_ids}")
 
         workers = raw.get("workers") or {}
         if not isinstance(workers, dict):
@@ -104,7 +113,7 @@ class Config:
         return cls(
             cookie=str(raw.get("cookie") or "").strip(),
             workspace=str(raw.get("workspace") or "./workspace"),
-            playlist_id=playlist_id,
+            playlist_ids=playlist_ids,
             force=bool(raw.get("force", False)),
             include_translation=bool(raw.get("include_translation", True)),
             text_cleaning_enabled=bool(text_cleaning.get("enabled", True)),
@@ -136,7 +145,7 @@ class Config:
         return {
             "cookie": self.cookie,
             "workspace": self.workspace,
-            "playlist_id": self.playlist_id,
+            "playlist_ids": self.playlist_ids,
             "force": self.force,
             "include_translation": self.include_translation,
             "text_cleaning": {"enabled": self.text_cleaning_enabled},

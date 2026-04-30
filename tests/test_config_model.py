@@ -24,7 +24,7 @@ def test_load_and_save_roundtrip() -> None:
                 {
                     "cookie": "abc",
                     "workspace": "./workspace2",
-                    "playlist_id": 123,
+                    "playlist_ids": [123, 456],
                     "force": True,
                     "include_translation": False,
                     "text_cleaning": {"enabled": False},
@@ -37,7 +37,7 @@ def test_load_and_save_roundtrip() -> None:
         cfg = Config.load(path)
         assert cfg.cookie == "abc"
         assert cfg.workspace == "./workspace2"
-        assert cfg.playlist_id == 123
+        assert cfg.playlist_ids == [123, 456]
         assert not cfg.include_translation
         assert not cfg.text_cleaning_enabled
         assert cfg.download_workers == 3
