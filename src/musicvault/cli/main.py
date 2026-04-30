@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import logging
 import os
 import re
 import shutil
 import sys
+import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from musicvault.core.config import Config
-from musicvault.shared.output import error as output_error, info as output_info, success as output_success
+from musicvault.shared.output import error as output_error
+from musicvault.shared.output import info as output_info
+from musicvault.shared.output import success as output_success
+from musicvault.shared.output import warn as output_warn
 from musicvault.shared.tui_progress import console
 
 _DEFAULT_CONFIG = os.environ.get("MUSIC_VAULT_CONFIG", "./config.json")
@@ -131,9 +136,29 @@ def main(argv: list[str] | None = None) -> int:
         output_info(f"配置文件不存在，已按默认值自动生成：{cfg_path}")
 
     cookie = args.cookie or cfg.cookie
-    if not cookie:
-        output_error("缺少 cookie：请通过 --cookie 或配置文件提供")
-        return 2
+    first_login = not cookie
+    if first_login:
+        console.print()
+        console.print("[bold]首次使用需要登录网易云音乐账号[/bold]")
+        cookie = _interactive_login()
+        if not cookie:
+            output_error("登录失败或已取消，无法继续")
+            return 2
+        cfg.cookie = cookie
+        cfg.save()
+        output_success("登录信息已保存")
+
+        if not cfg.playlist_ids:
+            console.print()
+            console.print("  [bold]下一步操作：[/bold]")
+            console.print("    选择要添加的歌单：[bold]msv add[/bold]")
+            console.print("    添加歌单：[bold]msv add <歌单ID或链接>[/bold]")
+            console.print("    开始同步：[bold]msv sync[/bold]")
+            console.print("    查看帮助：[bold]msv help[/bold]")
+            console.print()
+            console.print("  [dim]提示：歌单链接可从网易云音乐客户端分享获取[/dim]")
+            console.print("  [dim]　　　若未添加歌单，默认同步我喜欢的音乐[/dim]")
+            return 0
 
     workspace = getattr(args, "workspace", None)
     if workspace is not None:
@@ -157,9 +182,136 @@ def main(argv: list[str] | None = None) -> int:
         )
     except KeyboardInterrupt:
         console.print()
-        console.print("[yellow]已取消[/yellow]")
+        output_warn("已取消")
         return 130
     return 0
+
+
+def _render_qrcode(url: str) -> str:
+    """将链接渲染为终端二维码 ASCII 字符串"""
+    import io
+
+    import qrcode
+
+    qr = qrcode.QRCode()
+    qr.add_data(url)
+    qr.make()
+    buf = io.StringIO()
+    qr.print_ascii(out=buf)
+    return buf.getvalue()
+
+
+def _interactive_login() -> str | None:
+    """交互式登录，返回 cookie 字符串；用户取消则返回 None"""
+    from musicvault.adapters.providers.pyncm_client import PyncmClient
+
+    api = PyncmClient()
+    max_attempts = 3
+
+    for attempt in range(max_attempts):
+        console.print()
+        console.print("  选择登录方式：")
+        console.print("    [1] 二维码登录（推荐）")
+        console.print("    [2] 密码登录")
+        console.print("    [3] 验证码登录")
+        console.print("    [q] 退出")
+        console.print()
+
+        choice = input("  请输入选项 [1/2/3/q]：").strip()
+
+        if choice.lower() == "q":
+            return None
+
+        try:
+            # -- 二维码登录 -------------------------------------------------
+            if choice == "1":
+                unikey = api.get_qrcode_unikey()
+                url = api.get_qrcode_url(unikey)
+                console.print()
+                qr_art = _render_qrcode(url)
+                console.print(qr_art, end="")
+                console.print(f"  [dim]{url}[/dim]")
+                console.print()
+                console.print("  [bold]请打开网易云音乐 App，扫描上方二维码[/bold]")
+
+                with console.status("[dim]等待扫码...[/dim]", spinner="dots") as status:
+                    deadline = time.monotonic() + 120
+                    while time.monotonic() < deadline:
+                        code = api.check_qrcode(unikey)
+                        if code == 802:
+                            status.update("[dim]已扫码，请在手机上确认登录...[/dim]")
+                        elif code == 803:
+                            break
+                        elif code == 800:
+                            raise RuntimeError("二维码已过期，请重新获取")
+                        time.sleep(2)
+                    else:
+                        raise TimeoutError("二维码登录超时，请重试")
+
+                result = api.get_login_status()
+
+            # -- 手机号 + 密码 ----------------------------------------------
+            elif choice == "2":
+                phone = input("  手机号：").strip()
+                if not phone:
+                    output_warn("手机号不能为空")
+                    continue
+                password = getpass.getpass("  密码：")
+                if not password:
+                    output_warn("密码不能为空")
+                    continue
+                result = api.login_via_phone(phone=phone, password=password)
+
+            # -- 手机号 + 验证码 --------------------------------------------
+            elif choice == "3":
+                phone = input("  手机号：").strip()
+                if not phone:
+                    output_warn("手机号不能为空")
+                    continue
+                if not api.send_sms_code(phone=phone):
+                    output_warn("验证码发送失败，请检查手机号或稍后重试")
+                    continue
+                output_info("验证码已发送，请注意查收短信")
+                captcha = input("  验证码：").strip()
+                if not captcha:
+                    output_warn("验证码不能为空")
+                    continue
+                result = api.login_via_phone(phone=phone, captcha=captcha)
+
+            else:
+                output_warn("无效选项，请输入 1、2、3 或 q")
+                continue
+
+            cookie = api.extract_cookie()
+            if not cookie:
+                output_warn("登录成功但无法提取 Cookie，请尝试其他方式")
+                continue
+
+            console.print(f"\n  [green]✔[/green] 登录成功：[bold]{result.nickname}[/bold]")
+            output_info("Cookie 已保存到配置文件")
+            return cookie
+
+        except KeyboardInterrupt:
+            console.print()
+            return None
+        except Exception as exc:
+            remaining = max_attempts - attempt - 1
+            msg = str(exc)
+            # 常见安全拦截错误码提示
+            if "502" in msg:
+                output_warn("账号或密码错误")
+            elif "8821" in msg:
+                output_warn("需要行为验证码，密码/验证码登录可能已被安全策略限制")
+                output_info("建议使用二维码登录（更稳定）")
+            elif "8860" in msg:
+                output_warn("需要本人确认，该账号可能触发了风控检查")
+                output_info("建议使用二维码登录（更稳定）")
+            else:
+                output_error(f"登录失败：{exc}")
+            if remaining > 0:
+                output_info(f"剩余尝试次数：{remaining}")
+
+    return None
 
 
 def _parse_playlist_id(raw: str) -> int:
@@ -209,7 +361,7 @@ def _load_playlist_index(cfg: Config) -> dict[str, dict[str, object]]:
 
 def _cleanup_playlist_files(pid: int, cfg: Config) -> None:
     """删除歌单对应的音乐文件并清理相关状态。"""
-    from musicvault.shared.utils import load_json, save_json, safe_filename
+    from musicvault.shared.utils import load_json, safe_filename, save_json
 
     playlist_index = load_json(cfg.state_dir / "playlists.json", {})
     entry = playlist_index.get(str(pid), {})
@@ -288,7 +440,7 @@ def _handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
         try:
             pid = _parse_playlist_id(args.input)
         except RuntimeError as exc:
-            console.print(f"[red]{exc}[/red]")
+            output_error(str(exc))
             return 1
 
         if pid in cfg.playlist_ids:
@@ -296,7 +448,7 @@ def _handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
             entry = cached.get(str(pid), {})
             name = entry.get("name")
             label = f"{name} ({pid})" if name else str(pid)
-            console.print(f"[yellow]歌单 {label} 已存在，跳过添加[/yellow]")
+            output_warn(f"歌单 {label} 已存在，跳过添加")
             return 1
 
         cookie = getattr(args, "cookie", None) or cfg.cookie
@@ -304,9 +456,9 @@ def _handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
 
         if info is None:
             if not cookie:
-                console.print("[yellow]未提供 cookie，跳过 API 验证[/yellow]")
+                output_warn("未提供 cookie，跳过 API 验证")
             else:
-                console.print("[yellow]无法获取歌单信息，将仅保存 ID[/yellow]")
+                output_warn("无法获取歌单信息，将仅保存 ID")
 
         # 缓存歌单信息
         if info is not None:
@@ -323,18 +475,18 @@ def _handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
 
         name = info.get("name") if info else None
         if name:
-            console.print(f"[green]已添加歌单：[bold]{name}[/bold] (ID: {pid})[/green]")
+            output_success(f"已添加歌单：[bold]{name}[/bold] (ID: {pid})")
         else:
-            console.print(f"[green]已添加歌单：{pid}[/green]")
+            output_success(f"已添加歌单：{pid}")
 
     elif args.command == "remove":
         if args.playlist_id not in cfg.playlist_ids:
-            console.print(f"[yellow]歌单 {args.playlist_id} 不存在，无法移除[/yellow]")
+            output_warn(f"歌单 {args.playlist_id} 不存在，无法移除")
             return 1
         cfg.playlist_ids.remove(args.playlist_id)
         cfg.save()
         _cleanup_playlist_files(args.playlist_id, cfg)
-        console.print(f"[green]已移除歌单：{args.playlist_id}[/green]")
+        output_success(f"已移除歌单：{args.playlist_id}")
 
     elif args.command in ("list", "ls"):
         if cfg.playlist_ids:
@@ -348,7 +500,7 @@ def _handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
                 else:
                     console.print(f"  [cyan]{pid}[/cyan]")
         else:
-            console.print("[dim]尚未添加任何歌单（将使用喜欢音乐歌单）[/dim]")
+            output_info("尚未添加任何歌单（将使用我喜欢的音乐）")
     return 0
 
 

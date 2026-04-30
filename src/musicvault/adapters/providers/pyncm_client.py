@@ -53,6 +53,8 @@ class PyncmClient:
         self.track_api = track_api
         self.text_cleaning_enabled = text_cleaning_enabled
 
+    # -- 登录方式 -----------------------------------------------------------
+
     def login_with_cookie(self, cookie: str) -> LoginResult:
         """注入 Cookie 并读取当前登录态"""
         # pyncm 通过全局会话持有 cookie，直接注入可复用现有登录态。
@@ -69,6 +71,74 @@ class PyncmClient:
             key, value = item.split("=", 1)
             session.cookies.set(key.strip(), value.strip())
         return self.get_login_status()
+
+    def login_via_phone(
+        self, phone: str, password: str = "", captcha: str = "", ctcode: int = 86
+    ) -> LoginResult:
+        """手机号登录（密码或验证码二选一）"""
+        self.login_api.LoginViaCellphone(
+            phone=phone, password=password, captcha=captcha, ctcode=ctcode, remeberLogin=True
+        )
+        return self.get_login_status()
+
+    def login_via_email(self, email: str, password: str) -> LoginResult:
+        """邮箱登录"""
+        self.login_api.LoginViaEmail(email=email, password=password, remeberLogin=True)
+        return self.get_login_status()
+
+    def send_sms_code(self, phone: str, ctcode: int = 86) -> bool:
+        """发送短信验证码，返回是否发送成功"""
+        try:
+            self.login_api.SetSendRegisterVerifcationCodeViaCellphone(cell=phone, ctcode=ctcode)
+            return True
+        except Exception:
+            return False
+
+    def get_qrcode_unikey(self) -> str:
+        """获取二维码登录的 unikey"""
+        resp = self.login_api.LoginQrcodeUnikey()
+        unikey = resp.get("unikey") or resp.get("data", {}).get("unikey", "")
+        if not unikey:
+            raise RuntimeError(f"获取二维码令牌失败：{resp}")
+        return str(unikey)
+
+    def get_qrcode_url(self, unikey: str) -> str:
+        """根据 unikey 生成二维码扫描链接"""
+        return self.login_api.GetLoginQRCodeUrl(unikey)
+
+    def check_qrcode(self, unikey: str) -> int:
+        """检测二维码登录状态，返回状态码：801=等待扫码, 802=已扫码待确认, 803=登录成功, 800=已过期"""
+        resp = self.login_api.LoginQrcodeCheck(unikey)
+        return int(resp.get("code", 0))
+
+    def poll_qrcode(self, unikey: str, timeout: int = 120) -> LoginResult:
+        """轮询二维码登录直到成功或超时"""
+        import time as _time
+
+        deadline = _time.monotonic() + timeout
+        while _time.monotonic() < deadline:
+            code = self.check_qrcode(unikey)
+            if code == 803:
+                return self.get_login_status()
+            if code == 800:
+                raise RuntimeError("二维码已过期，请重新获取")
+            if code not in (801, 802):
+                _time.sleep(2)
+                continue
+            # 801 等待扫码 / 802 已扫码待确认：轮询
+            _time.sleep(2)
+        raise TimeoutError("二维码登录超时")
+
+    @staticmethod
+    def extract_cookie() -> str:
+        """从 pyncm 全局会话提取 Cookie 字符串，用于持久化到配置文件"""
+        session = pyncm.GetCurrentSession()
+        cookies = session.cookies.get_dict()
+        parts = []
+        for key in ("MUSIC_U", "__csrf"):
+            if key in cookies:
+                parts.append(f"{key}={cookies[key]}")
+        return "; ".join(parts)
 
     def get_login_status(self) -> LoginResult:
         """获取当前账号登录信息"""

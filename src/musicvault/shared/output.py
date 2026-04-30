@@ -3,11 +3,12 @@
 与 `logging` 明确分离：本模块所有函数面向终端用户，
 在一般模式和 verbose 模式下始终显示。
 
-用法::
+消息体支持 Rich markup::
 
     from musicvault.shared.output import success, error, warn, info
 
     success("下载完成")
+    success("已添加歌单：[bold]{name}[/bold]")
     error("缺少 cookie")
     warn("未检测到 ffmpeg")
     info("将同步 5 个歌单")
@@ -19,18 +20,18 @@ from musicvault.shared.tui_progress import console
 
 
 def success(msg: str) -> None:
-    """绿色 ✔ 前缀的成功消息。"""
-    console.print(f" [green]✔[/green] {msg}")
+    """绿色 ● 前缀的成功消息。"""
+    console.print(f" [green]●[/green] {msg}")
 
 
 def error(msg: str) -> None:
-    """红色 ✘ 前缀的错误消息。"""
-    console.print(f"[red]✘ {msg}[/red]")
+    """红色 ● 前缀的错误消息。"""
+    console.print(f"[red]●[/red] {msg}")
 
 
 def warn(msg: str) -> None:
     """黄色 ⚠ 前缀的警告消息。"""
-    console.print(f"[yellow]⚠ {msg}[/yellow]")
+    console.print(f"[yellow]⚠[/yellow] {msg}")
 
 
 def info(msg: str) -> None:

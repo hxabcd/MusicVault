@@ -47,6 +47,7 @@ class SyncService:
         unique = list(all_tracks.values())
         output_info(f"歌单曲目合计：{len(unique)} 首（去重后）")
 
+        self._prune_stale_tracks(all_tracks)
         new_tracks, synced_ids = self._diff_tracks(unique)
         downloaded = self._sync_tracks(new_tracks, track_playlists)
         self._mark_synced(downloaded, synced_ids)
@@ -94,6 +95,57 @@ class SyncService:
         synced_ids = {int(x) for x in state.get("ids", [])}
         new_tracks = [track for track in tracks if track.id not in synced_ids]
         return new_tracks, synced_ids
+
+    def _prune_stale_tracks(self, remote_tracks: dict[int, Track]) -> None:
+        """删除远端已不存在的本地曲目（以远端为准）。"""
+        state = load_json(self.cfg.synced_state_file, {"ids": []})
+        synced_ids = {int(x) for x in state.get("ids", [])}
+        stale_ids = synced_ids - set(remote_tracks.keys())
+        if not stale_ids:
+            return
+
+        processed = load_json(self.cfg.processed_state_file, {})
+        if not isinstance(processed, dict):
+            processed = {}
+        removed_count = 0
+
+        for stale_id in stale_ids:
+            for rel_path, value in list(processed.items()):
+                if not isinstance(value, dict):
+                    continue
+                if int(value.get("track_id", 0)) != stale_id:
+                    continue
+
+                for file_key in ("lossless", "lossy"):
+                    file_rel = str(value.get(file_key, ""))
+                    if file_rel:
+                        file_abs = self.cfg.workspace_path / file_rel
+                        try:
+                            file_abs.unlink(missing_ok=True)
+                        except OSError:
+                            pass
+                # 清理 links 中的关联文件（重复曲目）
+                for link in value.get("links", []) or []:
+                    if isinstance(link, dict):
+                        for file_key in ("lossless", "lossy"):
+                            file_rel = str(link.get(file_key, ""))
+                            if file_rel:
+                                file_abs = self.cfg.workspace_path / file_rel
+                                try:
+                                    file_abs.unlink(missing_ok=True)
+                                except OSError:
+                                    pass
+
+                del processed[rel_path]
+                removed_count += 1
+
+        if removed_count:
+            # 写入清理后的 processed_files
+            save_json(self.cfg.processed_state_file, processed)
+            # 写入清理后的 synced_tracks
+            cleaned = synced_ids - stale_ids
+            save_json(self.cfg.synced_state_file, {"ids": sorted(cleaned)})
+            output_info(f"清理远端已删除曲目：{removed_count} 首（{len(stale_ids)} 个 track_id）")
 
     def _sync_tracks(self, tracks: list[Track], track_playlists: dict[int, list[int]]) -> list[DownloadedTrack]:
         if not tracks:
