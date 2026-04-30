@@ -8,17 +8,21 @@ from __future__ import annotations
 
 import time
 from contextlib import contextmanager
+from datetime import timedelta
 from typing import Iterator
 
-from rich.console import Console
+from rich.console import Console, Group
+from rich.live import Live
 from rich.progress import (
-    BarColumn,
     Progress,
     SpinnerColumn,
     TextColumn,
-    TimeElapsedColumn,
 )
+from rich.progress_bar import ProgressBar
+from rich.spinner import Spinner
 from rich.style import Style
+from rich.table import Table
+from rich.text import Text
 
 # Use stderr so progress output doesn't interfere with stdout pipes / redirects.
 console = Console(stderr=True)
@@ -27,9 +31,10 @@ console = Console(stderr=True)
 class BatchProgress:
     """Live progress bar for batch operations (download, process, etc.).
 
-    Displays a real-time updating bar with spinner, percentage, item name,
-    failure count, and elapsed time.  When the batch finishes, the live bar
-    is removed and a compact summary line is printed — just like pnpm / uv.
+    Renders a two-line display: the current item name on top, and a
+    real-time progress bar (spinner + phase + bar + percentage + elapsed)
+    on the bottom.  When the batch finishes, the live display is removed
+    and a compact summary line is printed — just like pnpm / uv.
 
     Usage::
 
@@ -47,39 +52,32 @@ class BatchProgress:
         self.phase = phase
         self.done = 0
         self.failed = 0
-        self._start = time.perf_counter()
+        self._start = 0.0  # set on __enter__
 
-        self._progress = Progress(
-            SpinnerColumn("dots", style=Style(color="cyan")),
-            TextColumn("{task.description}"),
-            BarColumn(
-                bar_width=None,
-                style=Style(color="grey50", dim=True),
-                complete_style=Style(color="cyan"),
-                finished_style=Style(color="green"),
-            ),
-            TextColumn(
-                "[progress.percentage]{task.percentage:>3.0f}%",
-                style=Style(color="cyan", dim=True),
-            ),
-            TimeElapsedColumn(),
-            console=console,
-            transient=True,
-        )
-        self._task = self._progress.add_task(
-            f"[bold cyan]{phase}[/bold cyan]  [dim]0/{total}[/dim]\n[white]准备中...[/white]",
+        self._filename = "准备中..."
+        self._completed = 0
+
+        self._spinner = Spinner("dots", style=Style(color="cyan"))
+        self._bar = ProgressBar(
             total=total,
+            completed=0,
+            width=None,
+            style=Style(color="grey50", dim=True),
+            complete_style=Style(color="cyan"),
+            finished_style=Style(color="green"),
         )
+
+        self._live = Live(self._render(), console=console, transient=True)
 
     # ---- context manager interface -------------------------------------------
 
     def __enter__(self) -> BatchProgress:
-        self._progress.start()
+        self._start = time.perf_counter()
+        self._live.start()
         return self
 
     def __exit__(self, *exc_args: object) -> None:
-        self._progress.stop()
-        # Print a permanent summary after the transient bar is cleared.
+        self._live.stop()
         elapsed = time.perf_counter() - self._start
         _print_batch_summary(self.phase, self.done, self.failed, elapsed)
 
@@ -102,12 +100,39 @@ class BatchProgress:
         else:
             self.failed += 1
 
-        completed = self.done + self.failed
-        desc = f"[bold cyan]{self.phase}[/bold cyan]  [dim]{completed}/{self.total}[/dim]"
+        self._filename = item_name
+        self._completed = self.done + self.failed
+        self._bar.completed = self._completed
+        self._live.update(self._render())
+
+    # ---- render --------------------------------------------------------------
+
+    def _render(self) -> Group:
+        elapsed = time.perf_counter() - self._start
+        elapsed_delta = timedelta(seconds=int(elapsed))
+
+        # Line 1: current item name
+        top = Text(self._filename, style="white")
+
+        # Line 2: spinner + phase count + bar + percentage + elapsed
+        phase_text = Text.from_markup(
+            f"[bold cyan]{self.phase}[/bold cyan]  [dim]{self._completed}/{self.total}[/dim]"
+        )
         if self.failed:
-            desc += f"  [red]✗{self.failed}[/red]"
-        desc += f"\n[white]{item_name}[/white]"
-        self._progress.update(self._task, advance=1, description=desc)
+            phase_text.append(f"  ✗{self.failed}", style="red")
+
+        pct = Text(f"{self._bar.percentage_completed:>3.0f}%", style=Style(color="cyan", dim=True))
+        elapsed_text = Text(str(elapsed_delta), style="dim")
+
+        grid = Table.grid(padding=(0, 1))
+        grid.add_column()  # spinner
+        grid.add_column(no_wrap=True)  # phase
+        grid.add_column(ratio=1)  # bar — fills remaining width
+        grid.add_column()  # percentage
+        grid.add_column()  # elapsed
+        grid.add_row(self._spinner, phase_text, self._bar, pct, elapsed_text)
+
+        return Group(top, grid)
 
 
 # ── Single-operation spinner ──────────────────────────────────────────────────
