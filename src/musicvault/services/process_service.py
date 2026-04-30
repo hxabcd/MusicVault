@@ -73,6 +73,19 @@ class ProcessService:
             names.append(safe_filename(name))
         return names or [_DEFAULT_PLAYLIST]
 
+    def _build_track_playlists(self) -> dict[int, list[int]]:
+        """通过 API 获取所有配置歌单的 track_id -> [playlist_id] 映射。"""
+        mapping: dict[int, list[int]] = {}
+        for pid in self.cfg.playlist_ids:
+            try:
+                tracks = self.api.get_playlist_tracks(pid)
+            except Exception:
+                logger.info("获取歌单曲目失败 playlist_id=%s，跳过分类", pid)
+                continue
+            for track in tracks:
+                mapping.setdefault(track.id, []).append(pid)
+        return mapping
+
     def _process_local(self, include_translation: bool, force: bool) -> None:
         raw_files = list(self._iter_downloads())
         index_path = self.cfg.state_dir / "file_track_index.json"
@@ -92,11 +105,16 @@ class ProcessService:
                 continue
             pending.append((raw_file, track_id))
 
+        track_playlists = self._build_track_playlists()
+        playlist_index = load_json(self.cfg.state_dir / "playlists.json", {})
+
         detail_map = self.api.get_tracks_detail([track_id for _, track_id in pending])
         tasks: list[tuple[Path, Track, list[str]]] = []
         for raw_file, track_id in pending:
             track_info = detail_map.get(track_id) or self._fallback_track(track_id, raw_file.stem)
-            tasks.append((raw_file, track_info, [_DEFAULT_PLAYLIST]))
+            pids = track_playlists.get(track_id, [])
+            names = self._resolve_playlist_names(pids, playlist_index)
+            tasks.append((raw_file, track_info, names))
 
         self._run_process_batch(tasks, "处理中", include_translation, force)
 

@@ -78,6 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     rm_pl = sub.add_parser("remove", help="移除歌单 ID")
     rm_pl.add_argument("playlist_id", type=int, help="歌单 ID")
+    rm_pl.add_argument("--cookie", default=None, help="网易云 Cookie（用于同步）")
     rm_pl.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（也支持 MUSIC_VAULT_CONFIG 环境变量）")
     rm_pl.add_argument("-v", "--verbose", action="store_true", help="启用详细日志（DEBUG 级别）")
 
@@ -118,7 +119,10 @@ def main(argv: list[str] | None = None) -> int:
     _configure_logs(verbose=args.verbose)
 
     if args.command in ("add", "remove", "list", "ls"):
-        return _handle_playlist_mgmt(args, cfg)
+        result = _handle_playlist_mgmt(args, cfg)
+        if args.command in ("list", "ls") or result != 0:
+            return result
+        # add/remove 成功后继续执行 pipeline
 
     existed = cfg_path.exists()
     if existed:
@@ -131,11 +135,12 @@ def main(argv: list[str] | None = None) -> int:
         output_error("缺少 cookie：请通过 --cookie 或配置文件提供")
         return 2
 
-    if args.workspace is not None:
-        cfg.workspace = args.workspace
-    if args.force:
+    workspace = getattr(args, "workspace", None)
+    if workspace is not None:
+        cfg.workspace = workspace
+    if getattr(args, "force", False):
         cfg.force = True
-    if args.no_translation:
+    if getattr(args, "no_translation", False):
         cfg.include_translation = False
 
     from musicvault.adapters.providers.pyncm_client import PyncmClient
@@ -148,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         service.run_pipeline(
             cookie=cookie,
-            command=args.command,
+            command="sync",
         )
     except KeyboardInterrupt:
         console.print()
@@ -298,7 +303,7 @@ def _handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
             name = entry.get("name")
             label = f"{name} ({pid})" if name else str(pid)
             console.print(f"[yellow]歌单 {label} 已存在，跳过添加[/yellow]")
-            return 0
+            return 1
 
         cookie = getattr(args, "cookie", None) or cfg.cookie
         info = _fetch_playlist_info(pid, cookie)
@@ -331,11 +336,11 @@ def _handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
     elif args.command == "remove":
         if args.playlist_id not in cfg.playlist_ids:
             console.print(f"[yellow]歌单 {args.playlist_id} 不存在，无法移除[/yellow]")
-        else:
-            cfg.playlist_ids.remove(args.playlist_id)
-            cfg.save()
-            _cleanup_playlist_files(args.playlist_id, cfg)
-            console.print(f"[green]已移除歌单：{args.playlist_id}[/green]")
+            return 1
+        cfg.playlist_ids.remove(args.playlist_id)
+        cfg.save()
+        _cleanup_playlist_files(args.playlist_id, cfg)
+        console.print(f"[green]已移除歌单：{args.playlist_id}[/green]")
 
     elif args.command in ("list", "ls"):
         if cfg.playlist_ids:
