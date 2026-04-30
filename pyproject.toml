@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Sync and process NetEase Cloud Music library locally"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["pyncm>=1.7.1", "mutagen>=1.47.0", "ncmdump-py>=0.2.0"]
+dependencies = ["pyncm>=1.7.1", "mutagen>=1.47.0", "ncmdump-py>=0.2.0", "rich>=13.7.0"]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
@@ -22,3 +22,9 @@ where = ["src"]
 
 [tool.ruff]
 line-length = 120
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "ruff>=0.15.12",
+]

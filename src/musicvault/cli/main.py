@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from pathlib import Path
 
-from musicvault.core.config import FileConfig
+from musicvault.core.config import Config
 
 logger = logging.getLogger(__name__)
 
 
 def _silence_logs() -> None:
-    for name in ("pyncm", "urllib3.connectionpool"):
+    for name in ("pyncm", "urllib3.connectionpool", "App"):
         muted = logging.getLogger(name)
         muted.setLevel(logging.WARNING)
         muted.propagate = False
@@ -21,6 +22,7 @@ def _configure_logs() -> None:
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
         datefmt="%H:%M:%S",
+        stream=sys.stdout,
     )
     _silence_logs()
 
@@ -54,33 +56,37 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     cfg_path = Path(args.config).resolve()
     existed = cfg_path.exists()
-    file_cfg = FileConfig.load(cfg_path)
+    cfg = Config.load(cfg_path)
     if existed:
         logger.info("已加载配置文件：%s", cfg_path)
     else:
         logger.info("配置文件不存在，已按默认值自动生成：%s", cfg_path)
 
-    cookie = args.cookie or file_cfg.cookie
+    cookie = args.cookie or cfg.cookie
     if not cookie:
         logger.error("缺少 cookie：请通过 --cookie 或配置文件提供")
         return 2
 
-    app_cfg = file_cfg.to_app_config(workspace_override=args.workspace)
-    options = file_cfg.to_run_options(
-        command=args.command,
-        playlist_id_override=args.playlist_id,
-        no_translation=args.no_translation,
-        force_override=args.force,
-    )
+    if args.workspace is not None:
+        cfg.workspace = args.workspace
+    if args.playlist_id is not None:
+        cfg.playlist_id = args.playlist_id
+    if args.force:
+        cfg.force = True
+    if args.no_translation:
+        cfg.include_translation = False
 
     from musicvault.adapters.providers.pyncm_client import PyncmClient
     from musicvault.services.run_service import RunService
 
     service = RunService(
-        cfg=app_cfg,
-        api=PyncmClient(text_cleaning_enabled=app_cfg.text_cleaning_enabled),
+        cfg=cfg,
+        api=PyncmClient(text_cleaning_enabled=cfg.text_cleaning_enabled),
     )
-    service.run_pipeline(cookie=cookie, options=options)
+    service.run_pipeline(
+        cookie=cookie,
+        command=args.command,
+    )
     return 0
 
 

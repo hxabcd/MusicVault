@@ -22,4 +22,3 @@ class Decryptor:
         ncm_file = NeteaseCloudMusicFile(src)
         ncm_file.decrypt()
         return ncm_file.dump_music(output_dir / src.stem)
-

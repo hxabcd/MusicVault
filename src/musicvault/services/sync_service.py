@@ -1,21 +1,21 @@
 from __future__ import annotations
 
 import logging
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from musicvault.adapters.processors.downloader import Downloader
 from musicvault.adapters.providers.pyncm_client import LoginResult, PyncmClient
-from musicvault.core.config import AppConfig
+from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
+from musicvault.shared.tui_progress import BatchProgress
 from musicvault.shared.utils import load_json, save_json
 
 logger = logging.getLogger(__name__)
 
 
 class SyncService:
-    def __init__(self, cfg: AppConfig, api: PyncmClient, downloader: Downloader, workers: int) -> None:
+    def __init__(self, cfg: Config, api: PyncmClient, downloader: Downloader, workers: int) -> None:
         self.cfg = cfg
         self.api = api
         self.downloader = downloader
@@ -65,7 +65,8 @@ class SyncService:
         index_path = self.cfg.state_dir / "file_track_index.json"
         file_index = load_json(index_path, {})
         for item in downloaded:
-            file_index[str(Path(item.source_file).resolve())] = item.track.id
+            rel = Path(item.source_file).resolve().relative_to(self.cfg.workspace_path)
+            file_index[str(rel)] = item.track.id
         save_json(index_path, file_index)
         return downloaded
 
@@ -76,12 +77,9 @@ class SyncService:
 
         total = len(tasks)
         workers = min(self.workers, total)
-        done = 0
-        failed = 0
-        started = time.perf_counter()
         results: list[DownloadedTrack] = []
 
-        with ThreadPoolExecutor(max_workers=workers) as pool:
+        with ThreadPoolExecutor(max_workers=workers) as pool, BatchProgress(total=total, phase="下载中") as bp:
             future_map = {
                 pool.submit(self.downloader.download_track, track, url, self.cfg.downloads_dir): (idx, track)
                 for idx, (track, url) in enumerate(tasks, start=1)
@@ -90,14 +88,11 @@ class SyncService:
                 idx, track = future_map[future]
                 try:
                     results.append(future.result())
-                    done += 1
-                    logger.info("下载进度：%s/%s 完成 #%-3s %s", done + failed, total, idx, track.name)
+                    bp.advance(success=True, idx=idx, item_name=track.name)
                 except Exception as exc:
-                    failed += 1
-                    logger.error("下载失败：#%s %s，原因：%s", idx, track.name, exc)
+                    bp.advance(success=False, idx=idx, item_name=track.name)
+                    logger.error("下载失败：#%s %s，原因：%s", idx, track.name, exc, exc_info=True)
 
-        elapsed = time.perf_counter() - started
-        logger.info("下载队列结束：总数=%s 成功=%s 失败=%s 耗时=%.1fs", total, done, failed, elapsed)
         return results
 
     def _mark_synced(self, downloaded: list[DownloadedTrack]) -> None:

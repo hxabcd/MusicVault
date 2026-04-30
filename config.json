@@ -16,7 +16,6 @@
   },
   "lyrics": {
     "lossy_lrc_encodings": [
-      "gb2312",
       "gb18030",
       "utf-8-sig"
     ]

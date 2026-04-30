@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import shutil
 import subprocess
 from pathlib import Path
@@ -7,12 +8,19 @@ from pathlib import Path
 from musicvault.core.models import Track
 from musicvault.shared.utils import safe_filename
 
+logger = logging.getLogger(__name__)
+
+_FFMPEG_BITRATE = "192k"
+
 
 class Organizer:
     """音频文件分流与转码"""
 
     def __init__(self, ffmpeg_threads: int = 1) -> None:
         self.ffmpeg_threads = max(1, ffmpeg_threads)
+        self._ffmpeg_path = shutil.which("ffmpeg")
+        if self._ffmpeg_path is None:
+            logger.warning("未检测到 ffmpeg，转码功能将不可用")
 
     def route_audio(self, src: Path, track: Track, lossless_dir: Path, lossy_dir: Path) -> tuple[Path, Path]:
         """按规则生成 lossless 与 lossy 两份输出。"""
@@ -44,13 +52,11 @@ class Organizer:
         shutil.copy2(src, dst)
 
     def _transcode_to_mp3(self, src: Path, dst: Path) -> None:
-        # 1. 检查 ffmpeg 可用性并构造转码命令。
         dst.parent.mkdir(parents=True, exist_ok=True)
-        ffmpeg = shutil.which("ffmpeg")
-        if not ffmpeg:
+        if not self._ffmpeg_path:
             raise RuntimeError(f"转码失败：未找到 ffmpeg，文件={src.name}")
         cmd = [
-            ffmpeg,
+            self._ffmpeg_path,
             "-y",
             "-threads",
             str(self.ffmpeg_threads),
@@ -59,7 +65,7 @@ class Organizer:
             "-codec:a",
             "libmp3lame",
             "-b:a",
-            "192k",
+            _FFMPEG_BITRATE,
             str(dst),
         ]
 
@@ -78,4 +84,3 @@ class Organizer:
     def _is_lossless_suffix(suffix: str) -> bool:
         """判断扩展名是否属于无损音频。"""
         return suffix in {".flac", ".wav", ".ape"}
-

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -8,24 +9,20 @@ from urllib.request import urlopen
 from musicvault.core.models import DownloadedTrack, Track
 from musicvault.shared.utils import safe_filename
 
+_DOWNLOAD_TIMEOUT = 30
+_DOWNLOAD_CHUNK_SIZE = 1024 * 128
+_RETRIES = 3
+_RETRY_BACKOFF = (1.0, 3.0, 5.0)
+
 
 class Downloader:
-    """音频下载器"""
-
     def download_track(self, track: Track, url: str, output_dir: Path) -> DownloadedTrack:
-        """下载单曲并返回本地文件信息"""
-        # 1. 准备输出目录和标准化文件名。
         output_dir.mkdir(parents=True, exist_ok=True)
         stem = safe_filename(f"{track.artist_text} - {track.name}")
 
-        # 2. 建立下载连接并读取响应头用于格式判断。
-        try:
-            resp = urlopen(url, timeout=30)  # nosec B310 - controlled URL from music API
-            content_type = resp.headers.get("Content-Type", "")
-        except (HTTPError, URLError) as exc:
-            raise RuntimeError(f"下载失败，track_id={track.id}，原因：{exc}") from exc
+        resp = self._open_with_retry(url)
+        content_type = resp.headers.get("Content-Type", "")
 
-        # 先用响应头判断格式，再回退到 URL 后缀。
         guessed_ext = ".mp3"
         if "flac" in content_type:
             guessed_ext = ".flac"
@@ -36,12 +33,10 @@ class Downloader:
             if path_ext in {".ncm", ".flac", ".mp3", ".m4a"}:
                 guessed_ext = path_ext
 
-        # 3. 流式写入本地文件并返回下载结果模型。
         target = output_dir / f"{stem}{guessed_ext}"
-        # 流式写入，避免大文件一次性占用内存。
         with target.open("wb") as fp:
             while True:
-                chunk = resp.read(1024 * 128)
+                chunk = resp.read(_DOWNLOAD_CHUNK_SIZE)
                 if not chunk:
                     break
                 fp.write(chunk)
@@ -49,3 +44,19 @@ class Downloader:
         is_ncm = target.suffix.lower() == ".ncm"
         return DownloadedTrack(track=track, source_file=str(target), is_ncm=is_ncm)
 
+    @staticmethod
+    def _open_with_retry(url: str):
+        for attempt in range(_RETRIES):
+            if attempt > 0:
+                delay = _RETRY_BACKOFF[min(attempt, len(_RETRY_BACKOFF) - 1)]
+                time.sleep(delay)
+            try:
+                return urlopen(url, timeout=_DOWNLOAD_TIMEOUT)  # nosec B310
+            except HTTPError as exc:
+                if attempt == _RETRIES - 1:
+                    raise RuntimeError(f"下载失败（HTTP {exc.code}），无法恢复") from exc
+                if 400 <= exc.code < 500 and exc.code not in {408, 429}:
+                    raise RuntimeError(f"下载失败（HTTP {exc.code}），不重试") from exc
+            except (URLError, OSError, TimeoutError) as exc:
+                if attempt == _RETRIES - 1:
+                    raise RuntimeError(f"下载失败（网络错误），已重试 {_RETRIES} 次：{exc}") from exc

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
 
 INVALID_FILENAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1F]')
+
+logger = logging.getLogger(__name__)
 
 
 def safe_filename(name: str, fallback: str = "untitled") -> str:
@@ -22,7 +25,10 @@ def load_json(path: Path, default: Any) -> Any:
         return default
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError:
+        logger.warning("状态文件已损坏，将使用默认值：%s", path)
+        return default
+    except OSError:
         return default
 
 
@@ -33,4 +39,3 @@ def save_json(path: Path, value: Any) -> None:
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     tmp_path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp_path.replace(path)
-

@@ -15,8 +15,9 @@ from musicvault.adapters.processors.lyrics import (
 from musicvault.adapters.processors.metadata_writer import MetadataWriter
 from musicvault.adapters.processors.organizer import Organizer
 from musicvault.adapters.providers.pyncm_client import PyncmClient
-from musicvault.core.config import AppConfig
+from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
+from musicvault.shared.tui_progress import BatchProgress
 from musicvault.shared.utils import load_json, save_json
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 class ProcessService:
     def __init__(
         self,
-        cfg: AppConfig,
+        cfg: Config,
         api: PyncmClient,
         decryptor: Decryptor,
         organizer: Organizer,
@@ -47,7 +48,7 @@ class ProcessService:
     ) -> None:
         if downloaded:
             tasks = [(Path(item.source_file), item.track) for item in downloaded]
-            self._run_process_batch(tasks, "new", include_translation, force)
+            self._run_process_batch(tasks, "处理中", include_translation, force)
             return
         self._process_local(include_translation, force)
 
@@ -69,7 +70,7 @@ class ProcessService:
             track_info = detail_map.get(track_id) or self._fallback_track(track_id, raw_file.stem)
             tasks.append((raw_file, track_info))
 
-        self._run_process_batch(tasks, "local", include_translation, force)
+        self._run_process_batch(tasks, "处理中", include_translation, force)
 
     def _run_process_batch(
         self,
@@ -91,11 +92,8 @@ class ProcessService:
 
         total = len(pending)
         workers = min(self.workers, total)
-        done = 0
-        failed = 0
-        started = time.perf_counter()
 
-        with ThreadPoolExecutor(max_workers=workers) as pool:
+        with ThreadPoolExecutor(max_workers=workers) as pool, BatchProgress(total=total, phase=stage_name) as bp:
             future_map = {
                 pool.submit(self._process_file, raw_file, track_info, include_translation): (idx, raw_file)
                 for idx, (raw_file, track_info) in enumerate(pending, start=1)
@@ -105,19 +103,14 @@ class ProcessService:
                 idx, raw_file = future_map[future]
                 try:
                     lossless_path, lossy_path = future.result()
-                    done += 1
                     self._mark_processed(raw_file, lossless_path, lossy_path, processed_index)
-                    logger.info(
-                        "处理进度：阶段=%s %s/%s 完成 #%-3s %s", stage_name, done + failed, total, idx, raw_file.name
-                    )
+                    bp.advance(success=True, idx=idx, item_name=raw_file.name)
                 except Exception as exc:
-                    failed += 1
-                    logger.error("处理失败：阶段=%s #%s %s，原因：%s", stage_name, idx, raw_file.name, exc)
+                    bp.advance(success=False, idx=idx, item_name=raw_file.name)
+                    logger.error(
+                        "处理失败：阶段=%s #%s %s，原因：%s", stage_name, idx, raw_file.name, exc, exc_info=True
+                    )
 
-        elapsed = time.perf_counter() - started
-        logger.info(
-            "处理队列结束：阶段=%s 总数=%s 成功=%s 失败=%s 耗时=%.1fs", stage_name, total, done, failed, elapsed
-        )
         self._save_processed_index(processed_index)
 
     def _process_file(
@@ -134,7 +127,8 @@ class ProcessService:
                 raise RuntimeError(f"无法推断 track_id：{raw_file.name}")
             track_info = self._safe_track(track_id, raw_file.stem)
 
-        assert track_id is not None
+        if track_id is None:
+            raise RuntimeError(f"无法推断 track_id：{raw_file.name}")
         downloaded = DownloadedTrack(
             track=track_info,
             source_file=str(raw_file),
@@ -174,7 +168,11 @@ class ProcessService:
         else:
             index_map = index
 
-        raw = index_map.get(str(file_path.resolve()))
+        try:
+            rel = str(file_path.resolve().relative_to(self.cfg.workspace_path))
+        except ValueError:
+            rel = str(file_path.resolve())
+        raw = index_map.get(rel)
         if raw is None or not isinstance(raw, (int, str)):
             return None
         try:
@@ -214,7 +212,11 @@ class ProcessService:
         return pending, skipped
 
     def _is_processed(self, raw_file: Path, processed_index: Mapping[str, Mapping[str, object]]) -> bool:
-        record = processed_index.get(str(raw_file.resolve()))
+        try:
+            rel = str(raw_file.resolve().relative_to(self.cfg.workspace_path))
+        except ValueError:
+            rel = str(raw_file.resolve())
+        record = processed_index.get(rel)
         if not isinstance(record, Mapping) or not raw_file.exists():
             return False
         try:
@@ -239,11 +241,15 @@ class ProcessService:
             stat = raw_file.stat()
         except OSError:
             return
-        processed_index[str(raw_file.resolve())] = {
+        try:
+            rel = str(raw_file.resolve().relative_to(self.cfg.workspace_path))
+        except ValueError:
+            rel = str(raw_file.resolve())
+        processed_index[rel] = {
             "source_mtime_ns": stat.st_mtime_ns,
             "source_size": stat.st_size,
-            "lossless": str(lossless_path.resolve()),
-            "lossy": str(lossy_path.resolve()),
+            "lossless": str(lossless_path.resolve().relative_to(self.cfg.workspace_path)),
+            "lossy": str(lossy_path.resolve().relative_to(self.cfg.workspace_path)),
             "updated_at": int(time.time()),
         }
 

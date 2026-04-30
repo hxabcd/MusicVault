@@ -10,7 +10,7 @@ from urllib.request import Request, urlopen
 
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import ID3
-from mutagen.id3._frames import (
+from mutagen.id3 import (
     APIC,
     COMM,
     TALB,
@@ -28,6 +28,9 @@ from mutagen.id3._frames import (
 from mutagen.mp3 import MP3
 
 from musicvault.core.models import Track
+
+
+_COVER_FETCH_TIMEOUT = 15
 
 
 class MetadataWriter:
@@ -82,7 +85,7 @@ class MetadataWriter:
                 time.sleep(sleep_seconds)
             req = Request(url, headers=headers, method="GET")
             try:
-                with urlopen(req, timeout=15) as resp:  # nosec B310 - trusted metadata URL
+                with urlopen(req, timeout=_COVER_FETCH_TIMEOUT) as resp:  # nosec B310 - trusted metadata URL
                     return resp.read()
             except HTTPError as exc:
                 if 400 <= exc.code < 500 and exc.code not in {408, 429}:
@@ -321,4 +324,3 @@ class MetadataWriter:
         if track.aliases:
             return "/".join(alias for alias in track.aliases if alias)
         return None
-

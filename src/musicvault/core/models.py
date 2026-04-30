@@ -51,6 +51,7 @@ class Track:
     @classmethod
     def from_ncm_payload(cls, payload: dict[str, Any], *, clean_text: bool = True) -> "Track":
         """从网易云接口数据构建 Track"""
+
         # 兼容网易云接口常见字段：ar/al 与 artists/album。
         def clean(value: str) -> str:
             return cls._clean_metadata_text(value) if clean_text else value
@@ -88,4 +89,3 @@ class DownloadedTrack:
     track: Track
     source_file: str
     is_ncm: bool
-
