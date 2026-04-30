@@ -49,7 +49,7 @@ class RunService:
     def run_pipeline(self, cookie: str, command: str) -> None:
         self.cfg.ensure_dirs()
 
-        only_sync = command == "sync"
+        only_pull = command == "pull"
         only_process = command == "process"
 
         playlist_index: dict[str, dict[str, object]] = {}
@@ -60,7 +60,7 @@ class RunService:
                 ok(f"下载了 [bold]{len(downloaded)}[/bold] 首新曲目")
             playlist_index = load_json(self.cfg.state_dir / "playlists.json", {})
 
-        if not only_sync:
+        if not only_pull:
             console.print()
             self.process_service.run_process(
                 downloaded=downloaded,

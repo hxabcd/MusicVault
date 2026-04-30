@@ -39,16 +39,24 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="MusicVault 命令行工具")
-    sub = parser.add_subparsers(dest="command", required=True)
+    parser = argparse.ArgumentParser(
+        description="MusicVault — 网易云音乐本地同步工具",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="文档 & 问题反馈: https://github.com/user/musicvault",
+    )
+    sub = parser.add_subparsers(dest="command")
 
-    run = sub.add_parser("run", help="执行同步和后处理")
-    _add_common_args(run)
+    # 帮助子命令：musicvault help [subcommand]
+    help_parser = sub.add_parser("help", help="显示帮助信息")
+    help_parser.add_argument("subcommand", nargs="?", default=None, help="要查看的子命令名称")
 
-    sync = sub.add_parser("sync", help="仅执行同步下载")
+    sync = sub.add_parser("sync", help="完整同步：拉取 + 处理")
     _add_common_args(sync)
 
-    process = sub.add_parser("process", help="仅执行本地后处理")
+    pull = sub.add_parser("pull", help="仅拉取下载")
+    _add_common_args(pull)
+
+    process = sub.add_parser("process", help="仅本地后处理")
     _add_common_args(process)
 
     add_pl = sub.add_parser("add", help="添加歌单（支持 ID 或网易云链接）")
@@ -62,7 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     ls_pl = sub.add_parser("list", help="查看已添加的歌单")
     ls_pl.add_argument("--config", default="./config.json", help="配置文件路径（JSON）")
 
-    sub.add_parser("ls", help="查看已添加的歌单（list 别名）").add_argument(
+    sub.add_parser("ls", help="list 别名").add_argument(
         "--config", default="./config.json", help="配置文件路径（JSON）"
     )
 
@@ -70,7 +78,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    raw_args = argv if argv is not None else sys.argv[1:]
+
+    # 如果无参数或 help 子命令，打印帮助
+    if not raw_args:
+        parser.print_help()
+        return 0
+
+    args = parser.parse_args(raw_args)
+
+    if args.command == "help":
+        if args.subcommand:
+            parser.parse_args([args.subcommand, "--help"])
+        else:
+            parser.print_help()
+        return 0
+
     cfg_path = Path(args.config).resolve()
     cfg = Config.load(cfg_path)
 
@@ -123,7 +147,6 @@ def _parse_playlist_id(raw: str) -> int:
         ids = qs.get("id", [])
         if ids and ids[0].isdigit():
             return int(ids[0])
-        # 处理 hash 路由: /#/playlist?id=xxx
         fragment = parsed.fragment
         if fragment:
             m = re.search(r"[?&]id=(\d+)", fragment)
