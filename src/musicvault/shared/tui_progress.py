@@ -67,7 +67,7 @@ class BatchProgress:
             transient=True,
         )
         self._task = self._progress.add_task(
-            f"[white]准备中...[/white]\n[bold cyan]{phase}[/bold cyan]  [dim]0/{total}[/dim]",
+            f"[bold cyan]{phase}[/bold cyan]  [dim]0/{total}[/dim]\n[white]准备中...[/white]",
             total=total,
         )
 
@@ -103,9 +103,10 @@ class BatchProgress:
             self.failed += 1
 
         completed = self.done + self.failed
-        desc = f"[white]{item_name}[/white]\n[bold cyan]{self.phase}[/bold cyan]  [dim]{completed}/{self.total}[/dim]"
+        desc = f"[bold cyan]{self.phase}[/bold cyan]  [dim]{completed}/{self.total}[/dim]"
         if self.failed:
             desc += f"  [red]✗{self.failed}[/red]"
+        desc += f"\n[white]{item_name}[/white]"
         self._progress.update(self._task, advance=1, description=desc)
 
 
