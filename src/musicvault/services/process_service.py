@@ -166,7 +166,7 @@ class ProcessService:
             source_file=str(raw_file),
             is_ncm=raw_file.suffix.lower() == ".ncm",
         )
-        decoded = self.decryptor.decrypt_if_needed(downloaded, self.cfg.workspace / "decoded")
+        decoded = self.decryptor.decrypt_if_needed(downloaded, self.cfg.workspace_path / "decoded")
 
         names = playlist_names or [_DEFAULT_PLAYLIST]
         primary_name = names[0]

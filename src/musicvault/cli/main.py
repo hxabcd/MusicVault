@@ -23,9 +23,9 @@ def _silence_logs() -> None:
         muted.propagate = False
 
 
-def _configure_logs() -> None:
+def _configure_logs(verbose: bool = False) -> None:
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
         datefmt="%H:%M:%S",
         stream=sys.stderr,
@@ -39,6 +39,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workspace", default=None, help="工作目录")
     parser.add_argument("--force", action="store_true", help="强制重处理已处理文件（覆盖 processed 索引）")
     parser.add_argument("--no-translation", action="store_true", help="关闭网易云歌词翻译合并（默认开启）")
+    parser.add_argument("-v", "--verbose", action="store_true", help="启用详细日志（DEBUG 级别）")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -105,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in ("add", "remove", "list", "ls"):
         return _handle_playlist_mgmt(args, cfg)
 
-    _configure_logs()
+    _configure_logs(verbose=args.verbose)
 
     existed = cfg_path.exists()
     if existed:
