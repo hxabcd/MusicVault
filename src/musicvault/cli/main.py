@@ -4,12 +4,13 @@ import argparse
 import logging
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from musicvault.core.config import Config
-from musicvault.shared.output import error as output_error, info as output_info
+from musicvault.shared.output import error as output_error, info as output_info, success as output_success
 from musicvault.shared.tui_progress import console
 
 _DEFAULT_CONFIG = os.environ.get("MUSIC_VAULT_CONFIG", "./config.json")
@@ -201,6 +202,88 @@ def _load_playlist_index(cfg: Config) -> dict[str, dict[str, object]]:
     return {}
 
 
+def _cleanup_playlist_files(pid: int, cfg: Config) -> None:
+    """删除歌单对应的音乐文件并清理相关状态。"""
+    from musicvault.shared.utils import load_json, save_json, safe_filename
+
+    playlist_index = load_json(cfg.state_dir / "playlists.json", {})
+    entry = playlist_index.get(str(pid), {})
+    name = entry.get("name")
+    dir_name = safe_filename(str(name)) if name else safe_filename(str(pid))
+
+    # 删除 library 子目录
+    deleted_dirs = 0
+    for parent in (cfg.lossless_dir, cfg.lossy_dir):
+        target = parent / dir_name
+        if target.is_dir():
+            shutil.rmtree(target)
+            deleted_dirs += 1
+
+    # 从 playlists.json 移除
+    if str(pid) in playlist_index:
+        del playlist_index[str(pid)]
+        save_json(cfg.state_dir / "playlists.json", playlist_index)
+
+    # 清理 processed_files.json
+    prefix_ll = f"library/lossless/{dir_name}/"
+    prefix_ly = f"library/lossy/{dir_name}/"
+
+    processed = load_json(cfg.processed_state_file, {})
+    if isinstance(processed, dict) and processed:
+        removed_source_keys: list[str] = []
+        for key, value in list(processed.items()):
+            if not isinstance(value, dict):
+                continue
+            ll = str(value.get("lossless", ""))
+            ly = str(value.get("lossy", ""))
+            if ll.startswith(prefix_ll) or ly.startswith(prefix_ly):
+                removed_source_keys.append(key)
+            else:
+                links = value.get("links")
+                if isinstance(links, list):
+                    filtered = [
+                        lnk
+                        for lnk in links
+                        if isinstance(lnk, dict)
+                        and not str(lnk.get("lossless", "")).startswith(prefix_ll)
+                        and not str(lnk.get("lossy", "")).startswith(prefix_ly)
+                    ]
+                    if len(filtered) != len(links):
+                        value["links"] = filtered
+                        processed[key] = value
+
+        for key in removed_source_keys:
+            del processed[key]
+        save_json(cfg.processed_state_file, processed)
+
+        # 同步清理 file_track_index.json 与 synced_tracks.json
+        if removed_source_keys:
+            file_index = load_json(cfg.state_dir / "file_track_index.json", {})
+            removed_track_ids: set[int] = set()
+            if isinstance(file_index, dict):
+                for key in removed_source_keys:
+                    tid_raw = file_index.pop(key, None)
+                    if tid_raw is not None:
+                        try:
+                            removed_track_ids.add(int(tid_raw))
+                        except (TypeError, ValueError):
+                            pass
+                save_json(cfg.state_dir / "file_track_index.json", file_index)
+
+            if removed_track_ids:
+                synced = load_json(cfg.synced_state_file, {"ids": []})
+                if isinstance(synced, dict):
+                    existing = {int(x) for x in synced.get("ids", []) if isinstance(x, (int, str))}
+                    cleaned = existing - removed_track_ids
+                    if cleaned != existing:
+                        save_json(cfg.synced_state_file, {"ids": sorted(cleaned)})
+
+    if deleted_dirs:
+        output_success(f"已删除 [bold]{dir_name}[/bold] 的音乐文件（{deleted_dirs} 个目录）")
+    elif name:
+        output_info(f"未找到 {dir_name} 的音乐目录，已跳过文件删除")
+
+
 def _handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
     if args.command == "add":
         try:
@@ -251,6 +334,7 @@ def _handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
         else:
             cfg.playlist_ids.remove(args.playlist_id)
             cfg.save()
+            _cleanup_playlist_files(args.playlist_id, cfg)
             console.print(f"[green]已移除歌单：{args.playlist_id}[/green]")
 
     elif args.command in ("list", "ls"):
