@@ -19,7 +19,7 @@ from musicvault.adapters.providers.pyncm_client import PyncmClient
 from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
 from musicvault.shared.tui_progress import BatchProgress
-from musicvault.shared.utils import load_json, safe_filename, save_json
+from musicvault.shared.utils import load_json, safe_filename, save_json, workspace_rel_path
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,14 @@ class ProcessService:
         raw_files = list(self._iter_downloads())
         index_path = self.cfg.state_dir / "file_track_index.json"
         file_index = load_json(index_path, {})
+        if raw_files and not isinstance(file_index, dict):
+            file_index = {}
+        if raw_files and not file_index:
+            logger.warning(
+                "下载目录有 %s 个文件，但 file_track_index.json 为空，无法匹配 track_id。"
+                "请先执行 sync 建立索引。",
+                len(raw_files),
+            )
         pending: list[tuple[Path, int]] = []
         for raw_file in raw_files:
             track_id = self._guess_track_id(raw_file, index=file_index)
@@ -224,10 +232,7 @@ class ProcessService:
         else:
             index_map = index
 
-        try:
-            rel = str(file_path.resolve().relative_to(self.cfg.workspace_path))
-        except ValueError:
-            rel = str(file_path.resolve())
+        rel = workspace_rel_path(file_path, self.cfg.workspace_path)
         raw = index_map.get(rel)
         if raw is None or not isinstance(raw, (int, str)):
             return None
@@ -241,9 +246,22 @@ class ProcessService:
         if not isinstance(loaded, dict):
             return {}
         normalized: dict[str, dict[str, object]] = {}
+        stale_keys: list[str] = []
         for key, value in loaded.items():
-            if isinstance(key, str) and isinstance(value, dict):
-                normalized[key] = dict(value)
+            if not isinstance(key, str) or not isinstance(value, dict):
+                continue
+            lossless_rel = value.get("lossless")
+            lossy_rel = value.get("lossy")
+            ll_exists = isinstance(lossless_rel, str) and (self.cfg.workspace_path / lossless_rel).exists()
+            ly_exists = isinstance(lossy_rel, str) and (self.cfg.workspace_path / lossy_rel).exists()
+            source_exists = (self.cfg.workspace_path / key).exists()
+            if not ll_exists and not ly_exists and not source_exists:
+                stale_keys.append(key)
+                continue
+            normalized[key] = dict(value)
+        if stale_keys:
+            save_json(self.cfg.processed_state_file, normalized)
+            logger.info("清理过期处理记录：%s 条（输出及源文件均已不存在）", len(stale_keys))
         return normalized
 
     def _save_processed_index(self, index: dict[str, dict[str, object]]) -> None:
@@ -268,10 +286,7 @@ class ProcessService:
         return pending, skipped
 
     def _is_processed(self, raw_file: Path, processed_index: Mapping[str, Mapping[str, object]]) -> bool:
-        try:
-            rel = str(raw_file.resolve().relative_to(self.cfg.workspace_path))
-        except ValueError:
-            rel = str(raw_file.resolve())
+        rel = workspace_rel_path(raw_file, self.cfg.workspace_path)
         record = processed_index.get(rel)
         if not isinstance(record, Mapping) or not raw_file.exists():
             return False
@@ -298,20 +313,17 @@ class ProcessService:
             stat = raw_file.stat()
         except OSError:
             return
-        try:
-            rel = str(raw_file.resolve().relative_to(self.cfg.workspace_path))
-        except ValueError:
-            rel = str(raw_file.resolve())
+        rel = workspace_rel_path(raw_file, self.cfg.workspace_path)
         links_data = [
-            {"lossless": str(ll.resolve().relative_to(self.cfg.workspace_path)),
-             "lossy": str(ly.resolve().relative_to(self.cfg.workspace_path))}
+            {"lossless": workspace_rel_path(ll, self.cfg.workspace_path),
+             "lossy": workspace_rel_path(ly, self.cfg.workspace_path)}
             for ll, ly in link_targets
         ]
         processed_index[rel] = {
             "source_mtime_ns": stat.st_mtime_ns,
             "source_size": stat.st_size,
-            "lossless": str(lossless_path.resolve().relative_to(self.cfg.workspace_path)),
-            "lossy": str(lossy_path.resolve().relative_to(self.cfg.workspace_path)),
+            "lossless": workspace_rel_path(lossless_path, self.cfg.workspace_path),
+            "lossy": workspace_rel_path(lossy_path, self.cfg.workspace_path),
             "links": links_data,
             "updated_at": int(time.time()),
         }

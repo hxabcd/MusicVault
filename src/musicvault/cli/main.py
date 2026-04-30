@@ -244,7 +244,7 @@ def _handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
                 entry = cached.get(str(pid), {})
                 name = entry.get("name")
                 if name:
-                    console.print(f"  [cyan]{name}[/cyan]\t[dim]{pid}[/dim]")
+                    console.print(f"  [cyan]{pid}[/cyan]\t[dim]{name}[/dim]")
                 else:
                     console.print(f"  [cyan]{pid}[/cyan]")
         else:

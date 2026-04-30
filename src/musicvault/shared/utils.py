@@ -18,6 +18,15 @@ def safe_filename(name: str, fallback: str = "untitled") -> str:
     return clean or fallback
 
 
+def workspace_rel_path(path: Path, workspace: Path) -> str:
+    """将绝对路径转为 workspace 下的相对路径；跨盘符时回退为绝对路径字符串"""
+    resolved = path.resolve()
+    try:
+        return str(resolved.relative_to(workspace))
+    except ValueError:
+        return str(resolved)
+
+
 def load_json(path: Path, default: Any) -> Any:
     """读取 JSON 文件，不存在时返回默认值"""
     # 状态文件缺失或损坏时返回默认值，避免首次运行/中断写入后报错。
