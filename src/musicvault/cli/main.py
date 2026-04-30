@@ -133,10 +133,15 @@ def main(argv: list[str] | None = None) -> int:
         cfg=cfg,
         api=PyncmClient(text_cleaning_enabled=cfg.text_cleaning_enabled),
     )
-    service.run_pipeline(
-        cookie=cookie,
-        command=args.command,
-    )
+    try:
+        service.run_pipeline(
+            cookie=cookie,
+            command=args.command,
+        )
+    except KeyboardInterrupt:
+        console.print()
+        console.print("[yellow]已取消[/yellow]")
+        return 130
     return 0
 
 

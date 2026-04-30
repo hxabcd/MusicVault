@@ -140,16 +140,20 @@ class SyncService:
                 pool.submit(self.downloader.download_track, track, url, self.cfg.downloads_dir): (idx, track)
                 for idx, (track, url) in enumerate(tasks, start=1)
             }
-            for future in as_completed(future_map):
-                idx, track = future_map[future]
-                try:
-                    item = future.result()
-                    item.playlist_ids = track_playlists.get(track.id, [])
-                    results.append(item)
-                    bp.advance(success=True, idx=idx, item_name=track.name)
-                except Exception as exc:
-                    bp.advance(success=False, idx=idx, item_name=track.name)
-                    logger.error("下载失败：#%s %s，原因：%s", idx, track.name, exc, exc_info=True)
+            try:
+                for future in as_completed(future_map):
+                    idx, track = future_map[future]
+                    try:
+                        item = future.result()
+                        item.playlist_ids = track_playlists.get(track.id, [])
+                        results.append(item)
+                        bp.advance(success=True, idx=idx, item_name=track.name)
+                    except Exception as exc:
+                        bp.advance(success=False, idx=idx, item_name=track.name)
+                        logger.error("下载失败：#%s %s，原因：%s", idx, track.name, exc, exc_info=True)
+            except KeyboardInterrupt:
+                pool.shutdown(wait=False, cancel_futures=True)
+                raise
 
         return results
 

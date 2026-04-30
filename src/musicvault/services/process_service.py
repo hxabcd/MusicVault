@@ -130,17 +130,21 @@ class ProcessService:
                 for idx, (raw_file, track_info, playlist_names) in enumerate(pending, start=1)
             }
 
-            for future in as_completed(future_map):
-                idx, raw_file = future_map[future]
-                try:
-                    primary_lossless, primary_lossy, link_targets = future.result()
-                    self._mark_processed(raw_file, primary_lossless, primary_lossy, link_targets, processed_index)
-                    bp.advance(success=True, idx=idx, item_name=raw_file.name)
-                except Exception as exc:
-                    bp.advance(success=False, idx=idx, item_name=raw_file.name)
-                    logger.error(
-                        "处理失败：阶段=%s #%s %s，原因：%s", stage_name, idx, raw_file.name, exc, exc_info=True
-                    )
+            try:
+                for future in as_completed(future_map):
+                    idx, raw_file = future_map[future]
+                    try:
+                        primary_lossless, primary_lossy, link_targets = future.result()
+                        self._mark_processed(raw_file, primary_lossless, primary_lossy, link_targets, processed_index)
+                        bp.advance(success=True, idx=idx, item_name=raw_file.name)
+                    except Exception as exc:
+                        bp.advance(success=False, idx=idx, item_name=raw_file.name)
+                        logger.error(
+                            "处理失败：阶段=%s #%s %s，原因：%s", stage_name, idx, raw_file.name, exc, exc_info=True
+                        )
+            except KeyboardInterrupt:
+                pool.shutdown(wait=False, cancel_futures=True)
+                raise
 
         self._save_processed_index(processed_index)
 
