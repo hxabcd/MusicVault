@@ -64,6 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     add_pl = sub.add_parser("add", help="添加歌单（支持 ID 或网易云链接）")
     add_pl.add_argument("input", type=str, help="歌单 ID 或链接（如 https://music.163.com/playlist?id=xxx）")
+    add_pl.add_argument("--cookie", default=None, help="网易云 Cookie（用于验证歌单有效性）")
     add_pl.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（也支持 MUSIC_VAULT_CONFIG 环境变量）")
 
     rm_pl = sub.add_parser("remove", help="移除歌单 ID")
@@ -159,6 +160,30 @@ def _parse_playlist_id(raw: str) -> int:
     raise RuntimeError(f"无法识别的歌单标识：{raw}（需为数字 ID 或 https://music.163.com 歌单链接）")
 
 
+def _fetch_playlist_info(pid: int, cookie: str | None) -> dict[str, object] | None:
+    """通过 API 获取歌单元数据，失败返回 None。"""
+    if not cookie:
+        return None
+    try:
+        from musicvault.adapters.providers.pyncm_client import PyncmClient
+
+        api = PyncmClient()
+        api.login_with_cookie(cookie)
+        return dict(api.get_playlist_info(pid))
+    except Exception:
+        return None
+
+
+def _load_playlist_index(cfg: Config) -> dict[str, dict[str, object]]:
+    """加载缓存的歌单索引。"""
+    index_path = cfg.state_dir / "playlists.json"
+    if index_path.exists():
+        from musicvault.shared.utils import load_json
+
+        return load_json(index_path, {})
+    return {}
+
+
 def _handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
     if args.command == "add":
         try:
@@ -166,11 +191,41 @@ def _handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
         except RuntimeError as exc:
             console.print(f"[red]{exc}[/red]")
             return 1
+
         if pid in cfg.playlist_ids:
-            console.print(f"[yellow]歌单 {pid} 已存在，跳过添加[/yellow]")
+            cached = _load_playlist_index(cfg)
+            entry = cached.get(str(pid), {})
+            name = entry.get("name")
+            label = f"{name} ({pid})" if name else str(pid)
+            console.print(f"[yellow]歌单 {label} 已存在，跳过添加[/yellow]")
+            return 0
+
+        cookie = getattr(args, "cookie", None) or cfg.cookie
+        info = _fetch_playlist_info(pid, cookie)
+
+        if info is None:
+            if not cookie:
+                console.print("[yellow]未提供 cookie，跳过 API 验证[/yellow]")
+            else:
+                console.print("[yellow]无法获取歌单信息，将仅保存 ID[/yellow]")
+
+        # 缓存歌单信息
+        if info is not None:
+            cfg.ensure_dirs()
+            from musicvault.shared.utils import load_json, save_json
+
+            index_path = cfg.state_dir / "playlists.json"
+            cached = load_json(index_path, {})
+            cached[str(pid)] = {"name": info["name"], "track_count": info["track_count"]}
+            save_json(index_path, cached)
+
+        cfg.playlist_ids.append(pid)
+        cfg.save()
+
+        name = info.get("name") if info else None
+        if name:
+            console.print(f"[green]已添加歌单：[bold]{name}[/bold] (ID: {pid})[/green]")
         else:
-            cfg.playlist_ids.append(pid)
-            cfg.save()
             console.print(f"[green]已添加歌单：{pid}[/green]")
 
     elif args.command == "remove":
@@ -183,9 +238,15 @@ def _handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
 
     elif args.command in ("list", "ls"):
         if cfg.playlist_ids:
-            console.print("[bold]当前管理的歌单 ID：[/bold]")
+            cached = _load_playlist_index(cfg)
+            console.print("[bold]当前管理的歌单：[/bold]")
             for pid in cfg.playlist_ids:
-                console.print(f"  {pid}")
+                entry = cached.get(str(pid), {})
+                name = entry.get("name")
+                if name:
+                    console.print(f"  [cyan]{name}[/cyan]\t[dim]{pid}[/dim]")
+                else:
+                    console.print(f"  [cyan]{pid}[/cyan]")
         else:
             console.print("[dim]尚未添加任何歌单（将使用喜欢音乐歌单）[/dim]")
     return 0
