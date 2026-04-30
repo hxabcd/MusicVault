@@ -40,7 +40,7 @@ def _retry_api(func, *args, **kwargs):
         except (requests.RequestException, OSError, TimeoutError) as exc:
             if attempt == _API_RETRIES - 1:
                 raise
-            logger.warning("API 调用失败 (第 %s/%s 次)：%s", attempt + 1, _API_RETRIES, exc)
+            logger.info("API 调用失败 (第 %s/%s 次)：%s", attempt + 1, _API_RETRIES, exc)
 
 
 class PyncmClient:

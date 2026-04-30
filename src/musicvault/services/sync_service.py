@@ -8,6 +8,7 @@ from musicvault.adapters.processors.downloader import Downloader
 from musicvault.adapters.providers.pyncm_client import LoginResult, PyncmClient
 from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
+from musicvault.shared.output import info as output_info, warn as output_warn
 from musicvault.shared.tui_progress import BatchProgress
 from musicvault.shared.utils import load_json, save_json, workspace_rel_path
 
@@ -25,7 +26,7 @@ class SyncService:
         self._cleanup_stale_state()
         user = self.api.login_with_cookie(cookie)
         target_ids = playlist_ids or self._resolve_liked_playlist(user)
-        logger.info("将同步 %s 个歌单", len(target_ids))
+        output_info(f"将同步 {len(target_ids)} 个歌单")
 
         # 收集歌单元数据 + 建立 track → playlist_ids 映射
         playlist_index = load_json(self.cfg.state_dir / "playlists.json", {})
@@ -44,7 +45,7 @@ class SyncService:
         self.playlist_index = playlist_index
 
         unique = list(all_tracks.values())
-        logger.info("歌单曲目合计：%s 首（去重后）", len(unique))
+        output_info(f"歌单曲目合计：{len(unique)} 首（去重后）")
 
         new_tracks, synced_ids = self._diff_tracks(unique)
         downloaded = self._sync_tracks(new_tracks, track_playlists)
@@ -94,11 +95,9 @@ class SyncService:
         new_tracks = [track for track in tracks if track.id not in synced_ids]
         return new_tracks, synced_ids
 
-    def _sync_tracks(
-        self, tracks: list[Track], track_playlists: dict[int, list[int]]
-    ) -> list[DownloadedTrack]:
+    def _sync_tracks(self, tracks: list[Track], track_playlists: dict[int, list[int]]) -> list[DownloadedTrack]:
         if not tracks:
-            logger.info("同步阶段无新增曲目，跳过下载")
+            output_info("同步阶段无新增曲目，跳过下载")
             return []
 
         url_map = self.api.get_tracks_download_urls([track.id for track in tracks])
@@ -108,7 +107,7 @@ class SyncService:
             url = url_map.get(track.id)
             if not url:
                 skipped += 1
-                logger.warning("跳过下载：无可用直链 track_id=%s name=%s", track.id, track.name)
+                logger.info("跳过下载：无可用直链 track_id=%s name=%s", track.id, track.name)
                 continue
             pending.append((track, url))
         logger.info("下载准备完成：可下载=%s 跳过=%s", len(pending), skipped)
@@ -154,7 +153,7 @@ class SyncService:
             except KeyboardInterrupt:
                 pool.shutdown(wait=False, cancel_futures=True)
                 if results:
-                    logger.info("Ctrl+C 中断，保存已完成的 %s 项下载...", len(results))
+                    output_warn(f"Ctrl+C 中断，保存已完成的 {len(results)} 项下载...")
                     _save_partial_downloads(self.cfg, results)
                 raise
 

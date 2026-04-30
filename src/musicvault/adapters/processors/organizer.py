@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import logging
 import shutil
 import subprocess
 from pathlib import Path
 
 from musicvault.core.models import Track
+from musicvault.shared.output import warn as output_warn
 from musicvault.shared.utils import safe_filename
-
-logger = logging.getLogger(__name__)
 
 _FFMPEG_BITRATE = "192k"
 
@@ -20,7 +18,7 @@ class Organizer:
         self.ffmpeg_threads = max(1, ffmpeg_threads)
         self._ffmpeg_path = shutil.which("ffmpeg")
         if self._ffmpeg_path is None:
-            logger.warning("未检测到 ffmpeg，转码功能将不可用")
+            output_warn("未检测到 ffmpeg，转码功能将不可用")
 
     def route_audio(self, src: Path, track: Track, lossless_dir: Path, lossy_dir: Path) -> tuple[Path, Path]:
         """按规则生成 lossless 与 lossy 两份输出。"""

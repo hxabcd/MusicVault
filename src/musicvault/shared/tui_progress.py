@@ -115,9 +115,7 @@ class BatchProgress:
         top = Text(self._filename, style="white")
 
         # Line 2: spinner + phase count + bar + percentage + elapsed
-        phase_text = Text.from_markup(
-            f"[bold cyan]{self.phase}[/bold cyan]  [dim]{self._completed}/{self.total}[/dim]"
-        )
+        phase_text = Text.from_markup(f"[bold cyan]{self.phase}[/bold cyan]  [dim]{self._completed}/{self.total}[/dim]")
         if self.failed:
             phase_text.append(f"  ✗{self.failed}", style="red")
 

@@ -18,6 +18,7 @@ from musicvault.adapters.processors.organizer import Organizer
 from musicvault.adapters.providers.pyncm_client import PyncmClient
 from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
+from musicvault.shared.output import info as output_info, warn as output_warn
 from musicvault.shared.tui_progress import BatchProgress
 from musicvault.shared.utils import load_json, safe_filename, save_json, workspace_rel_path
 
@@ -79,16 +80,15 @@ class ProcessService:
         if raw_files and not isinstance(file_index, dict):
             file_index = {}
         if raw_files and not file_index:
-            logger.warning(
-                "下载目录有 %s 个文件，但 file_track_index.json 为空，无法匹配 track_id。"
-                "请先执行 sync 建立索引。",
-                len(raw_files),
+            output_warn(
+                f"下载目录有 {len(raw_files)} 个文件，但 file_track_index.json 为空，"
+                "无法匹配 track_id。请先执行 sync 建立索引。"
             )
         pending: list[tuple[Path, int]] = []
         for raw_file in raw_files:
             track_id = self._guess_track_id(raw_file, index=file_index)
             if track_id is None:
-                logger.warning("跳过文件：无法推断 track_id，文件=%s", raw_file.name)
+                logger.info("跳过文件：无法推断 track_id，文件=%s", raw_file.name)
                 continue
             pending.append((raw_file, track_id))
 
@@ -115,7 +115,7 @@ class ProcessService:
         pending, skipped = self._filter_pending(tasks, processed_index, force=force)
         logger.info("已处理索引过滤：阶段=%s force=%s 跳过=%s 待处理=%s", stage_name, force, skipped, len(pending))
         if not pending:
-            logger.info("处理队列为空（全部已处理）：阶段=%s", stage_name)
+            output_info(f"处理队列为空（全部已处理）：{stage_name}")
             return
 
         total = len(pending)
@@ -145,7 +145,7 @@ class ProcessService:
             except KeyboardInterrupt:
                 pool.shutdown(wait=False, cancel_futures=True)
                 if processed_index:
-                    logger.info("Ctrl+C 中断，保存已完成的 %s 项处理...", len(processed_index))
+                    output_warn(f"Ctrl+C 中断，保存已完成的 {len(processed_index)} 项处理...")
                     self._save_processed_index(processed_index)
                 raise
 
@@ -181,9 +181,7 @@ class ProcessService:
         lossless_dir = self.cfg.lossless_dir / primary_name
         lossy_dir = self.cfg.lossy_dir / primary_name
 
-        primary_lossless, primary_lossy = self.organizer.route_audio(
-            decoded, track_info, lossless_dir, lossy_dir
-        )
+        primary_lossless, primary_lossy = self.organizer.route_audio(decoded, track_info, lossless_dir, lossy_dir)
 
         # 为多歌单的共享曲目创建硬链接
         link_targets: list[tuple[Path, Path]] = []
@@ -322,8 +320,10 @@ class ProcessService:
             return
         rel = workspace_rel_path(raw_file, self.cfg.workspace_path)
         links_data = [
-            {"lossless": workspace_rel_path(ll, self.cfg.workspace_path),
-             "lossy": workspace_rel_path(ly, self.cfg.workspace_path)}
+            {
+                "lossless": workspace_rel_path(ll, self.cfg.workspace_path),
+                "lossy": workspace_rel_path(ly, self.cfg.workspace_path),
+            }
             for ll, ly in link_targets
         ]
         processed_index[rel] = {

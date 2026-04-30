@@ -9,14 +9,13 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from musicvault.core.config import Config
+from musicvault.shared.output import error as output_error, info as output_info
 from musicvault.shared.tui_progress import console
 
 _DEFAULT_CONFIG = os.environ.get("MUSIC_VAULT_CONFIG", "./config.json")
 
-logger = logging.getLogger(__name__)
 
-
-def _silence_logs() -> None:
+def _silence_libs() -> None:
     for name in ("pyncm", "urllib3.connectionpool", "App"):
         muted = logging.getLogger(name)
         muted.setLevel(logging.WARNING)
@@ -24,13 +23,20 @@ def _silence_logs() -> None:
 
 
 def _configure_logs(verbose: bool = False) -> None:
-    logging.basicConfig(
-        level=logging.DEBUG if verbose else logging.INFO,
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-        datefmt="%H:%M:%S",
-        stream=sys.stderr,
-    )
-    _silence_logs()
+    if verbose:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+            datefmt="%H:%M:%S",
+            stream=sys.stderr,
+        )
+    else:
+        logging.basicConfig(
+            level=logging.WARNING,
+            format="%(message)s",
+            stream=sys.stderr,
+        )
+    _silence_libs()
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
@@ -67,17 +73,22 @@ def build_parser() -> argparse.ArgumentParser:
     add_pl.add_argument("input", type=str, help="歌单 ID 或链接（如 https://music.163.com/playlist?id=xxx）")
     add_pl.add_argument("--cookie", default=None, help="网易云 Cookie（用于验证歌单有效性）")
     add_pl.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（也支持 MUSIC_VAULT_CONFIG 环境变量）")
+    add_pl.add_argument("-v", "--verbose", action="store_true", help="启用详细日志（DEBUG 级别）")
 
     rm_pl = sub.add_parser("remove", help="移除歌单 ID")
     rm_pl.add_argument("playlist_id", type=int, help="歌单 ID")
     rm_pl.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（也支持 MUSIC_VAULT_CONFIG 环境变量）")
+    rm_pl.add_argument("-v", "--verbose", action="store_true", help="启用详细日志（DEBUG 级别）")
 
     ls_pl = sub.add_parser("list", help="查看已添加的歌单")
     ls_pl.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（也支持 MUSIC_VAULT_CONFIG 环境变量）")
+    ls_pl.add_argument("-v", "--verbose", action="store_true", help="启用详细日志（DEBUG 级别）")
 
-    sub.add_parser("ls", help="list 别名").add_argument(
+    ls_alias = sub.add_parser("ls", help="list 别名")
+    ls_alias.add_argument(
         "--config", default=_DEFAULT_CONFIG, help="配置文件路径（也支持 MUSIC_VAULT_CONFIG 环境变量）"
     )
+    ls_alias.add_argument("-v", "--verbose", action="store_true", help="启用详细日志（DEBUG 级别）")
 
     return parser
 
@@ -103,20 +114,20 @@ def main(argv: list[str] | None = None) -> int:
     cfg_path = Path(args.config).resolve()
     cfg = Config.load(cfg_path)
 
+    _configure_logs(verbose=args.verbose)
+
     if args.command in ("add", "remove", "list", "ls"):
         return _handle_playlist_mgmt(args, cfg)
 
-    _configure_logs(verbose=args.verbose)
-
     existed = cfg_path.exists()
     if existed:
-        logger.info("已加载配置文件：%s", cfg_path)
+        output_info(f"已加载配置文件：{cfg_path}")
     else:
-        logger.info("配置文件不存在，已按默认值自动生成：%s", cfg_path)
+        output_info(f"配置文件不存在，已按默认值自动生成：{cfg_path}")
 
     cookie = args.cookie or cfg.cookie
     if not cookie:
-        logger.error("缺少 cookie：请通过 --cookie 或配置文件提供")
+        output_error("缺少 cookie：请通过 --cookie 或配置文件提供")
         return 2
 
     if args.workspace is not None:

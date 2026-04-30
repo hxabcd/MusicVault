@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import os
 
 from musicvault.adapters.processors.decryptor import Decryptor
@@ -12,8 +11,6 @@ from musicvault.core.config import Config
 from musicvault.services.process_service import ProcessService
 from musicvault.services.sync_service import SyncService
 from musicvault.shared.tui_progress import console, ok
-
-logger = logging.getLogger(__name__)
 
 
 class RunService:
