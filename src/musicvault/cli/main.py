@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import re
 import sys
 from pathlib import Path
@@ -9,6 +10,8 @@ from urllib.parse import parse_qs, urlparse
 
 from musicvault.core.config import Config
 from musicvault.shared.tui_progress import console
+
+_DEFAULT_CONFIG = os.environ.get("MUSIC_VAULT_CONFIG", "./config.json")
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +34,7 @@ def _configure_logs() -> None:
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--config", default="./config.json", help="配置文件路径（JSON）")
+    parser.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（也支持 MUSIC_VAULT_CONFIG 环境变量）")
     parser.add_argument("--cookie", default=None, help="网易云 Cookie 字符串")
     parser.add_argument("--workspace", default=None, help="工作目录")
     parser.add_argument("--force", action="store_true", help="强制重处理已处理文件（覆盖 processed 索引）")
@@ -61,17 +64,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     add_pl = sub.add_parser("add", help="添加歌单（支持 ID 或网易云链接）")
     add_pl.add_argument("input", type=str, help="歌单 ID 或链接（如 https://music.163.com/playlist?id=xxx）")
-    add_pl.add_argument("--config", default="./config.json", help="配置文件路径（JSON）")
+    add_pl.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（也支持 MUSIC_VAULT_CONFIG 环境变量）")
 
     rm_pl = sub.add_parser("remove", help="移除歌单 ID")
     rm_pl.add_argument("playlist_id", type=int, help="歌单 ID")
-    rm_pl.add_argument("--config", default="./config.json", help="配置文件路径（JSON）")
+    rm_pl.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（也支持 MUSIC_VAULT_CONFIG 环境变量）")
 
     ls_pl = sub.add_parser("list", help="查看已添加的歌单")
-    ls_pl.add_argument("--config", default="./config.json", help="配置文件路径（JSON）")
+    ls_pl.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（也支持 MUSIC_VAULT_CONFIG 环境变量）")
 
     sub.add_parser("ls", help="list 别名").add_argument(
-        "--config", default="./config.json", help="配置文件路径（JSON）"
+        "--config", default=_DEFAULT_CONFIG, help="配置文件路径（也支持 MUSIC_VAULT_CONFIG 环境变量）"
     )
 
     return parser
