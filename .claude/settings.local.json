@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m ruff check src/musicvault/adapters/providers/pyncm_client.py src/musicvault/adapters/processors/downloader.py src/musicvault/adapters/processors/organizer.py src/musicvault/adapters/processors/metadata_writer.py src/musicvault/services/sync_service.py src/musicvault/services/process_service.py src/musicvault/shared/utils.py)",
+      "Bash(python -m py_compile src/musicvault/adapters/providers/pyncm_client.py)",
+      "Bash(python -m py_compile src/musicvault/adapters/processors/downloader.py)",
+      "Bash(python -m py_compile src/musicvault/adapters/processors/organizer.py)",
+      "Bash(python -m py_compile src/musicvault/adapters/processors/metadata_writer.py)",
+      "Bash(python -m py_compile src/musicvault/services/sync_service.py)",
+      "Bash(ruff check *)",
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(uv add *)",
+      "Bash(uv run *)",
+      "Bash(.venv/Scripts/python -m pytest tests/ -v)",
+      "Bash(.venv/Scripts/ruff check *)",
+      "Bash(git status *)"
+    ]
+  }
+}

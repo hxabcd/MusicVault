@@ -2,8 +2,6 @@
   "cookie": "",
   "workspace": "./workspace",
   "playlist_ids": [],
-  "only_sync": false,
-  "only_process": false,
   "force": false,
   "include_translation": true,
   "text_cleaning": {
