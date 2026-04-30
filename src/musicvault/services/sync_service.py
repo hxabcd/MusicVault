@@ -153,6 +153,9 @@ class SyncService:
                         logger.error("下载失败：#%s %s，原因：%s", idx, track.name, exc, exc_info=True)
             except KeyboardInterrupt:
                 pool.shutdown(wait=False, cancel_futures=True)
+                if results:
+                    logger.info("Ctrl+C 中断，保存已完成的 %s 项下载...", len(results))
+                    _save_partial_downloads(self.cfg, results)
                 raise
 
         return results
@@ -164,3 +167,21 @@ class SyncService:
         for item in downloaded:
             existing_ids.add(item.track.id)
         save_json(self.cfg.synced_state_file, {"ids": sorted(existing_ids)})
+
+
+def _save_partial_downloads(cfg: Config, results: list[DownloadedTrack]) -> None:
+    """Save partially completed downloads to state files so the next run skips them."""
+    # file_track_index.json
+    index_path = cfg.state_dir / "file_track_index.json"
+    file_index = load_json(index_path, {})
+    for item in results:
+        rel = workspace_rel_path(Path(item.source_file), cfg.workspace_path)
+        file_index[rel] = item.track.id
+    save_json(index_path, file_index)
+
+    # synced_tracks.json
+    state = load_json(cfg.synced_state_file, {"ids": []})
+    existing = {int(x) for x in state.get("ids", []) if isinstance(x, (int, str))}
+    for item in results:
+        existing.add(item.track.id)
+    save_json(cfg.synced_state_file, {"ids": sorted(existing)})

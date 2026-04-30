@@ -144,6 +144,9 @@ class ProcessService:
                         )
             except KeyboardInterrupt:
                 pool.shutdown(wait=False, cancel_futures=True)
+                if processed_index:
+                    logger.info("Ctrl+C 中断，保存已完成的 %s 项处理...", len(processed_index))
+                    self._save_processed_index(processed_index)
                 raise
 
         self._save_processed_index(processed_index)
