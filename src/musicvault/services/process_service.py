@@ -269,33 +269,7 @@ class ProcessService:
                 return None
         return None
 
-    def _migrate_file_track_index(self) -> None:
-        """一次性迁移：将旧 file_track_index.json 的数据合并到 processed_files.json。"""
-        old_path = self.cfg.state_dir / "file_track_index.json"
-        if not old_path.exists():
-            return
-        old_index = load_json(old_path, {})
-        if not isinstance(old_index, dict):
-            old_path.unlink()
-            return
-
-        processed = load_json(self.cfg.processed_state_file, {})
-        if not isinstance(processed, dict):
-            processed = {}
-        for rel_path, track_id_raw in old_index.items():
-            if rel_path in processed:
-                entry = processed[rel_path]
-                if isinstance(entry, dict) and "track_id" not in entry:
-                    entry["track_id"] = track_id_raw
-            else:
-                processed[rel_path] = {"track_id": track_id_raw}
-
-        save_json(self.cfg.processed_state_file, processed)
-        old_path.unlink()
-        logger.info("已将 file_track_index.json 迁移到 processed_files.json，共 %s 条", len(old_index))
-
     def _load_processed_index(self) -> dict[str, dict[str, object]]:
-        self._migrate_file_track_index()
         loaded = load_json(self.cfg.processed_state_file, {})
         if not isinstance(loaded, dict):
             return {}
