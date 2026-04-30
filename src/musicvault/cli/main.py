@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import sys
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from musicvault.core.config import Config
 from musicvault.shared.tui_progress import console
@@ -49,8 +51,8 @@ def build_parser() -> argparse.ArgumentParser:
     process = sub.add_parser("process", help="仅执行本地后处理")
     _add_common_args(process)
 
-    add_pl = sub.add_parser("add", help="添加歌单 ID")
-    add_pl.add_argument("playlist_id", type=int, help="歌单 ID")
+    add_pl = sub.add_parser("add", help="添加歌单（支持 ID 或网易云链接）")
+    add_pl.add_argument("input", type=str, help="歌单 ID 或链接（如 https://music.163.com/playlist?id=xxx）")
     add_pl.add_argument("--config", default="./config.json", help="配置文件路径（JSON）")
 
     rm_pl = sub.add_parser("remove", help="移除歌单 ID")
@@ -109,14 +111,41 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _parse_playlist_id(raw: str) -> int:
+    """从 ID 数字字符串或网易云链接中提取歌单 ID。"""
+    stripped = raw.strip()
+    if stripped.isdigit():
+        return int(stripped)
+
+    parsed = urlparse(stripped)
+    if parsed.hostname and "music.163.com" in parsed.hostname:
+        qs = parse_qs(parsed.query)
+        ids = qs.get("id", [])
+        if ids and ids[0].isdigit():
+            return int(ids[0])
+        # 处理 hash 路由: /#/playlist?id=xxx
+        fragment = parsed.fragment
+        if fragment:
+            m = re.search(r"[?&]id=(\d+)", fragment)
+            if m:
+                return int(m.group(1))
+
+    raise RuntimeError(f"无法识别的歌单标识：{raw}（需为数字 ID 或 https://music.163.com 歌单链接）")
+
+
 def _handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
     if args.command == "add":
-        if args.playlist_id in cfg.playlist_ids:
-            console.print(f"[yellow]歌单 {args.playlist_id} 已存在，跳过添加[/yellow]")
+        try:
+            pid = _parse_playlist_id(args.input)
+        except RuntimeError as exc:
+            console.print(f"[red]{exc}[/red]")
+            return 1
+        if pid in cfg.playlist_ids:
+            console.print(f"[yellow]歌单 {pid} 已存在，跳过添加[/yellow]")
         else:
-            cfg.playlist_ids.append(args.playlist_id)
+            cfg.playlist_ids.append(pid)
             cfg.save()
-            console.print(f"[green]已添加歌单：{args.playlist_id}[/green]")
+            console.print(f"[green]已添加歌单：{pid}[/green]")
 
     elif args.command == "remove":
         if args.playlist_id not in cfg.playlist_ids:
