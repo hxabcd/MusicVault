@@ -32,7 +32,7 @@ class Config:
     translation_format: str = "separate"
     download_quality: str = "hires"
     embed_cover: bool = True
-    cover_max_size_kb: int = 0
+    cover_max_size: int = 0
     lyrics_embed_in_metadata: bool = True
     lyrics_write_lrc_file: bool = True
     karaoke_lossless: bool = True
@@ -195,7 +195,6 @@ class Config:
         if translation_format not in ("separate", "inline"):
             raise RuntimeError(f"translation_format 格式错误：需为 separate 或 inline，当前={translation_format}")
 
-
         # -- download section --
         download = raw.get("download") or {}
         if not isinstance(download, dict):
@@ -211,7 +210,7 @@ class Config:
         if not isinstance(cover, dict):
             cover = {}
         embed_cover = bool(cover.get("embed", True))
-        cover_max_size_kb = _parse_positive_int(cover.get("max_size_kb"), 0)
+        cover_max_size = _parse_positive_int(cover.get("max_size"), 0)
 
         # -- lyrics extended --
         lyrics_embed_in_metadata = bool(lyrics.get("embed_in_metadata", True))
@@ -305,7 +304,7 @@ class Config:
             translation_format=translation_format,
             download_quality=download_quality,
             embed_cover=embed_cover,
-            cover_max_size_kb=cover_max_size_kb,
+            cover_max_size=cover_max_size,
             lyrics_embed_in_metadata=lyrics_embed_in_metadata,
             lyrics_write_lrc_file=lyrics_write_lrc_file,
             karaoke_lossless=karaoke_lossless,
@@ -387,7 +386,7 @@ class Config:
             },
             "cover": {
                 "embed": self.embed_cover,
-                "max_size_kb": self.cover_max_size_kb,
+                "max_size": self.cover_max_size,
             },
             "filenames": {
                 "lossless": self.filename_lossless,

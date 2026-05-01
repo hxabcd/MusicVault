@@ -10,6 +10,7 @@ dependencies = [
     "ncmdump-py>=0.2.0",
     "rich>=13.7.0",
     "qrcode>=8.2",
+    "pillow>=11.0",
 ]
 
 [build-system]

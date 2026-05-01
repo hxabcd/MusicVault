@@ -4,9 +4,12 @@ import socket
 import threading
 import time
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+from PIL import Image
 
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import ID3
@@ -41,11 +44,13 @@ class MetadataWriter:
         embed_cover: bool = True,
         embed_lyrics: bool = True,
         cover_timeout: int = 15,
+        cover_max_size: int = 0,
         metadata_fields: tuple[str, ...] = (),
     ) -> None:
         self.embed_cover = embed_cover
         self.embed_lyrics = embed_lyrics
         self.cover_timeout = cover_timeout
+        self.cover_max_size = cover_max_size
         self.metadata_fields = set(metadata_fields) if metadata_fields else set()
         self._cover_cache: dict[str, bytes] = {}
         self._cover_cache_lock = threading.Lock()
@@ -76,9 +81,34 @@ class MetadataWriter:
         if not data:
             return None
 
+        if self.cover_max_size > 0:
+            data = self._resize_cover(data)
+
         with self._cover_cache_lock:
             self._cover_cache[url] = data
         return data
+
+    def _resize_cover(self, data: bytes) -> bytes:
+        try:
+            img = Image.open(BytesIO(data))
+        except Exception:
+            return data
+
+        width, height = img.size
+        max_dim = max(width, height)
+        if max_dim <= self.cover_max_size:
+            return data
+
+        ratio = self.cover_max_size / max_dim
+        new_size = (int(width * ratio), int(height * ratio))
+        img = img.resize(new_size, Image.LANCZOS)
+
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        return buf.getvalue()
 
     def _fetch_cover(self, url: str) -> bytes | None:
         headers = {

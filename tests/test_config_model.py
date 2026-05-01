@@ -112,7 +112,7 @@ def test_all_new_fields_defaults() -> None:
         cfg = Config.load(path)
         assert cfg.download_quality == "hires"
         assert cfg.embed_cover is True
-        assert cfg.cover_max_size_kb == 0
+        assert cfg.cover_max_size == 0
         assert cfg.lyrics_embed_in_metadata is True
         assert cfg.lyrics_write_lrc_file is True
         assert cfg.filename_lossless == "{artist} - {name}"
@@ -137,7 +137,7 @@ def test_new_fields_in_roundtrip() -> None:
             json.dumps(
                 {
                     "download": {"quality": "lossless"},
-                    "cover": {"embed": False, "max_size_kb": 100},
+                    "cover": {"embed": False, "max_size": 100},
                     "lyrics": {"embed_in_metadata": False, "write_lrc_file": False},
                     "filenames": {"lossless": "{track_id} - {name}", "lossy": "{name}"},
                     "network": {"download_timeout": 60, "max_retries": 5},
@@ -154,7 +154,7 @@ def test_new_fields_in_roundtrip() -> None:
         cfg = Config.load(path)
         assert cfg.download_quality == "lossless"
         assert cfg.embed_cover is False
-        assert cfg.cover_max_size_kb == 100
+        assert cfg.cover_max_size == 100
         assert cfg.lyrics_embed_in_metadata is False
         assert cfg.lyrics_write_lrc_file is False
         assert cfg.filename_lossless == "{track_id} - {name}"
@@ -171,7 +171,7 @@ def test_new_fields_in_roundtrip() -> None:
         cfg.save()
         loaded = json.loads(path.read_text(encoding="utf-8"))
         assert loaded["download"]["quality"] == "lossless"
-        assert loaded["cover"] == {"embed": False, "max_size_kb": 100}
+        assert loaded["cover"] == {"embed": False, "max_size": 100}
         assert loaded["lyrics"]["embed_in_metadata"] is False
         assert loaded["lyrics"]["write_lrc_file"] is False
         assert loaded["lossy"]["format"] == "opus"

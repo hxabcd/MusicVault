@@ -52,6 +52,7 @@ class RunService:
                 embed_cover=cfg.embed_cover,
                 embed_lyrics=cfg.lyrics_embed_in_metadata,
                 cover_timeout=cfg.network_cover_timeout,
+                cover_max_size=cfg.cover_max_size,
                 metadata_fields=cfg.metadata_fields,
             ),
             workers=max(1, process_workers),
@@ -207,9 +208,7 @@ class RunService:
                 entry = playlist_index.get(str(pid))
                 dirname = safe_filename(str(entry["name"])) if entry and entry.get("name") else str(pid)
                 ll_dst = (
-                    self.cfg.lossless_dir
-                    / dirname
-                    / self.process_service._lossless_link_name(track, flac_src.suffix)
+                    self.cfg.lossless_dir / dirname / self.process_service._lossless_link_name(track, flac_src.suffix)
                 )
                 ly_dst = self.cfg.lossy_dir / dirname / self.process_service._lossy_link_name(track)
                 if not ll_dst.exists():

@@ -163,7 +163,7 @@ msv sync          # 开始同步
   },
   "cover": {
     "embed": true,
-    "max_size_kb": 0
+    "max_size": 0
   },
   "filenames": {
     "lossless": "{artist} - {name}",
@@ -220,7 +220,7 @@ msv sync          # 开始同步
 | `lossy` | `format` | `"mp3"` | 有损输出格式：`mp3`/`aac`/`ogg`/`opus` |
 | `download` | `quality` | `"hires"` | 下载音质：`standard`/`higher`/`exhire`/`hires`/`lossless` |
 | `cover` | `embed` | `true` | 是否在音频中嵌入封面图 |
-| `cover` | `max_size_kb` | `0` | 封面最大尺寸限制（0=不限制） |
+| `cover` | `max_size` | `0` | 封面最大分辨率（像素，0=不限制） |
 | `filenames` | `lossless` | `"{artist} - {name}"` | 无损文件名模板 |
 | `filenames` | `lossy` | `"{alias} {name} - {artist}"` | 有损文件名模板 |
 | `network` | `download_timeout` | `30` | 下载 HTTP 超时（秒） |
