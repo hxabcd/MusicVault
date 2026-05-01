@@ -8,8 +8,8 @@ from musicvault.adapters.processors.downloader import Downloader
 from musicvault.adapters.providers.pyncm_client import LoginResult, PyncmClient
 from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
-from musicvault.shared.output import info as output_info, warn as output_warn
-from musicvault.shared.tui_progress import BatchProgress
+from musicvault.shared.output import warn as output_warn
+from musicvault.shared.tui_progress import BatchProgress, console
 from musicvault.shared.utils import load_json, save_json, workspace_rel_path
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ class SyncService:
         self._cleanup_stale_state()
         user = self.api.login_with_cookie(cookie)
         target_ids = playlist_ids or self._resolve_liked_playlist(user)
-        output_info(f"将同步 {len(target_ids)} 个歌单")
+        logger.info("将同步 %s 个歌单", len(target_ids))
 
         # 收集歌单元数据 + 建立 track → playlist_ids 映射
         playlist_index = load_json(self.cfg.state_dir / "playlists.json", {})
@@ -45,12 +45,23 @@ class SyncService:
         self.playlist_index = playlist_index
 
         unique = list(all_tracks.values())
-        output_info(f"歌单曲目合计：{len(unique)} 首（去重后）")
+        logger.info("歌单曲目合计：%s 首（去重后）", len(unique))
 
-        self._prune_stale_tracks(all_tracks)
+        pruned = self._prune_stale_tracks(all_tracks)
         new_tracks, synced_ids = self._diff_tracks(unique)
         downloaded = self._sync_tracks(new_tracks, track_playlists)
         self._mark_synced(downloaded, synced_ids)
+
+        # 单行摘要
+        added = len(downloaded)
+        console.print(f"  从 [cyan]{len(target_ids)}[/cyan] 个歌单同步 [cyan]{len(unique)}[/cyan] 首")
+        stats: list[str] = []
+        if added:
+            stats.append(f"[green]+{added} 首[/green]")
+        if pruned:
+            stats.append(f"[red]-{pruned} 首[/red]")
+        console.print("    " + " | ".join(stats) if stats else "    [dim]无变化[/dim]")
+
         return downloaded
 
     def _cleanup_stale_state(self) -> None:
@@ -96,13 +107,13 @@ class SyncService:
         new_tracks = [track for track in tracks if track.id not in synced_ids]
         return new_tracks, synced_ids
 
-    def _prune_stale_tracks(self, remote_tracks: dict[int, Track]) -> None:
-        """删除远端已不存在的本地曲目（以远端为准）。"""
+    def _prune_stale_tracks(self, remote_tracks: dict[int, Track]) -> int:
+        """删除远端已不存在的本地曲目（以远端为准），返回清理数量。"""
         state = load_json(self.cfg.synced_state_file, {"ids": []})
         synced_ids = {int(x) for x in state.get("ids", [])}
         stale_ids = synced_ids - set(remote_tracks.keys())
         if not stale_ids:
-            return
+            return 0
 
         processed = load_json(self.cfg.processed_state_file, {})
         if not isinstance(processed, dict):
@@ -145,11 +156,12 @@ class SyncService:
             # 写入清理后的 synced_tracks
             cleaned = synced_ids - stale_ids
             save_json(self.cfg.synced_state_file, {"ids": sorted(cleaned)})
-            output_info(f"清理远端已删除曲目：{removed_count} 首（{len(stale_ids)} 个 track_id）")
+            logger.info("清理远端已删除曲目：%s 首（%s 个 track_id）", removed_count, len(stale_ids))
+        return removed_count
 
     def _sync_tracks(self, tracks: list[Track], track_playlists: dict[int, list[int]]) -> list[DownloadedTrack]:
         if not tracks:
-            output_info("同步阶段无新增曲目，跳过下载")
+            logger.info("同步阶段无新增曲目，跳过下载")
             return []
 
         url_map = self.api.get_tracks_download_urls([track.id for track in tracks])

@@ -21,19 +21,19 @@ from musicvault.shared.tui_progress import console
 
 def success(msg: str) -> None:
     """绿色 ● 前缀的成功消息。"""
-    console.print(f" [green]●[/green] {msg}")
+    console.print(f"[green]●[/green] {msg}", highlight=False)
 
 
 def error(msg: str) -> None:
     """红色 ● 前缀的错误消息。"""
-    console.print(f"[red]●[/red] {msg}")
+    console.print(f"[red]●[/red] {msg}", highlight=False)
 
 
 def warn(msg: str) -> None:
-    """黄色 ⚠ 前缀的警告消息。"""
-    console.print(f"[yellow]⚠[/yellow] {msg}")
+    """黄色 ● 前缀的警告消息。"""
+    console.print(f"[yellow]●[/yellow] {msg}", highlight=False)
 
 
 def info(msg: str) -> None:
     """灰色 dim 信息行（无前缀）。"""
-    console.print(f"  {msg}")
+    console.print(f"  {msg}", highlight=False)

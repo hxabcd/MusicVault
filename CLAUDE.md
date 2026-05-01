@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
+[IMPORTANT] 这一节的内容过时了，请勿参考
+
 ```bash
 # Install in editable mode (ensure .venv deps are installed first)
 uv pip install -e .

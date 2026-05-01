@@ -52,12 +52,9 @@ class RunService:
         downloaded: list = []
         if not only_process:
             downloaded = self.sync_service.run_sync(cookie=cookie, playlist_ids=self.cfg.playlist_ids)
-            if downloaded:
-                ok(f"下载了 [bold]{len(downloaded)}[/bold] 首新曲目")
             playlist_index = self.sync_service.playlist_index
 
         if not only_pull:
-            console.print()
             self.process_service.run_process(
                 downloaded=downloaded,
                 include_translation=self.cfg.include_translation,

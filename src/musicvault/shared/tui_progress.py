@@ -140,7 +140,7 @@ class BatchProgress:
 def status(description: str) -> Iterator[None]:
     """Context manager that shows a spinner while the task runs.
 
-    On success the spinner is replaced by a green ``✔``; on failure by a
+    On success the spinner is replaced by a green ``●``; on failure by a
     red ``✘``.  The line stays in the terminal permanently.
 
     Usage::
@@ -164,15 +164,15 @@ def status(description: str) -> Iterator[None]:
         raise
     else:
         progress.stop()
-        console.print(f" [green]✔[/green] {description}")
+        console.print(f" [green]●[/green] {description}")
 
 
 # ── Plain status line (no spinner, just a ✓/✘ prefix) ────────────────────────
 
 
 def ok(message: str) -> None:
-    """Print a green ``✔`` prefixed status line."""
-    console.print(f" [green]✔[/green] {message}")
+    """Print a green ``●`` prefixed status line."""
+    console.print(f" [green]●[/green] {message}")
 
 
 def fail(message: str) -> None:
@@ -195,7 +195,7 @@ def _print_batch_summary(
     elapsed: float,
 ) -> None:
     """Print a one-line summary after a batch completes."""
-    parts = [f"  [green]✔[/green] [bold]{phase}[/bold]"]
+    parts = [f"  [green]●[/green] [bold]{phase}[/bold]"]
     parts.append(f"[dim]{done}项[/dim]")
     if failed:
         parts.append(f"[red]失败={failed}[/red]")

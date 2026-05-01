@@ -18,7 +18,7 @@ from musicvault.adapters.processors.organizer import Organizer
 from musicvault.adapters.providers.pyncm_client import PyncmClient
 from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
-from musicvault.shared.output import info as output_info, warn as output_warn
+from musicvault.shared.output import warn as output_warn
 from musicvault.shared.tui_progress import BatchProgress
 from musicvault.shared.utils import load_json, safe_filename, save_json, workspace_rel_path
 
@@ -132,7 +132,7 @@ class ProcessService:
         pending, skipped = self._filter_pending(tasks, processed_index, force=force)
         logger.info("已处理索引过滤：阶段=%s force=%s 跳过=%s 待处理=%s", stage_name, force, skipped, len(pending))
         if not pending:
-            output_info(f"处理队列为空（全部已处理）：{stage_name}")
+            logger.info("处理队列为空（全部已处理）：%s", stage_name)
             return
 
         total = len(pending)
