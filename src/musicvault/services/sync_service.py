@@ -294,12 +294,19 @@ class SyncService:
                     if old_ly.exists():
                         shutil.move(str(old_ly), str(new_ly))
 
-                    entry["lossless"] = new_ll_rel
-                    entry["lossy"] = new_ly_rel
-                    changed = True
+                    # 仅当目标文件确实存在时才更新 entry
+                    if not new_ll.exists() and not new_ly.exists():
+                        logger.warning(
+                            "主歌单变化但源文件不存在，跳过：track_id=%s %s → %s",
+                            track_id, old_primary, new_primary,
+                        )
+                    else:
+                        entry["lossless"] = new_ll_rel
+                        entry["lossy"] = new_ly_rel
+                        changed = True
 
                     # 如果旧主歌单仍在新的分配中 → 创建硬链接回去
-                    if old_pids[0] in new_set:
+                    if old_pids[0] in new_set and new_ll.exists():
                         old_ll.parent.mkdir(parents=True, exist_ok=True)
                         old_ly.parent.mkdir(parents=True, exist_ok=True)
                         hardlink_or_copy(new_ll, old_ll)
@@ -362,6 +369,12 @@ class SyncService:
             if ll_rel and ly_rel:
                 ll_src = ws / ll_rel
                 ly_src = ws / ly_rel
+                if not ll_src.exists() or not ly_src.exists():
+                    logger.warning(
+                        "添加链接但源文件不存在，跳过：track_id=%s src=%s",
+                        track_id, ll_rel,
+                    )
+                    return changed
                 links = entry.get("links", [])
                 if not isinstance(links, list):
                     links = []

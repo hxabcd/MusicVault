@@ -54,7 +54,7 @@ def save_json(path: Path, value: Any) -> None:
 
 def hardlink_or_copy(src: Path, dst: Path) -> None:
     """如果可能则创建硬链接，否则回退到复制"""
-    if dst.exists():
+    if dst.exists() or not src.exists():
         return
     try:
         os.link(src, dst)
