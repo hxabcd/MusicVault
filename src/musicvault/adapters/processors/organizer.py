@@ -20,25 +20,29 @@ class Organizer:
             output_warn("未检测到 ffmpeg，转码功能将不可用")
 
     def route_audio(self, src: Path, track: Track, output_dir: Path) -> tuple[Path, Path]:
-        """输出 downloads/{track_id}.flac + downloads/{track_id}.mp3"""
+        """输出 canonical 文件到 output_dir。
+        无损源 → {track_id}.flac + {track_id}.mp3
+        有损源 → {track_id}.mp3（同时作为 lossless/lossy，用 ID3 存完整元数据）
+        """
         suffix = src.suffix.lower()
-        lossless_target = output_dir / f"{track.id}.flac"
-        lossy_target = output_dir / f"{track.id}.mp3"
 
         if self._is_lossless_suffix(suffix):
+            lossless_target = output_dir / f"{track.id}.flac"
+            lossy_target = output_dir / f"{track.id}.mp3"
             if suffix == ".flac":
                 self._copy(src, lossless_target)
             else:
                 self._transcode_to_flac(src, lossless_target)
             self._transcode_to_mp3(src, lossy_target)
+            return lossless_target, lossy_target
+
+        # 有损源：只产出 .mp3，作为 canonical 唯一文件
+        lossless_target = output_dir / f"{track.id}.mp3"
+        if suffix == ".mp3":
+            self._copy(src, lossless_target)
         else:
-            # 有损源 → 转码为 FLAC（保真，格式一致），同时输出有损 MP3
-            self._transcode_to_flac(src, lossless_target)
-            if suffix == ".mp3":
-                self._copy(src, lossy_target)
-            else:
-                self._transcode_to_mp3(src, lossy_target)
-        return lossless_target, lossy_target
+            self._transcode_to_mp3(src, lossless_target)
+        return lossless_target, lossless_target
 
     def _copy(self, src: Path, dst: Path) -> None:
         dst.parent.mkdir(parents=True, exist_ok=True)

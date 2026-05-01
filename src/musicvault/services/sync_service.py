@@ -161,11 +161,11 @@ class SyncService:
             track = all_tracks.get(track_id)
             if track is None:
                 continue
-            flac_src = self.cfg.downloads_dir / f"{track_id}.flac"
+            flac_src = self._find_lossless_canonical(track_id)
             mp3_src = self.cfg.downloads_dir / f"{track_id}.mp3"
-            if not flac_src.exists() or not mp3_src.exists():
+            if not flac_src or not mp3_src.exists():
                 continue
-            ll_dst = self.cfg.lossless_dir / new_safe / self._lossless_link_name(track)
+            ll_dst = self.cfg.lossless_dir / new_safe / self._lossless_link_name(track, flac_src.suffix)
             ly_dst = self.cfg.lossy_dir / new_safe / self._lossy_link_name(track)
             create_link(flac_src, ll_dst)
             create_link(mp3_src, ly_dst)
@@ -204,9 +204,9 @@ class SyncService:
             if track is None:
                 continue
 
-            flac_src = self.cfg.downloads_dir / f"{track_id}.flac"
+            flac_src = self._find_lossless_canonical(track_id)
             mp3_src = self.cfg.downloads_dir / f"{track_id}.mp3"
-            if not flac_src.exists() or not mp3_src.exists():
+            if not flac_src or not mp3_src.exists():
                 continue
 
             # 删除已移除歌单的链接
@@ -228,28 +228,35 @@ class SyncService:
         """在 library 中为一个歌单目录创建硬链接（人类可读文件名）。"""
         ll_dir = self.cfg.lossless_dir / dirname
         ly_dir = self.cfg.lossy_dir / dirname
-        create_link(flac_src, ll_dir / self._lossless_link_name(track))
+        create_link(flac_src, ll_dir / self._lossless_link_name(track, flac_src.suffix))
         create_link(mp3_src, ly_dir / self._lossy_link_name(track))
         lrc_src = mp3_src.with_suffix(".lrc")
         if lrc_src.exists():
             create_link(lrc_src, ly_dir / self._lossy_link_name(track).replace(".mp3", ".lrc"))
 
     def _remove_track_links(self, track: Track, dirname: str) -> None:
-        """删除 library 中一个歌单目录下的硬链接（人类可读文件名匹配）。"""
-        for parent, link_name in [
-            (self.cfg.lossless_dir, self._lossless_link_name(track)),
-            (self.cfg.lossy_dir, self._lossy_link_name(track)),
-        ]:
-            remove_link(parent / dirname / link_name)
-            remove_link(parent / dirname / link_name.replace(".mp3", ".lrc"))
+        """删除 library 中一个歌单目录下的硬链接（尝试 .flac / .mp3 两种扩展名）。"""
+        for suffix in (".flac", ".mp3"):
+            remove_link(self.cfg.lossless_dir / dirname / self._lossless_link_name(track, suffix))
+        ly_name = self._lossy_link_name(track)
+        remove_link(self.cfg.lossy_dir / dirname / ly_name)
+        remove_link(self.cfg.lossy_dir / dirname / ly_name.replace(".mp3", ".lrc"))
+
+    def _find_lossless_canonical(self, track_id: int) -> Path | None:
+        """查找 lossless canonical 文件（.flac 或 .mp3）。"""
+        for ext in (".flac", ".mp3"):
+            p = self.cfg.downloads_dir / f"{track_id}{ext}"
+            if p.exists():
+                return p
+        return None
 
     # ------------------------------------------------------------------
     # 链接文件名（与 ProcessService 保持一致）
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _lossless_link_name(track: Track) -> str:
-        return safe_filename(f"{track.artist_text} - {track.name}") + ".flac"
+    def _lossless_link_name(track: Track, suffix: str = ".flac") -> str:
+        return safe_filename(f"{track.artist_text} - {track.name}") + suffix
 
     @staticmethod
     def _lossy_link_name(track: Track) -> str:

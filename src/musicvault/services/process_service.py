@@ -164,8 +164,10 @@ class ProcessService:
         lossless_lyrics = build_lossless_lyrics(lyrics, include_translation=include_translation)
         lossy_lyrics = build_lossy_lyrics(lyrics, include_translation=include_translation)
 
+        same_file = lossless_path.resolve() == lossy_path.resolve()
         self.metadata.write(lossless_path, track_info, lyric_text=lossless_lyrics, is_lossless=True)
-        self.metadata.write(lossy_path, track_info, lyric_text=None, is_lossless=False)
+        if not same_file:
+            self.metadata.write(lossy_path, track_info, lyric_text=None, is_lossless=False)
         write_gb18030_lrc(lossy_path, lossy_lyrics, encodings=self.cfg.lossy_lrc_encodings)
 
         # 清理临时文件
@@ -193,7 +195,7 @@ class ProcessService:
         names = playlist_names or [_DEFAULT_PLAYLIST]
 
         for name in names:
-            ll_dst = self.cfg.lossless_dir / name / self._lossless_link_name(track)
+            ll_dst = self.cfg.lossless_dir / name / self._lossless_link_name(track, lossless_src.suffix)
             ly_dst = self.cfg.lossy_dir / name / self._lossy_link_name(track)
             lrc_dst = ly_dst.with_suffix(".lrc")
             create_link(lossless_src, ll_dst)
@@ -202,14 +204,14 @@ class ProcessService:
                 create_link(lrc_src, lrc_dst)
 
     def _unlink_track(self, track: Track, playlist_names: list[str]) -> None:
-        """删除指定歌单中的 library 硬链接。"""
+        """删除指定歌单中的 library 硬链接（尝试 .flac / .mp3 两种扩展名）。"""
         for name in playlist_names:
-            ll = self.cfg.lossless_dir / name / self._lossless_link_name(track)
+            for suffix in (".flac", ".mp3"):
+                ll = self.cfg.lossless_dir / name / self._lossless_link_name(track, suffix)
+                remove_link(ll)
             ly = self.cfg.lossy_dir / name / self._lossy_link_name(track)
-            lrc = ly.with_suffix(".lrc")
-            remove_link(ll)
             remove_link(ly)
-            remove_link(lrc)
+            remove_link(ly.with_suffix(".lrc"))
 
     def _update_track_links(
         self,
@@ -228,19 +230,27 @@ class ProcessService:
         if removed:
             self._unlink_track(track, list(removed))
         if added:
-            lossless_src = self.cfg.downloads_dir / f"{track.id}.flac"
+            lossless_src = self._find_lossless_canonical(track.id)
             lossy_src = self.cfg.downloads_dir / f"{track.id}.mp3"
-            if lossless_src.exists() and lossy_src.exists():
+            if lossless_src and lossy_src.exists():
                 self._link_track(lossless_src, lossy_src, track, list(added))
         return True
+
+    def _find_lossless_canonical(self, track_id: int) -> Path | None:
+        """查找 lossless canonical 文件（.flac 或 .mp3）。"""
+        for ext in (".flac", ".mp3"):
+            p = self.cfg.downloads_dir / f"{track_id}{ext}"
+            if p.exists():
+                return p
+        return None
 
     # ------------------------------------------------------------------
     # 链接文件名生成
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _lossless_link_name(track: Track) -> str:
-        return safe_filename(f"{track.artist_text} - {track.name}") + ".flac"
+    def _lossless_link_name(track: Track, suffix: str = ".flac") -> str:
+        return safe_filename(f"{track.artist_text} - {track.name}") + suffix
 
     @staticmethod
     def _lossy_link_name(track: Track) -> str:
