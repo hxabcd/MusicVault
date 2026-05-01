@@ -106,8 +106,7 @@ def _make_config(tmp_path: Path) -> Config:
     cfg.lossy_dir = tmp_path / "library" / "lossy"
     cfg.downloads_dir = tmp_path / "downloads"
     cfg.filename_lossless = "{artist} - {name}"
-    cfg.filename_lossy = "{prefix}{name} - {artist}"
-    cfg.include_alias_in_filename = True
+    cfg.filename_lossy = "{alias} {name} - {artist}"
     return cfg
 
 
@@ -257,7 +256,6 @@ class TestLinkNames:
     def test_lossless_link_name(self) -> None:
         cfg = MagicMock(spec=Config)
         cfg.filename_lossless = "{artist} - {name}"
-        cfg.include_alias_in_filename = True
         svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
         track = Track(id=1, name="Song", artists=["Artist"], album="A", cover_url=None, raw={})
         name = svc._lossless_link_name(track)
@@ -265,8 +263,7 @@ class TestLinkNames:
 
     def test_lossy_link_name(self) -> None:
         cfg = MagicMock(spec=Config)
-        cfg.filename_lossy = "{prefix}{name} - {artist}"
-        cfg.include_alias_in_filename = True
+        cfg.filename_lossy = "{alias} {name} - {artist}"
         svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
         track = Track(id=1, name="Song", artists=["Artist"], album="A", cover_url=None, raw={})
         name = svc._lossy_link_name(track)
@@ -274,18 +271,16 @@ class TestLinkNames:
 
     def test_lossy_link_name_with_alias(self) -> None:
         cfg = MagicMock(spec=Config)
-        cfg.filename_lossy = "{prefix}{name} - {artist}"
-        cfg.include_alias_in_filename = True
+        cfg.filename_lossy = "{alias} {name} - {artist}"
         svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
         track = Track(id=1, name="Song", artists=["Artist"], album="A", aliases=["Alias"], cover_url=None, raw={})
         name = svc._lossy_link_name(track)
         assert name == "Alias Song - Artist.mp3"
 
-    def test_lossy_link_name_alias_disabled(self) -> None:
+    def test_lossy_link_name_no_alias(self) -> None:
         cfg = MagicMock(spec=Config)
-        cfg.filename_lossy = "{prefix}{name} - {artist}"
-        cfg.include_alias_in_filename = False
+        cfg.filename_lossy = "{alias} {name} - {artist}"
         svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
-        track = Track(id=1, name="Song", artists=["Artist"], album="A", aliases=["Alias"], cover_url=None, raw={})
+        track = Track(id=1, name="Song", artists=["Artist"], album="A", cover_url=None, raw={})
         name = svc._lossy_link_name(track)
         assert name == "Song - Artist.mp3"

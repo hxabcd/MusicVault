@@ -4,6 +4,7 @@ import argparse
 import getpass
 import logging
 import os
+import signal
 import sys
 import time
 from pathlib import Path
@@ -17,7 +18,23 @@ from musicvault.shared.output import warn as output_warn
 from musicvault.shared.tui_progress import console
 
 _DEFAULT_CONFIG = os.environ.get("MUSIC_VAULT_CONFIG", "./config.json")
+_force_exit = False
 logger: logging.Logger
+
+
+def _handle_double_sigint(signum: int, frame: object) -> None:
+    """双击 Ctrl+C 的 SIGINT 处理器。
+
+    首次 Ctrl+C → 触发 KeyboardInterrupt，走优雅关闭流程（保存状态等）。
+    再次 Ctrl+C → 直接 os._exit(130)，立即强制终止。
+    """
+    global _force_exit
+    if _force_exit:
+        sys.stderr.write("\n再次 Ctrl+C 强制退出\n")
+        sys.stderr.flush()
+        os._exit(130)
+    _force_exit = True
+    raise KeyboardInterrupt
 
 
 def _silence_libs() -> None:
@@ -91,9 +108,12 @@ def build_parser() -> argparse.ArgumentParser:
     add_pl.add_argument(
         "input",
         type=str,
-        nargs="?",
+        nargs="*",
         default=None,
-        help="歌单 ID 或链接（如 https://music.163.com/playlist?id=xxx），不提供则从账号歌单中选择",
+        help="歌单 ID 或链接，不提供则从账号歌单中选择",
+    )
+    add_pl.add_argument(
+        "--song", type=int, nargs="+", default=None, help="直接添加单曲 ID（可多个）"
     )
     add_pl.add_argument("--cookie", default=None, help="网易云 Cookie")
     add_pl.add_argument(
@@ -109,11 +129,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="歌单 ID，不提供则从已添加歌单中选择",
     )
+    rm_pl.add_argument(
+        "--song", type=int, nargs="+", default=None, help="移除单曲 ID（可多个）"
+    )
     rm_pl.add_argument("--cookie", default=None, help="网易云 Cookie（用于同步）")
     rm_pl.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）")
     rm_pl.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
 
     ls_pl = sub.add_parser("list", aliases=["ls"], help="查看已添加的歌单")
+    ls_pl.add_argument("--song", action="store_true", help="查看单独管理的单曲列表")
     ls_pl.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）")
     ls_pl.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
 
@@ -121,6 +145,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # 安装双击 Ctrl+C 信号处理器：首次→优雅关闭，再次→强制终止
+    signal.signal(signal.SIGINT, _handle_double_sigint)
+
     parser = build_parser()
     raw_args = argv if argv is not None else sys.argv[1:]
 

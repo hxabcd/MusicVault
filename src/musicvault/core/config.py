@@ -7,7 +7,7 @@ from typing import Any
 
 from musicvault.shared.utils import load_json, save_json
 
-DEFAULT_LOSSY_LRC_ENCODINGS = ("gb18030", "utf-8-sig")
+DEFAULT_LOSSY_LRC_ENCODINGS = ("utf-8",)
 
 _DOWNLOAD_QUALITY_VALUES = frozenset({"standard", "higher", "exhire", "hires", "lossless"})
 _LOSSY_FORMAT_VALUES = frozenset({"mp3", "aac", "ogg", "opus"})
@@ -30,14 +30,13 @@ class Config:
     lossy_bitrate: str = "192k"
     lossy_format: str = "mp3"
     translation_format: str = "separate"
-    include_alias_in_filename: bool = True
     download_quality: str = "hires"
     embed_cover: bool = True
     cover_max_size_kb: int = 0
     lyrics_embed_in_metadata: bool = True
     lyrics_write_lrc_file: bool = True
     filename_lossless: str = "{artist} - {name}"
-    filename_lossy: str = "{prefix}{name} - {artist}"
+    filename_lossy: str = "{alias} {name} - {artist}"
     network_download_timeout: int = 30
     network_api_timeout: int = 15
     network_cover_timeout: int = 15
@@ -59,6 +58,10 @@ class Config:
     @property
     def downloads_dir(self) -> Path:
         return self.workspace_path / "downloads"
+
+    @property
+    def downloads_cache_dir(self) -> Path:
+        return self.downloads_dir / "cache"
 
     @property
     def state_dir(self) -> Path:
@@ -88,11 +91,38 @@ class Config:
         for path in (
             self.workspace_path,
             self.downloads_dir,
+            self.downloads_cache_dir,
             self.state_dir,
             self.lossless_dir,
             self.lossy_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def _songs_path(self) -> Path:
+        return self.state_dir / "songs.json"
+
+    def get_song_ids(self) -> list[int]:
+        data = load_json(self._songs_path, {})
+        ids = data.get("ids", [])
+        return sorted(int(x) for x in ids if isinstance(x, (int, str)))
+
+    def has_song(self, song_id: int) -> bool:
+        return song_id in self.get_song_ids()
+
+    def add_song(self, song_id: int) -> None:
+        self.ensure_dirs()
+        ids = set(self.get_song_ids())
+        ids.add(song_id)
+        save_json(self._songs_path, {"ids": sorted(ids)})
+
+    def remove_song(self, song_id: int) -> None:
+        ids = set(self.get_song_ids())
+        ids.discard(song_id)
+        if ids:
+            save_json(self._songs_path, {"ids": sorted(ids)})
+        elif self._songs_path.exists():
+            self._songs_path.unlink()
 
     @property
     def _playlist_index_path(self) -> Path:
@@ -160,7 +190,6 @@ class Config:
         if translation_format not in ("separate", "inline"):
             raise RuntimeError(f"translation_format 格式错误：需为 separate 或 inline，当前={translation_format}")
 
-        include_alias_in_filename = bool(raw.get("include_alias_in_filename", True))
 
         # -- download section --
         download = raw.get("download") or {}
@@ -188,7 +217,7 @@ class Config:
         if not isinstance(filenames, dict):
             filenames = {}
         filename_lossless = str(filenames.get("lossless") or "{artist} - {name}").strip()
-        filename_lossy = str(filenames.get("lossy") or "{prefix}{name} - {artist}").strip()
+        filename_lossy = str(filenames.get("lossy") or "{alias} {name} - {artist}").strip()
 
         # -- network section --
         network = raw.get("network") or {}
@@ -260,7 +289,6 @@ class Config:
             lossy_bitrate=lossy_bitrate,
             lossy_format=lossy_format,
             translation_format=translation_format,
-            include_alias_in_filename=include_alias_in_filename,
             download_quality=download_quality,
             embed_cover=embed_cover,
             cover_max_size_kb=cover_max_size_kb,
@@ -307,7 +335,7 @@ class Config:
         path = Path(file) if file is not None else self._file
         if path is None:
             raise RuntimeError("配置文件路径为空，无法保存")
-        save_json(path, self.to_dict())
+        save_json(path, self.to_dict(), indent=2)
         self._file = path
 
     def to_dict(self) -> dict[str, Any]:
@@ -317,7 +345,6 @@ class Config:
             "force": self.force,
             "include_translation": self.include_translation,
             "translation_format": self.translation_format,
-            "include_alias_in_filename": self.include_alias_in_filename,
             "text_cleaning": {
                 "enabled": self.text_cleaning_enabled,
                 "allowlist": self.text_cleaning_allowlist,

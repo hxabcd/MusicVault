@@ -64,34 +64,49 @@ class SyncService:
 
     def run_sync(self, cookie: str, playlist_ids: list[int]) -> list[DownloadedTrack]:
         self._cleanup_stale_state()
-        if not playlist_ids:
-            output_warn("未配置任何歌单，请先执行 msv add 添加歌单")
+        song_ids = self.cfg.get_song_ids()
+        if not playlist_ids and not song_ids:
+            output_warn("未配置任何歌单或单曲，请先执行 msv add 添加歌单或 msv add --song <ID> 添加单曲")
             return []
 
         self.api.login_with_cookie(cookie)
-        logger.info("将同步 %s 个歌单", len(playlist_ids))
-
-        # 收集歌单元数据 + 建立 track → playlist_ids 映射
         playlist_index = load_json(self.cfg.state_dir / "playlists.json", {})
         track_playlists: dict[int, list[int]] = {}
         all_tracks: dict[int, Track] = {}
         pending_renames: list[tuple[int, str, str]] = []
 
-        for pid in playlist_ids:
-            info = self.api.get_playlist_info(pid)
-            old_entry = playlist_index.get(str(pid))
-            old_name = old_entry.get("name") if old_entry else None
-            new_name = info["name"]
-            if old_name and old_name != new_name:
-                pending_renames.append((pid, old_name, new_name))
-            playlist_index[str(pid)] = {"name": info["name"], "track_count": info["track_count"]}
-            tracks = self.api.get_playlist_tracks(pid)
-            for track in tracks:
-                all_tracks[track.id] = track
-                track_playlists.setdefault(track.id, []).append(pid)
+        if playlist_ids:
+            logger.info("将同步 %s 个歌单", len(playlist_ids))
+            for pid in playlist_ids:
+                info = self.api.get_playlist_info(pid)
+                old_entry = playlist_index.get(str(pid))
+                old_name = old_entry.get("name") if old_entry else None
+                new_name = info["name"]
+                if old_name and old_name != new_name:
+                    pending_renames.append((pid, old_name, new_name))
+                playlist_index[str(pid)] = {"name": info["name"], "track_count": info["track_count"]}
+                tracks = self.api.get_playlist_tracks(pid)
+                for track in tracks:
+                    all_tracks[track.id] = track
+                    track_playlists.setdefault(track.id, []).append(pid)
 
         for pid, old_name, new_name in pending_renames:
             self._handle_playlist_rename(pid, old_name, new_name, all_tracks)
+
+        # 获取单独管理的单曲
+        if song_ids:
+            logger.info("将同步 %s 首单独管理的单曲", len(song_ids))
+            song_details = self.api.get_tracks_detail(song_ids)
+            for sid, track in song_details.items():
+                if track.id not in all_tracks:
+                    all_tracks[track.id] = track
+                    track_playlists.setdefault(track.id, [])
+                # 过滤本地已删除但仍在 songs.json 中的旧 ID
+                missing = sorted(set(song_ids) - set(song_details.keys()))
+                if missing:
+                    for mid in missing:
+                        self.cfg.remove_song(mid)
+                    logger.info("清理无效单曲 ID：%s", missing)
 
         save_json(self.cfg.state_dir / "playlists.json", playlist_index)
         self.playlist_index = playlist_index
@@ -109,7 +124,8 @@ class SyncService:
 
         # 单行摘要
         added = len(downloaded)
-        console.print(f"  从 [cyan]{len(playlist_ids)}[/cyan] 个歌单同步 [cyan]{len(unique)}[/cyan] 首")
+        n_playlists = len(playlist_ids) + (1 if song_ids else 0)
+        console.print(f"  从 [cyan]{n_playlists}[/cyan] 个歌单同步 [cyan]{len(unique)}[/cyan] 首")
         stats: list[str] = []
         if added:
             stats.append(f"[green]+{added} 首[/green]")
@@ -261,15 +277,11 @@ class SyncService:
     # ------------------------------------------------------------------
 
     def _lossless_link_name(self, track: Track, suffix: str = ".flac") -> str:
-        stem = format_track_name(
-            self.cfg.filename_lossless, track, include_alias_prefix=self.cfg.include_alias_in_filename
-        )
+        stem = format_track_name(self.cfg.filename_lossless, track)
         return stem + suffix
 
     def _lossy_link_name(self, track: Track, suffix: str = ".mp3") -> str:
-        stem = format_track_name(
-            self.cfg.filename_lossy, track, include_alias_prefix=self.cfg.include_alias_in_filename
-        )
+        stem = format_track_name(self.cfg.filename_lossy, track)
         return stem + suffix
 
     def _pid_to_dirname(self, pid: int, playlist_index: dict[str, dict[str, object]]) -> str:
@@ -361,7 +373,7 @@ class SyncService:
 
         with ThreadPoolExecutor(max_workers=workers) as pool, BatchProgress(total=total, phase="下载中") as bp:
             future_map = {
-                pool.submit(self.downloader.download_track, track, url, self.cfg.downloads_dir): (idx, track)
+                pool.submit(self.downloader.download_track, track, url, self.cfg.downloads_cache_dir): (idx, track)
                 for idx, (track, url) in enumerate(tasks, start=1)
             }
             try:

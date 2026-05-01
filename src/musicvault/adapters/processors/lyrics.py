@@ -254,7 +254,7 @@ def _is_json_metadata_line(line: str) -> bool:
 def write_gb18030_lrc(
     target_audio: Path,
     lyric_text: str,
-    encodings: tuple[str, ...] = ("gb18030", "utf-8-sig"),
+    encodings: tuple[str, ...] = ("utf-8",),
 ) -> Path:
     """为目标音频写入 `.lrc` 文件，按配置编码顺序尝试写入。"""
     lrc_path = target_audio.with_suffix(".lrc")
@@ -265,7 +265,7 @@ def write_gb18030_lrc(
     # 2) 全部失败时保底 UTF-8 replace，避免流程中断。
     fallback_encodings = tuple(encoding for encoding in encodings if str(encoding).strip())
     if not fallback_encodings:
-        fallback_encodings = ("gb18030", "utf-8-sig")
+        fallback_encodings = ("utf-8",)
     first_encoding = fallback_encodings[0]
     for encoding in fallback_encodings:
         try:

@@ -20,29 +20,50 @@ logger = logging.getLogger(__name__)
 def handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
     if args.command == "add":
         cookie = getattr(args, "cookie", None) or cfg.cookie
+        has_songs = bool(getattr(args, "song", None))
+        inputs = getattr(args, "input", None) or []
 
-        if args.input is None:
+        if has_songs:
+            _add_songs(args.song, cfg)
+
+        if not inputs and not has_songs:
             return _add_playlist_interactive(cfg, cookie)
 
-        try:
-            pid = _parse_playlist_id(args.input)
-        except RuntimeError as exc:
-            output_error(str(exc))
-            return 1
+        result = 0
+        for raw in inputs:
+            try:
+                pid = _parse_playlist_id(raw)
+            except RuntimeError as exc:
+                output_error(str(exc))
+                result = 1
+                continue
+            if _add_playlist_by_id(pid, cfg, cookie) != 0:
+                result = 1
 
-        return _add_playlist_by_id(pid, cfg, cookie)
+        return 0 if result == 0 and not (has_songs and not inputs) else result
 
     elif args.command == "remove":
-        if args.playlist_id is None:
+        has_songs = bool(getattr(args, "song", None))
+
+        if has_songs:
+            _remove_songs(args.song, cfg)
+
+        if args.playlist_id is not None:
+            if not cfg.has_playlist(args.playlist_id):
+                output_warn(f"歌单 {args.playlist_id} 不存在，无法移除")
+                return 1
+            _cleanup_playlist_files(args.playlist_id, cfg)
+            cfg.remove_playlist(args.playlist_id)
+            output_success(f"已移除歌单：{args.playlist_id}")
+            return 0
+
+        if not has_songs:
             return _remove_playlist_interactive(cfg)
-        if not cfg.has_playlist(args.playlist_id):
-            output_warn(f"歌单 {args.playlist_id} 不存在，无法移除")
-            return 1
-        _cleanup_playlist_files(args.playlist_id, cfg)
-        cfg.remove_playlist(args.playlist_id)
-        output_success(f"已移除歌单：{args.playlist_id}")
 
     elif args.command in ("list", "ls"):
+        if getattr(args, "song", False):
+            return _list_songs(cfg)
+
         playlist_ids = cfg.get_playlist_ids()
         if playlist_ids:
             cached = _load_playlist_index(cfg)
@@ -357,3 +378,55 @@ def _parse_selection(raw: str, max_num: int) -> list[int]:
             except ValueError:
                 output_warn(f"无效编号：{part}，已跳过")
     return sorted(selected)
+
+
+# ---------------------------------------------------------------------------
+# 单曲管理 (--song)
+# ---------------------------------------------------------------------------
+
+
+def _add_songs(song_ids: list[int], cfg: Config) -> None:
+    added = 0
+    for sid in song_ids:
+        if cfg.has_song(sid):
+            output_warn(f"单曲 {sid} 已存在，跳过")
+            continue
+        cfg.add_song(sid)
+        output_success(f"已添加单曲：{sid}")
+        added += 1
+    if added == 0:
+        output_info("未添加任何新单曲")
+
+
+def _remove_songs(song_ids: list[int], cfg: Config) -> None:
+    removed = 0
+    for sid in song_ids:
+        if not cfg.has_song(sid):
+            output_warn(f"单曲 {sid} 不存在，跳过")
+            continue
+        cfg.remove_song(sid)
+        # 删除 canonical 文件
+        for ext in (".flac", ".mp3", ".lrc"):
+            (cfg.downloads_dir / f"{sid}{ext}").unlink(missing_ok=True)
+        output_success(f"已移除单曲：{sid}")
+        removed += 1
+    if removed == 0:
+        output_info("未移除任何单曲")
+
+
+def _list_songs(cfg: Config) -> int:
+    song_ids = cfg.get_song_ids()
+    if not song_ids:
+        output_info("尚未添加任何单曲，请执行 msv add --song <ID> 添加")
+        return 0
+
+    from musicvault.shared.tui_progress import console as c
+
+    table = Table(show_header=False, box=None, padding=(0, 2), collapse_padding=True)
+    table.add_column(style="cyan")
+    table.add_column(style="dim")
+    for sid in song_ids:
+        table.add_row(str(sid), "")
+    c.print("[bold]当前管理的单曲：[/bold]")
+    c.print(table, highlight=False)
+    return 0

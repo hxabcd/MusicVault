@@ -141,25 +141,14 @@ class TestFormatTrackName:
         t = self._make_track(aliases=["Alias1", "Alias2"])
         assert format_track_name("{alias}", t) == "Alias1"
 
-    def test_aliases_placeholder(self) -> None:
-        t = self._make_track(aliases=["A1", "A2"])
-        result = format_track_name("{aliases}", t)
-        assert "A1" in result
-        assert "A2" in result
-
-    def test_prefix_with_alias(self) -> None:
+    def test_alias_with_value(self) -> None:
         t = self._make_track(aliases=["AKA"])
-        result = format_track_name("{prefix}{name} - {artist}", t, include_alias_prefix=True)
+        result = format_track_name("{alias} {name} - {artist}", t)
         assert result == "AKA Song - Artist"
 
-    def test_prefix_without_alias(self) -> None:
+    def test_alias_no_value(self) -> None:
         t = self._make_track()
-        result = format_track_name("{prefix}{name} - {artist}", t, include_alias_prefix=True)
-        assert result == "Song - Artist"
-
-    def test_prefix_disabled(self) -> None:
-        t = self._make_track(aliases=["AKA"])
-        result = format_track_name("{prefix}{name} - {artist}", t, include_alias_prefix=False)
+        result = format_track_name("{alias} {name} - {artist}", t)
         assert result == "Song - Artist"
 
     def test_album_placeholder(self) -> None:

@@ -19,24 +19,22 @@ logger = logging.getLogger(__name__)
 
 def safe_filename(name: str, fallback: str = "untitled") -> str:
     """将文本转成可安全落盘的文件名"""
-    clean = INVALID_FILENAME_RE.sub("_", name).strip(" .")
+    compacted = re.sub(r" {2,}", " ", name)
+    clean = INVALID_FILENAME_RE.sub("_", compacted).strip(" .")
     return clean or fallback
 
 
-def format_track_name(template: str, track: "Track", *, include_alias_prefix: bool = True) -> str:
+def format_track_name(template: str, track: "Track") -> str:
     """用模板格式化曲目文件名。
 
     支持的占位符：
         {name} / {title}  -- 歌曲名
         {artist}          -- 歌手（多个以 / 分隔）
-        {alias}           -- 第一个别名
-        {aliases}         -- 全部别名（/ 分隔）
-        {prefix}          -- 别名前缀（有别名时为 "{alias} "，否则为空）
+        {alias}           -- 第一个别名（无别名时为空）
         {album}           -- 专辑名
         {track_id}        -- 曲目 ID
     """
-    aliases_text = "/".join(track.aliases) if track.aliases else ""
-    prefix = f"{track.alias} " if (include_alias_prefix and track.alias) else ""
+    alias_text = track.alias or ""
 
     def _replacer(m: re.Match[str]) -> str:
         key = m.group(1)
@@ -45,11 +43,7 @@ def format_track_name(template: str, track: "Track", *, include_alias_prefix: bo
         if key == "artist":
             return track.artist_text
         if key == "alias":
-            return track.alias or ""
-        if key == "aliases":
-            return aliases_text
-        if key == "prefix":
-            return prefix
+            return alias_text
         if key == "album":
             return track.album
         if key == "track_id":
@@ -83,12 +77,12 @@ def load_json(path: Path, default: Any) -> Any:
         return default
 
 
-def save_json(path: Path, value: Any) -> None:
+def save_json(path: Path, value: Any, indent: int | None = None) -> None:
     """写入 JSON 文件并自动创建父目录"""
     # 先写临时文件再替换，降低中断导致的 JSON 损坏概率。
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path.write_text(json.dumps(value, ensure_ascii=False, indent=indent), encoding="utf-8")
     tmp_path.replace(path)
 
 

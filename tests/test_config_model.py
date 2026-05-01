@@ -13,7 +13,7 @@ def test_load_creates_default_file() -> None:
         cfg = Config.load(path)
         assert path.exists()
         assert cfg.workspace == "./workspace"
-        assert cfg.lossy_lrc_encodings == ("gb18030", "utf-8-sig")
+        assert cfg.lossy_lrc_encodings == ("utf-8",)
 
 
 def test_load_and_save_roundtrip() -> None:
@@ -28,7 +28,6 @@ def test_load_and_save_roundtrip() -> None:
                     "force": True,
                     "include_translation": False,
                     "translation_format": "inline",
-                    "include_alias_in_filename": False,
                     "text_cleaning": {"enabled": False},
                     "workers": {"download": 3, "process": 2, "ffmpeg_threads": 5},
                     "lyrics": {"lossy_lrc_encodings": ["utf-8-sig", "gb18030"]},
@@ -42,7 +41,6 @@ def test_load_and_save_roundtrip() -> None:
         assert cfg.workspace == "./workspace2"
         assert not cfg.include_translation
         assert cfg.translation_format == "inline"
-        assert not cfg.include_alias_in_filename
         assert cfg.lossy_bitrate == "256k"
         assert not cfg.text_cleaning_enabled
         assert cfg.download_workers == 3
@@ -58,7 +56,6 @@ def test_load_and_save_roundtrip() -> None:
         # 保存后 config 中不应再有 playlist_ids
         assert "playlist_ids" not in loaded
         assert loaded["translation_format"] == "inline"
-        assert not loaded["include_alias_in_filename"]
         assert loaded["lossy"]["bitrate"] == "256k"
 
 
@@ -68,7 +65,6 @@ def test_new_fields_have_defaults() -> None:
         cfg = Config.load(path)
         assert cfg.lossy_bitrate == "192k"
         assert cfg.translation_format == "separate"
-        assert cfg.include_alias_in_filename is True
 
 
 def test_translation_format_validation() -> None:
@@ -120,7 +116,7 @@ def test_all_new_fields_defaults() -> None:
         assert cfg.lyrics_embed_in_metadata is True
         assert cfg.lyrics_write_lrc_file is True
         assert cfg.filename_lossless == "{artist} - {name}"
-        assert cfg.filename_lossy == "{prefix}{name} - {artist}"
+        assert cfg.filename_lossy == "{alias} {name} - {artist}"
         assert cfg.network_download_timeout == 30
         assert cfg.network_max_retries == 3
         assert cfg.lossy_format == "mp3"
@@ -182,3 +178,60 @@ def test_new_fields_in_roundtrip() -> None:
         assert loaded["metadata"]["fields"] == ["year", "genre"]
         assert loaded["process"]["keep_downloads"] is True
         assert loaded["playlist"]["default_name"] == "其他"
+
+
+class TestSongManagement:
+    def test_add_and_get_songs(self) -> None:
+        with TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            cfg = Config(workspace=str(ws))
+            cfg.ensure_dirs()
+            assert cfg.get_song_ids() == []
+
+            cfg.add_song(123)
+            cfg.add_song(456)
+            assert cfg.get_song_ids() == [123, 456]
+
+    def test_add_duplicate(self) -> None:
+        with TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            cfg = Config(workspace=str(ws))
+            cfg.add_song(100)
+            cfg.add_song(100)
+            assert cfg.get_song_ids() == [100]
+
+    def test_has_song(self) -> None:
+        with TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            cfg = Config(workspace=str(ws))
+            cfg.add_song(42)
+            assert cfg.has_song(42) is True
+            assert cfg.has_song(99) is False
+
+    def test_remove_song(self) -> None:
+        with TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            cfg = Config(workspace=str(ws))
+            cfg.add_song(1)
+            cfg.add_song(2)
+            cfg.remove_song(1)
+            assert cfg.get_song_ids() == [2]
+
+    def test_remove_last_song_deletes_file(self) -> None:
+        with TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            cfg = Config(workspace=str(ws))
+            cfg.add_song(1)
+            assert cfg._songs_path.exists()
+            cfg.remove_song(1)
+            assert not cfg._songs_path.exists()
+
+    def test_songs_survive_roundtrip(self) -> None:
+        with TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            cfg1 = Config(workspace=str(ws))
+            cfg1.add_song(10)
+            cfg1.add_song(20)
+
+            cfg2 = Config(workspace=str(ws))
+            assert cfg2.get_song_ids() == [10, 20]

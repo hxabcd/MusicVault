@@ -266,15 +266,11 @@ class ProcessService:
     # ------------------------------------------------------------------
 
     def _lossless_link_name(self, track: Track, suffix: str = ".flac") -> str:
-        stem = format_track_name(
-            self.cfg.filename_lossless, track, include_alias_prefix=self.cfg.include_alias_in_filename
-        )
+        stem = format_track_name(self.cfg.filename_lossless, track)
         return stem + suffix
 
     def _lossy_link_name(self, track: Track, suffix: str = ".mp3") -> str:
-        stem = format_track_name(
-            self.cfg.filename_lossy, track, include_alias_prefix=self.cfg.include_alias_in_filename
-        )
+        stem = format_track_name(self.cfg.filename_lossy, track)
         return stem + suffix
 
     # ------------------------------------------------------------------
@@ -394,9 +390,9 @@ class ProcessService:
 
     def _iter_downloads(self) -> Iterable[Path]:
         allowed = {".ncm", ".flac", ".mp3", ".m4a", ".aac", ".wav"}
-        if not self.cfg.downloads_dir.exists():
+        if not self.cfg.downloads_cache_dir.exists():
             return
-        for file_path in self.cfg.downloads_dir.iterdir():
+        for file_path in self.cfg.downloads_cache_dir.iterdir():
             if file_path.is_file() and file_path.suffix.lower() in allowed:
                 yield file_path
 
