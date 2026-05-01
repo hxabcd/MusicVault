@@ -137,31 +137,19 @@ def main(argv: list[str] | None = None) -> int:
 
     _configure_logs(verbose=args.verbose)
 
-    if args.command in ("add", "remove", "list", "ls"):
-        result = handle_playlist_mgmt(args, cfg)
-        if args.command in ("list", "ls") or result != 0:
-            return result
-        # add/remove 成功后继续执行 pipeline
-
     existed = cfg_path.exists()
     if existed:
-        logger.info(f"已加载配置文件：{cfg_path}")
+        logger.info("已加载配置文件：%s", cfg_path)
     else:
-        logger.info(f"配置文件不存在，已按默认值自动生成：{cfg_path}")
+        logger.info("配置文件不存在，已按默认值自动生成：%s", cfg_path)
 
-    cookie = args.cookie or cfg.cookie
-    first_login = not cookie
-    if first_login:
-        console.print()
-        console.print("[bold]首次使用需要登录网易云音乐账号[/bold]")
-        cookie = _interactive_login()
-        if not cookie:
-            output_error("登录失败或已取消")
-            return 2
-        cfg.cookie = cookie
-        cfg.save()
-        output_success("登录信息已保存")
+    # 任意需要 API 的操作前先确保登录
+    cookie, just_logged_in = _ensure_cookie(args, cfg)
+    if cookie is None:
+        return 2
 
+    # sync / pull 首次登录后退出，让用户有机会配置歌单
+    if args.command in ("sync", "pull") and just_logged_in:
         if not cfg.playlist_ids:
             console.print(
                 """
@@ -175,7 +163,13 @@ def main(argv: list[str] | None = None) -> int:
   [dim]　　　若未添加歌单，默认同步我喜欢的音乐[/dim]""",
                 highlight=False,
             )
-            return 0
+        return 0
+
+    if args.command in ("add", "remove", "list", "ls"):
+        result = handle_playlist_mgmt(args, cfg)
+        if args.command in ("list", "ls") or result != 0:
+            return result
+        # add/remove 成功后继续执行 pipeline
 
     workspace = getattr(args, "workspace", None)
     if workspace is not None:
@@ -185,6 +179,9 @@ def main(argv: list[str] | None = None) -> int:
     if getattr(args, "no_translation", False):
         cfg.include_translation = False
 
+    # add / remove 成功后自动执行 sync；其余子命令照原样传递
+    pipeline_cmd = args.command if args.command in ("sync", "pull", "process") else "sync"
+
     from musicvault.adapters.providers.pyncm_client import PyncmClient
     from musicvault.services.run_service import RunService
 
@@ -193,15 +190,35 @@ def main(argv: list[str] | None = None) -> int:
         api=PyncmClient(text_cleaning_enabled=cfg.text_cleaning_enabled),
     )
     try:
-        service.run_pipeline(
-            cookie=cookie,
-            command="sync",
-        )
+        service.run_pipeline(cookie=cookie, command=pipeline_cmd)
     except KeyboardInterrupt:
         console.print()
         output_warn("已取消")
         return 130
     return 0
+
+
+def _ensure_cookie(args: argparse.Namespace, cfg: Config) -> tuple[str | None, bool]:
+    """获取或引导登录，返回 (cookie, just_logged_in)。
+
+    - 已有 cookie 则直接返回
+    - 否则进入交互式登录；成功后保存到配置文件
+    - 登录失败返回 (None, False)
+    """
+    cookie = args.cookie or cfg.cookie
+    if cookie:
+        return cookie, False
+
+    console.print()
+    console.print("[bold]首次使用需要登录网易云音乐账号[/bold]")
+    cookie = _interactive_login()
+    if not cookie:
+        output_error("登录失败或已取消")
+        return None, False
+    cfg.cookie = cookie
+    cfg.save()
+    output_success("登录信息已保存")
+    return cookie, True
 
 
 def _render_qrcode(url: str) -> str:
