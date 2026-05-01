@@ -7,7 +7,8 @@
       "Bash(ruff *)",
       "Bash(.venv/Scripts/python -m pytest *)",
       "Bash(.venv/Scripts/ruff *)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Base(cd \"D:\\MyPC\\Advanced\\Code\\Python\\Projects\\MusicVault\" && uv run ruff)"
     ]
   }
 }

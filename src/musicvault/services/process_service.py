@@ -162,7 +162,6 @@ class ProcessService:
             except KeyboardInterrupt:
                 pool.shutdown(wait=False, cancel_futures=True)
                 if processed_index:
-                    output_warn(f"Ctrl+C 中断，保存已完成的 {len(processed_index)} 项处理...")
                     self._save_processed_index(processed_index)
                 raise
 

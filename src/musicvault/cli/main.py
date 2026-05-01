@@ -71,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
     sync = sub.add_parser("sync", help="同步音乐", description="拉取并处理音乐")
     _add_common_args(sync)
 
-    pull = sub.add_parser("pull", help="拉取音乐", description="从网易云歌单同步并下载音乐。默认使用我喜欢的音乐")
+    pull = sub.add_parser("pull", help="拉取音乐", description="从网易云歌单同步并下载音乐")
     _add_common_args(pull)
 
     process = sub.add_parser(
@@ -159,8 +159,7 @@ def main(argv: list[str] | None = None) -> int:
     开始同步：[bold]msv sync[/bold]
     查看帮助：[bold]msv help[/bold]
 
-  [dim]提示：歌单链接可从网易云音乐客户端分享获取[/dim]
-  [dim]　　　若未添加歌单，默认同步我喜欢的音乐[/dim]""",
+  [dim]提示：歌单链接可从网易云音乐客户端分享获取[/dim]""",
                 highlight=False,
             )
         return 0
@@ -192,8 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         service.run_pipeline(cookie=cookie, command=pipeline_cmd)
     except KeyboardInterrupt:
-        console.print()
-        output_warn("已取消")
+        output_info("已取消")
         return 130
     return 0
 
@@ -205,7 +203,7 @@ def _ensure_cookie(args: argparse.Namespace, cfg: Config) -> tuple[str | None, b
     - 否则进入交互式登录；成功后保存到配置文件
     - 登录失败返回 (None, False)
     """
-    cookie = args.cookie or cfg.cookie
+    cookie = getattr(args, "cookie", None) or cfg.cookie
     if cookie:
         return cookie, False
 
@@ -321,7 +319,7 @@ def _interactive_login() -> str | None:
                 output_warn("登录成功但无法提取 Cookie，请尝试其他方式")
                 continue
 
-            console.print(f"\n  [green]●[/green] 登录成功：[bold]{result.nickname}[/bold]")
+            console.print(f"\n[green]●[/green] 登录成功：[bold]{result.nickname}[/bold]")
             output_info("Cookie 已保存到配置文件")
             return cookie
 

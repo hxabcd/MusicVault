@@ -79,7 +79,7 @@ class BatchProgress:
     def __exit__(self, *exc_args: object) -> None:
         self._live.stop()
         elapsed = time.perf_counter() - self._start
-        _print_batch_summary(self.phase, self.done, self.failed, elapsed)
+        _print_batch_summary(self.phase, self.done, self.total, self.failed, elapsed)
 
     # ---- public helpers ------------------------------------------------------
 
@@ -111,10 +111,7 @@ class BatchProgress:
         elapsed = time.perf_counter() - self._start
         elapsed_delta = timedelta(seconds=int(elapsed))
 
-        # Line 1: current item name
-        top = Text(self._filename, style="white")
-
-        # Line 2: spinner + phase count + bar + percentage + elapsed
+        # Line 1: spinner + phase count + bar + percentage + elapsed
         phase_text = Text.from_markup(f"[bold cyan]{self.phase}[/bold cyan]  [dim]{self._completed}/{self.total}[/dim]")
         if self.failed:
             phase_text.append(f"  ✗{self.failed}", style="red")
@@ -130,7 +127,10 @@ class BatchProgress:
         grid.add_column()  # elapsed
         grid.add_row(self._spinner, phase_text, self._bar, pct, elapsed_text)
 
-        return Group(top, grid)
+        # Line 2: current item name
+        bottom = Text(f"  └─ {self._filename}")
+
+        return Group(grid, bottom)
 
 
 # ── Single-operation spinner ──────────────────────────────────────────────────
@@ -160,11 +160,11 @@ def status(description: str) -> Iterator[None]:
         yield
     except BaseException:
         progress.stop()
-        console.print(f" [red]✘[/red] {description}")
+        console.print(f"[red]✘[/red] {description}")
         raise
     else:
         progress.stop()
-        console.print(f" [green]●[/green] {description}")
+        console.print(f"[green]●[/green] {description}")
 
 
 # ── Plain status line (no spinner, just a ✓/✘ prefix) ────────────────────────
@@ -172,12 +172,12 @@ def status(description: str) -> Iterator[None]:
 
 def ok(message: str) -> None:
     """Print a green ``●`` prefixed status line."""
-    console.print(f" [green]●[/green] {message}")
+    console.print(f"[green]●[/green] {message}")
 
 
 def fail(message: str) -> None:
     """Print a red ``✘`` prefixed status line."""
-    console.print(f" [red]✘[/red] {message}")
+    console.print(f"[red]✘[/red] {message}")
 
 
 def info(message: str) -> None:
@@ -191,13 +191,14 @@ def info(message: str) -> None:
 def _print_batch_summary(
     phase: str,
     done: int,
+    total: int,
     failed: int,
     elapsed: float,
 ) -> None:
     """Print a one-line summary after a batch completes."""
-    parts = [f"  [green]●[/green] [bold]{phase}[/bold]"]
-    parts.append(f"[dim]{done}项[/dim]")
+    parts = [f"● [bold]{phase}[/bold]"]
+    parts.append(f"[dim][cyan]{done}[/cyan]/[cyan]{total}[/cyan] 项[/dim]")
     if failed:
         parts.append(f"[red]失败={failed}[/red]")
-    parts.append(f"[dim]{elapsed:.1f}s[/dim]")
-    console.print("  ".join(parts))
+    parts.append(f"[dim][cyan]{elapsed:.1f}[/cyan]s[/dim]")
+    console.print("  ".join(parts), highlight=False)

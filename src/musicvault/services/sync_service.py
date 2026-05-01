@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from musicvault.adapters.processors.downloader import Downloader
-from musicvault.adapters.providers.pyncm_client import LoginResult, PyncmClient
+from musicvault.adapters.providers.pyncm_client import PyncmClient
 from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
 from musicvault.shared.output import warn as output_warn
@@ -24,16 +24,19 @@ class SyncService:
 
     def run_sync(self, cookie: str, playlist_ids: list[int]) -> list[DownloadedTrack]:
         self._cleanup_stale_state()
-        user = self.api.login_with_cookie(cookie)
-        target_ids = playlist_ids or self._resolve_liked_playlist(user)
-        logger.info("将同步 %s 个歌单", len(target_ids))
+        if not playlist_ids:
+            output_warn("未配置任何歌单，请先执行 msv add 添加歌单")
+            return []
+
+        self.api.login_with_cookie(cookie)
+        logger.info("将同步 %s 个歌单", len(playlist_ids))
 
         # 收集歌单元数据 + 建立 track → playlist_ids 映射
         playlist_index = load_json(self.cfg.state_dir / "playlists.json", {})
         track_playlists: dict[int, list[int]] = {}
         all_tracks: dict[int, Track] = {}
 
-        for pid in target_ids:
+        for pid in playlist_ids:
             info = self.api.get_playlist_info(pid)
             playlist_index[str(pid)] = {"name": info["name"], "track_count": info["track_count"]}
             tracks = self.api.get_playlist_tracks(pid)
@@ -54,7 +57,7 @@ class SyncService:
 
         # 单行摘要
         added = len(downloaded)
-        console.print(f"  从 [cyan]{len(target_ids)}[/cyan] 个歌单同步 [cyan]{len(unique)}[/cyan] 首")
+        console.print(f"  从 [cyan]{len(playlist_ids)}[/cyan] 个歌单同步 [cyan]{len(unique)}[/cyan] 首")
         stats: list[str] = []
         if added:
             stats.append(f"[green]+{added} 首[/green]")
@@ -91,15 +94,6 @@ class SyncService:
                     save_json(self.cfg.synced_state_file, {"ids": sorted(cleaned)})
                     logger.info("清理过期状态：%s 个文件已不存在，已从索引中移除", len(stale_ids))
 
-    def _resolve_liked_playlist(self, user: LoginResult) -> list[int]:
-        playlists = self.api.list_user_playlists(user.user_id)
-        for item in playlists:
-            if item.get("specialType") == 5:
-                return [int(item["id"])]
-        if playlists:
-            return [int(playlists[0]["id"])]
-        raise RuntimeError("当前账号无可用歌单")
-
     def _diff_tracks(self, tracks: list[Track]) -> tuple[list[Track], set[int]]:
         """返回 (新增曲目, 已同步的 track_id 集合)，调用方可将集合传给 _mark_synced 避免重复加载。"""
         state = load_json(self.cfg.synced_state_file, {"ids": []})
@@ -135,6 +129,12 @@ class SyncService:
                             file_abs.unlink(missing_ok=True)
                         except OSError:
                             pass
+                # 清理源下载文件
+                source_abs = self.cfg.workspace_path / rel_path
+                try:
+                    source_abs.unlink(missing_ok=True)
+                except OSError:
+                    pass
                 # 清理 links 中的关联文件（重复曲目）
                 for link in value.get("links", []) or []:
                     if isinstance(link, dict):

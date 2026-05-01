@@ -10,7 +10,7 @@ from musicvault.adapters.providers.pyncm_client import PyncmClient
 from musicvault.core.config import Config
 from musicvault.services.process_service import ProcessService
 from musicvault.services.sync_service import SyncService
-from musicvault.shared.tui_progress import console, ok
+from musicvault.shared.tui_progress import ok
 
 
 class RunService:
@@ -62,5 +62,4 @@ class RunService:
                 playlist_index=playlist_index,
             )
 
-        console.print()
-        ok("全部完成")
+        ok("完成")

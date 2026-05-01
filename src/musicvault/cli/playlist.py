@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import re
 import shutil
 from urllib.parse import parse_qs, urlparse
@@ -14,6 +15,7 @@ from musicvault.shared.output import success as output_success
 from musicvault.shared.output import warn as output_warn
 from musicvault.shared.tui_progress import console
 
+logger = logging.getLogger(__name__)
 
 def handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
     if args.command == "add":
@@ -54,7 +56,7 @@ def handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
             console.print("[bold]当前管理的歌单：[/bold]")
             console.print(table, highlight=False)
         else:
-            output_info("尚未添加任何歌单（将使用我喜欢的音乐）")
+            output_info("尚未添加任何歌单，请执行 msv add 添加")
     return 0
 
 
@@ -171,9 +173,9 @@ def _cleanup_playlist_files(pid: int, cfg: Config) -> None:
                     save_json(cfg.synced_state_file, {"ids": sorted(cleaned)})
 
     if deleted_dirs:
-        output_success(f"已删除 [bold]{dir_name}[/bold] 的音乐文件（{deleted_dirs} 个目录）")
+        logger.info(f"已删除 [bold]{dir_name}[/bold] 的音乐文件（{deleted_dirs} 个目录）")
     elif name:
-        output_info(f"未找到 {dir_name} 的音乐目录，已跳过文件删除")
+        logger.info(f"未找到 {dir_name} 的音乐目录，已跳过文件删除")
 
 
 def _add_playlist_by_id(pid: int, cfg: Config, cookie: str | None) -> int:
@@ -182,16 +184,16 @@ def _add_playlist_by_id(pid: int, cfg: Config, cookie: str | None) -> int:
         entry = cached.get(str(pid), {})
         name = entry.get("name")
         label = f"{name} ({pid})" if name else str(pid)
-        output_warn(f"歌单 {label} 已存在，跳过添加")
+        logger.warning(f"歌单 {label} 已存在，跳过添加")
         return 1
 
     info = _fetch_playlist_info(pid, cookie)
 
     if info is None:
         if not cookie:
-            output_warn("未提供 cookie，跳过 API 验证")
+            logger.warning("未提供 cookie，跳过 API 验证")
         else:
-            output_warn("无法获取歌单信息，将仅保存 ID")
+            logger.warning("无法获取歌单信息，将仅保存 ID")
 
     if info is not None:
         cfg.ensure_dirs()
@@ -207,7 +209,7 @@ def _add_playlist_by_id(pid: int, cfg: Config, cookie: str | None) -> int:
 
     name = info.get("name") if info else None
     if name:
-        output_success(f"已添加歌单：[bold]{name}[/bold] (ID: {pid})")
+        output_success(f"已添加歌单：[bold]{name}[/bold] [dim]({pid})[/dim]")
     else:
         output_success(f"已添加歌单：{pid}")
     return 0
