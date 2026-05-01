@@ -103,6 +103,9 @@ def build_parser() -> argparse.ArgumentParser:
         description="对本地音乐文件进行后处理。对 lossless 填充完整的元数据，对 lossy 压缩并仅填充基本元数据",
     )
     _add_common_args(process)
+    process.add_argument(
+        "--only-link", action="store_true", help="仅创建 library 硬链接，跳过后处理（解码/转码/元数据/歌词）"
+    )
 
     add_pl = sub.add_parser("add", help="添加歌单", description="添加要同步的目标歌单")
     add_pl.add_argument(
@@ -140,6 +143,9 @@ def build_parser() -> argparse.ArgumentParser:
     ls_pl.add_argument("--song", action="store_true", help="查看单独管理的单曲列表")
     ls_pl.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）")
     ls_pl.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
+
+    reindex = sub.add_parser("reindex", help="重建索引", description="通过 downloads 目录中的文件重建已下载索引")
+    _add_common_args(reindex)
 
     return parser
 
@@ -189,6 +195,31 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         cookie, _ = _ensure_cookie(args, cfg)
         return 0 if cookie else 2
+
+    # reindex 不需要 API，直接重建索引
+    if args.command == "reindex":
+        workspace = getattr(args, "workspace", None)
+        if workspace is not None:
+            cfg.workspace = workspace
+        from musicvault.adapters.providers.pyncm_client import PyncmClient
+        from musicvault.services.run_service import RunService
+
+        service = RunService(
+            cfg=cfg,
+            api=PyncmClient(
+                text_cleaning_enabled=cfg.text_cleaning_enabled,
+                download_quality=cfg.download_quality,
+                api_download_url_chunk_size=cfg.api_download_url_chunk_size,
+                api_track_detail_chunk_size=cfg.api_track_detail_chunk_size,
+                alias_split_separators=cfg.alias_split_separators,
+            ),
+        )
+        try:
+            service.rebuild_index()
+        except KeyboardInterrupt:
+            output_info("已取消")
+            return 130
+        return 0
 
     # 任意需要 API 的操作前先确保登录
     cookie, just_logged_in = _ensure_cookie(args, cfg)
@@ -242,7 +273,10 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     try:
-        service.run_pipeline(cookie=cookie, command=pipeline_cmd)
+        if args.command == "process" and getattr(args, "only_link", False):
+            service.link_only(cookie=cookie)
+        else:
+            service.run_pipeline(cookie=cookie, command=pipeline_cmd)
     except KeyboardInterrupt:
         output_info("已取消")
         return 130

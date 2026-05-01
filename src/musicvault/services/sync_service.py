@@ -136,21 +136,36 @@ class SyncService:
         return downloaded
 
     def _cleanup_stale_state(self) -> None:
-        """清理源文件已不存在的过期索引条目，避免阻止重新下载"""
+        """清理 canonical 文件已不存在的过期索引条目，避免阻止重新下载。
+
+        processed_files.json 格式：key 为 track_id 字符串，value 含 flac/mp3/lrc 路径。
+        检查对应文件是否存在，不存在则从索引中移除。
+        """
         processed = load_json(self.cfg.processed_state_file, {})
         if not isinstance(processed, dict) or not processed:
             return
 
         stale_ids: set[int] = set()
-        for rel_path, value in list(processed.items()):
-            source_file = self.cfg.workspace_path / str(rel_path)
-            if not source_file.exists():
-                if isinstance(value, dict):
-                    try:
-                        stale_ids.add(int(value.get("track_id", 0)))
-                    except (TypeError, ValueError):
-                        pass
-                del processed[rel_path]
+        for key, value in list(processed.items()):
+            if not isinstance(value, dict):
+                continue
+
+            flac_rel = value.get("flac") or value.get("lossless")
+            mp3_rel = value.get("mp3")
+            source_rel = value.get("source")
+
+            flac_exists = isinstance(flac_rel, str) and (self.cfg.workspace_path / flac_rel).exists()
+            mp3_exists = isinstance(mp3_rel, str) and (self.cfg.workspace_path / mp3_rel).exists()
+            source_exists = isinstance(source_rel, str) and (self.cfg.workspace_path / source_rel).exists()
+
+            if flac_exists or mp3_exists or source_exists:
+                continue
+
+            try:
+                stale_ids.add(int(key))
+            except (TypeError, ValueError):
+                pass
+            del processed[key]
 
         if stale_ids:
             save_json(self.cfg.processed_state_file, processed)
@@ -354,7 +369,7 @@ class SyncService:
             processed = {}
         for item in downloaded:
             rel = workspace_rel_path(Path(item.source_file), self.cfg.workspace_path)
-            processed[rel] = {"track_id": item.track.id}
+            processed[str(item.track.id)] = {"source": rel}
         save_json(processed_path, processed)
         return downloaded
 
@@ -417,7 +432,7 @@ def _save_partial_downloads(cfg: Config, results: list[DownloadedTrack]) -> None
         processed = {}
     for item in results:
         rel = workspace_rel_path(Path(item.source_file), cfg.workspace_path)
-        processed[rel] = {"track_id": item.track.id}
+        processed[str(item.track.id)] = {"source": rel}
     save_json(processed_path, processed)
 
     # synced_tracks.json — 使用新格式

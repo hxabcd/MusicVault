@@ -16,6 +16,16 @@ _FILENAME_TEMPLATE_RE = re.compile(r"\{(\w+)\}")
 
 logger = logging.getLogger(__name__)
 
+_hardlink_fallback_warned = False
+
+
+def _warn_hardlink_fallback_once() -> None:
+    """仅在首次触发硬链接回退时输出一次警告。"""
+    global _hardlink_fallback_warned
+    if not _hardlink_fallback_warned:
+        _hardlink_fallback_warned = True
+        logger.warning("硬链接不可用，回退为文件复制模式（跨盘符或文件系统不支持硬链接）")
+
 
 def safe_filename(name: str, fallback: str = "untitled") -> str:
     """将文本转成可安全落盘的文件名"""
@@ -93,6 +103,7 @@ def hardlink_or_copy(src: Path, dst: Path) -> None:
     try:
         os.link(src, dst)
     except OSError:
+        _warn_hardlink_fallback_once()
         shutil.copy2(src, dst)
 
 
@@ -104,6 +115,7 @@ def create_link(src: Path, dst: Path) -> None:
     try:
         os.link(src, dst)
     except OSError:
+        _warn_hardlink_fallback_once()
         shutil.copy2(src, dst)
 
 

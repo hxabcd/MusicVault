@@ -282,24 +282,10 @@ class ProcessService:
         if not isinstance(loaded, dict):
             return {}
         normalized: dict[str, dict[str, object]] = {}
-        stale_keys: list[str] = []
         for key, value in loaded.items():
             if not isinstance(key, str) or not isinstance(value, dict):
                 continue
-            # 新格式：key = track_id；旧格式：key = 相对源路径
-            flac_rel = value.get("flac") or value.get("lossless")
-            if isinstance(flac_rel, str) and (self.cfg.workspace_path / flac_rel).exists():
-                normalized[key] = dict(value)
-                continue
-            # 旧格式兼容：key 是源文件路径
-            source_exists = (self.cfg.workspace_path / key).exists()
-            if not source_exists:
-                stale_keys.append(key)
-                continue
             normalized[key] = dict(value)
-        if stale_keys:
-            save_json(self.cfg.processed_state_file, normalized)
-            logger.info("清理过期处理记录：%s 条", len(stale_keys))
         return normalized
 
     def _save_processed_index(self, index: dict[str, dict[str, object]]) -> None:
@@ -422,20 +408,14 @@ class ProcessService:
             index_map = index
 
         rel = workspace_rel_path(file_path, self.cfg.workspace_path)
-        # 新格式：key = track_id；旧格式：key = 源文件相对路径
-        entry = index_map.get(rel)
-        if isinstance(entry, dict):
-            # 旧格式：value 含 track_id 字段
-            try:
-                return int(entry.get("track_id", 0))
-            except (TypeError, ValueError):
-                pass
-        # 兼容旧格式：value 直接是 track_id
-        if isinstance(entry, (int, str)):
-            try:
-                return int(entry)
-            except (TypeError, ValueError):
-                pass
+        for key, value in index_map.items():
+            if not isinstance(value, dict):
+                continue
+            if value.get("source") == rel:
+                try:
+                    return int(key)
+                except (TypeError, ValueError):
+                    pass
         return None
 
     # ------------------------------------------------------------------
