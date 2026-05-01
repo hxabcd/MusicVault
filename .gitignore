@@ -9,5 +9,13 @@ wheels/
 # Virtual environments
 .venv
 
+# Test & lint tools
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Workspace data (runtime downloads / state / library)
 workspace*
 dev_config.json
