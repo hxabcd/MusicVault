@@ -162,15 +162,25 @@ class ProcessService:
         if track_id is None:
             raise RuntimeError(f"无法推断 track_id：{raw_file.name}")
 
-        downloaded = DownloadedTrack(
-            track=track_info,
-            source_file=str(raw_file),
-            is_ncm=raw_file.suffix.lower() == ".ncm",
+        # 判断是否已是 downloads/ 下的已有 FLAC（跳过解密和音频路由，仅重写元数据/歌词）
+        is_existing_flac = (
+            raw_file.suffix.lower() == ".flac"
+            and raw_file.parent.resolve() == self.cfg.downloads_dir.resolve()
         )
-        decoded = self.decryptor.decrypt_if_needed(downloaded, self.cfg.workspace_path / "decoded")
 
-        # 输出到 downloads/{track_id}.flac + downloads/{track_id}.mp3
-        lossless_path, lossy_path = self.organizer.route_audio(decoded, track_info, self.cfg.downloads_dir)
+        if is_existing_flac:
+            lossless_path = raw_file
+            lossy_path = raw_file.with_suffix(self.organizer.lossy_suffix)
+            if not lossy_path.exists():
+                self.organizer.transcode_lossy(raw_file, lossy_path)
+        else:
+            downloaded = DownloadedTrack(
+                track=track_info,
+                source_file=str(raw_file),
+                is_ncm=raw_file.suffix.lower() == ".ncm",
+            )
+            decoded = self.decryptor.decrypt_if_needed(downloaded, self.cfg.workspace_path / "decoded")
+            lossless_path, lossy_path = self.organizer.route_audio(decoded, track_info, self.cfg.downloads_dir)
 
         lyrics = self.api.get_track_lyrics(track_id)
 
@@ -194,11 +204,12 @@ class ProcessService:
             write_gb18030_lrc(lossy_path, lossy_lyrics, encodings=self.cfg.lossy_lrc_encodings)
 
         # 清理临时文件
-        if downloaded.is_ncm and decoded.exists() and decoded != Path(downloaded.source_file):
-            decoded.unlink(missing_ok=True)
-        if not self.cfg.keep_downloads:
-            if raw_file.exists() and raw_file.resolve() != lossless_path.resolve():
-                raw_file.unlink(missing_ok=True)
+        if not is_existing_flac:
+            if downloaded.is_ncm and decoded.exists() and decoded != Path(downloaded.source_file):
+                decoded.unlink(missing_ok=True)
+            if not self.cfg.keep_downloads:
+                if raw_file.exists() and raw_file.resolve() != lossless_path.resolve():
+                    raw_file.unlink(missing_ok=True)
 
         return lossless_path, lossy_path
 
@@ -352,22 +363,31 @@ class ProcessService:
     # ------------------------------------------------------------------
 
     def _process_local(self, include_translation: bool, translation_format: str, force: bool) -> None:
-        raw_files = [f for f in self._iter_downloads() if not f.stem.isdigit()]
-        if not raw_files:
+        pending: list[tuple[Path, int]] = []
+
+        # 1. 从 cache 解析待处理文件
+        cache_files = [f for f in self._iter_downloads() if not f.stem.isdigit()]
+        if cache_files:
+            processed = load_json(self.cfg.processed_state_file, {})
+            if not isinstance(processed, dict):
+                processed = {}
+            for raw_file in cache_files:
+                track_id = self._guess_track_id(raw_file, index=processed)
+                if track_id is None:
+                    logger.info("跳过文件：无法推断 track_id，文件=%s", raw_file.name)
+                    continue
+                pending.append((raw_file, track_id))
+
+        # 2. 合并 downloads/ 下已有的 FLAC（文件名即 track_id）
+        seen_ids = {pid for _, pid in pending}
+        for flac_path, track_id in self._scan_existing_flacs():
+            if track_id not in seen_ids:
+                pending.append((flac_path, track_id))
+                seen_ids.add(track_id)
+
+        if not pending:
             logger.info("下载目录中无待处理文件")
             return
-
-        processed = load_json(self.cfg.processed_state_file, {})
-        if not isinstance(processed, dict):
-            processed = {}
-
-        pending: list[tuple[Path, int]] = []
-        for raw_file in raw_files:
-            track_id = self._guess_track_id(raw_file, index=processed)
-            if track_id is None:
-                logger.info("跳过文件：无法推断 track_id，文件=%s", raw_file.name)
-                continue
-            pending.append((raw_file, track_id))
 
         track_playlists = self._build_track_playlists()
         playlist_index = load_json(self.cfg.state_dir / "playlists.json", {})
@@ -402,6 +422,20 @@ class ProcessService:
             if file_path.is_file() and file_path.suffix.lower() in allowed:
                 yield file_path
 
+    def _scan_existing_flacs(self) -> list[tuple[Path, int]]:
+        """回退扫描：从 downloads/ 目录读取已有 {track_id}.flac 文件"""
+        downloads = self.cfg.downloads_dir
+        if not downloads.exists():
+            return []
+        result: list[tuple[Path, int]] = []
+        for file_path in sorted(downloads.iterdir()):
+            if not file_path.is_file() or file_path.suffix.lower() != ".flac":
+                continue
+            if not file_path.stem.isdigit():
+                continue
+            result.append((file_path, int(file_path.stem)))
+        return result
+
     def _resolve_playlist_names(
         self,
         playlist_ids: list[int],
@@ -431,11 +465,12 @@ class ProcessService:
         for key, value in index_map.items():
             if not isinstance(value, dict):
                 continue
-            if value.get("source") == rel:
-                try:
-                    return int(key)
-                except (TypeError, ValueError):
-                    pass
+            for field in ("flac", "mp3"):
+                if value.get(field) == rel:
+                    try:
+                        return int(key)
+                    except (TypeError, ValueError):
+                        pass
         return None
 
     # ------------------------------------------------------------------

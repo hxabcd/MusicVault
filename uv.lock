@@ -243,6 +243,7 @@ source = { editable = "." }
 dependencies = [
     { name = "mutagen" },
     { name = "ncmdump-py" },
+    { name = "pillow" },
     { name = "pyncm" },
     { name = "qrcode" },
     { name = "rich" },
@@ -259,6 +260,7 @@ dev = [
 requires-dist = [
     { name = "mutagen", specifier = ">=1.47.0" },
     { name = "ncmdump-py", specifier = ">=0.2.0" },
+    { name = "pillow", specifier = ">=11.0" },
     { name = "pyncm", specifier = ">=1.7.1" },
     { name = "qrcode", specifier = ">=8.2" },
     { name = "rich", specifier = ">=13.7.0" },

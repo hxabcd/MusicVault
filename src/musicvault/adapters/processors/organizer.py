@@ -29,6 +29,13 @@ class Organizer:
         if self._ffmpeg_path is None:
             output_warn("未检测到 ffmpeg，转码功能将不可用")
 
+    @property
+    def lossy_suffix(self) -> str:
+        return self._lossy_suffix
+
+    def transcode_lossy(self, src: Path, dst: Path) -> None:
+        self._transcode_lossy(src, dst)
+
     def route_audio(self, src: Path, track: Track, output_dir: Path) -> tuple[Path, Path]:
         suffix = src.suffix.lower()
 
