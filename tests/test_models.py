@@ -39,6 +39,20 @@ class TestTrackFromNcmPayload:
         assert "Sixth" in track.aliases
         assert "Seventh" in track.aliases
 
+    def test_alias_becomes_empty_after_cleaning(self) -> None:
+        # 别名仅含零宽字符时，清洗后为空字符串，应被跳过
+        payload = {
+            "id": 1,
+            "name": "Test",
+            "ar": [],
+            "al": {"name": "A"},
+            "tns": ["​‌"],
+            "alia": ["RealAlias"],
+        }
+        track = Track.from_ncm_payload(payload)
+        # 零宽字符的别名被跳过，只保留有效别名
+        assert track.aliases == ["RealAlias"]
+
     def test_no_aliases(self) -> None:
         track = Track.from_ncm_payload(
             {"id": 1, "name": "X", "ar": [], "al": {"name": "A"}}

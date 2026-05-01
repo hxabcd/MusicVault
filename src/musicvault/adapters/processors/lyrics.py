@@ -182,7 +182,7 @@ def _normalize_time_tag(raw: str) -> str:
     if ":" not in raw:
         return raw
     parts = raw.split(":")
-    if len(parts) < 2:
+    if len(parts) < 2:  # pragma: no cover — ":" in raw 保证 split 至少 2 段
         return raw
     minutes = parts[0]
     seconds = parts[1]
@@ -225,7 +225,7 @@ def _is_json_metadata_line(line: str) -> bool:
         obj = json.loads(raw)
     except json.JSONDecodeError:
         return False
-    if not isinstance(obj, dict):
+    if not isinstance(obj, dict):  # pragma: no cover — {…} JSON 必为 dict
         return False
     # 网易云逐词元数据行常见结构：{"t":...,"c":[{"tx":"..."}]}
     return "c" in obj and ("t" in obj or "tx" in obj)
@@ -257,6 +257,6 @@ def write_gb18030_lrc(
             continue
 
     # 理论上不会走到这里；保底避免写文件失败。
-    lrc_path.write_bytes(content.encode("utf-8", errors="replace"))
-    logger.warning("歌词编码回退到 utf-8(replace)：%s", lrc_path.name)
-    return lrc_path
+    lrc_path.write_bytes(content.encode("utf-8", errors="replace"))  # pragma: no cover — 回退列表含 utf-8-sig，前面必成功
+    logger.warning("歌词编码回退到 utf-8(replace)：%s", lrc_path.name)  # pragma: no cover
+    return lrc_path  # pragma: no cover

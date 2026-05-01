@@ -5,6 +5,8 @@ from musicvault.adapters.processors.lyrics import (
     build_lossless_lyrics,
     build_lossy_lyrics,
     _build_translation_map,
+    _find_translation,
+    _is_json_metadata_line,
     _merge_translation,
     _parse_yrc_line,
     _sanitize_lyrics_text,
@@ -83,6 +85,13 @@ class TestBuildLosslessLyrics:
         result = build_lossless_lyrics(payload, include_translation=False)
         assert "第一行" not in result
 
+    def test_yrc_with_stray_non_yrc_lines(self) -> None:
+        # YRC 中夹带非 YRC 的非空行应原样透传（覆盖 line 90-92）
+        yrc_with_stray = SAMPLE_YRC + "\n[meta]some info"
+        payload = {"yrc": yrc_with_stray}
+        result = build_lossless_lyrics(payload, include_translation=False)
+        assert "[meta]some info" in result
+
 
 # ---- build_lossy_lyrics ----------------------------------------------------
 
@@ -158,6 +167,15 @@ class TestMergeTranslation:
         result = _merge_translation("[00:01.000]X", "", inline=True)
         assert result == "[00:01.000]X"
 
+    def test_metadata_lines_preserved(self) -> None:
+        # 无时间戳的元数据行应原样透传（覆盖 line 59-60）
+        result = _merge_translation(
+            "[ti:Title]\n[00:01.000]Hello", "[00:01.000]你好", inline=False
+        )
+        lines = result.splitlines()
+        assert "[ti:Title]" in lines[0]
+        assert "Hello" in lines[1]
+
 
 # ---- _parse_yrc_line -------------------------------------------------------
 
@@ -221,6 +239,9 @@ class TestNormalizeTimeTag:
     def test_pads_leading_zeros(self) -> None:
         assert _normalize_time_tag("0:1.5") == "00:01.500"
 
+    def test_no_colon_returns_raw(self) -> None:
+        assert _normalize_time_tag("notimetag") == "notimetag"
+
 
 # ---- _normalize_lrc_timestamps --------------------------------------------
 
@@ -246,3 +267,40 @@ class TestIsSameText:
 
     def test_different(self) -> None:
         assert _is_same_text("Hello", "World") is False
+
+
+# ---- _find_translation -------------------------------------------------------
+
+
+class TestFindTranslation:
+    def test_found(self) -> None:
+        tmap = {"00:01.000": "你好"}
+        assert _find_translation(["00:01.000", "00:02.000"], tmap) == "你好"
+
+    def test_not_found(self) -> None:
+        tmap = {"00:03.000": "你好"}
+        assert _find_translation(["00:01.000", "00:02.000"], tmap) == ""
+
+    def test_empty_map(self) -> None:
+        assert _find_translation(["00:01.000"], {}) == ""
+
+
+# ---- _is_json_metadata_line --------------------------------------------------
+
+
+class TestIsJsonMetadataLine:
+    def test_valid_metadata(self) -> None:
+        assert _is_json_metadata_line('{"t":16153,"c":[{"tx":"how"}]}') is True
+        assert _is_json_metadata_line('{"c":[{"tx":"x"}],"t":0}') is True
+
+    def test_invalid_json_in_braces(self) -> None:
+        assert _is_json_metadata_line("{not valid json}") is False
+
+    def test_json_object_without_c_field(self) -> None:
+        assert _is_json_metadata_line('{"a":1}') is False
+
+    def test_not_starting_with_brace(self) -> None:
+        assert _is_json_metadata_line("[1,2,3]") is False
+
+    def test_empty_string(self) -> None:
+        assert _is_json_metadata_line("") is False
