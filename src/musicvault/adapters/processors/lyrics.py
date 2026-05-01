@@ -22,8 +22,9 @@ def build_lossless_lyrics(payload: dict[str, str], include_translation: bool = T
     # 无损优先使用 yrc，保留逐字节奏；缺失时再回退 lrc。
     yrc = _sanitize_lyrics_text(payload.get("yrc") or "")
     translated = _normalize_lrc_timestamps(_sanitize_lyrics_text(payload.get("tlyric") or ""))
+    ytranslated = _sanitize_lyrics_text(payload.get("ytlyric") or "")
     if yrc:
-        return _build_lossless_from_yrc(yrc, translated, include_translation)
+        return _build_lossless_from_yrc(yrc, translated, include_translation, ytranslated)
 
     base = _normalize_lrc_timestamps(_sanitize_lyrics_text(payload.get("lrc") or ""))
     if not base:
@@ -45,7 +46,7 @@ def build_lossy_lyrics(payload: dict[str, str], include_translation: bool = True
 
 
 def _merge_translation(base_lrc: str, translated_lrc: str, inline: bool) -> str:
-    # 1. 把翻译歌词预处理成“时间戳 -> 译文”映射。
+    # 1. 把翻译歌词预处理成"时间戳 -> 译文"映射。
     translation_map = _build_translation_map(translated_lrc)
     if not translation_map:
         return base_lrc
@@ -74,9 +75,14 @@ def _merge_translation(base_lrc: str, translated_lrc: str, inline: bool) -> str:
     return "\n".join(merged)
 
 
-def _build_lossless_from_yrc(yrc_text: str, translated_lrc: str, include_translation: bool) -> str:
-    # 仅按时间戳对齐翻译，避免“无翻译行被下一句误配”。
-    translation_map = _build_translation_map(translated_lrc)
+def _build_lossless_from_yrc(yrc_text: str, translated_lrc: str, include_translation: bool, ytranslated_lrc: str = "") -> str:
+    # ytlyric 的时间戳与 yrc 完全对齐，优先使用；tlyric 作为回退。
+    translation_map = _build_translation_map(ytranslated_lrc)
+    if translated_lrc:
+        lrc_map = _build_translation_map(translated_lrc)
+        for ts, lyric in lrc_map.items():
+            if ts not in translation_map:
+                translation_map[ts] = lyric
     lines: list[str] = []
     for raw_line in yrc_text.splitlines():
         parsed = _parse_yrc_line(raw_line)
@@ -101,7 +107,7 @@ def _build_lossless_from_yrc(yrc_text: str, translated_lrc: str, include_transla
 
 
 def _build_translation_map(translated_lrc: str) -> dict[str, str]:
-    # 构建“时间戳 -> 译文”索引
+    # 构建"时间戳 -> 译文"索引
     mapping: dict[str, str] = {}
     for line in translated_lrc.splitlines():
         timestamps, lyric = _parse_line(line)

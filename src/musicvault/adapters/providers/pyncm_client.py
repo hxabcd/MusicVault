@@ -235,7 +235,8 @@ class PyncmClient:
         lrc = (resp.get("lrc") or {}).get("lyric", "")
         tlyric = (resp.get("tlyric") or {}).get("lyric", "")
         yrc = (resp.get("yrc") or {}).get("lyric", "")
-        return {"lrc": lrc, "tlyric": tlyric, "yrc": yrc}
+        ytlyric = (resp.get("ytlyric") or {}).get("lyric", "")
+        return {"lrc": lrc, "tlyric": tlyric, "yrc": yrc, "ytlyric": ytlyric}
 
     @staticmethod
     def _chunk_ids(track_ids: list[int], chunk_size: int) -> list[list[int]]:
