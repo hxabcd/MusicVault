@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -48,3 +50,13 @@ def save_json(path: Path, value: Any) -> None:
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     tmp_path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp_path.replace(path)
+
+
+def hardlink_or_copy(src: Path, dst: Path) -> None:
+    """如果可能则创建硬链接，否则回退到复制"""
+    if dst.exists():
+        return
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)

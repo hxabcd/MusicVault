@@ -35,21 +35,21 @@ def handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
     elif args.command == "remove":
         if args.playlist_id is None:
             return _remove_playlist_interactive(cfg)
-        if args.playlist_id not in cfg.playlist_ids:
+        if not cfg.has_playlist(args.playlist_id):
             output_warn(f"歌单 {args.playlist_id} 不存在，无法移除")
             return 1
-        cfg.playlist_ids.remove(args.playlist_id)
-        cfg.save()
         _cleanup_playlist_files(args.playlist_id, cfg)
+        cfg.remove_playlist(args.playlist_id)
         output_success(f"已移除歌单：{args.playlist_id}")
 
     elif args.command in ("list", "ls"):
-        if cfg.playlist_ids:
+        playlist_ids = cfg.get_playlist_ids()
+        if playlist_ids:
             cached = _load_playlist_index(cfg)
             table = Table(show_header=False, box=None, padding=(0, 2), collapse_padding=True)
             table.add_column(style="cyan")
             table.add_column(style="dim")
-            for pid in cfg.playlist_ids:
+            for pid in playlist_ids:
                 entry = cached.get(str(pid), {})
                 name = entry.get("name")
                 table.add_row(str(pid), name or "")
@@ -122,10 +122,6 @@ def _cleanup_playlist_files(pid: int, cfg: Config) -> None:
             shutil.rmtree(target)
             deleted_dirs += 1
 
-    if str(pid) in playlist_index:
-        del playlist_index[str(pid)]
-        save_json(cfg.state_dir / "playlists.json", playlist_index)
-
     prefix_ll = f"library/lossless/{dir_name}/"
     prefix_ly = f"library/lossy/{dir_name}/"
 
@@ -167,10 +163,18 @@ def _cleanup_playlist_files(pid: int, cfg: Config) -> None:
         if removed_track_ids:
             synced = load_json(cfg.synced_state_file, {"ids": []})
             if isinstance(synced, dict):
-                existing = {int(x) for x in synced.get("ids", []) if isinstance(x, (int, str))}
-                cleaned = existing - removed_track_ids
-                if cleaned != existing:
-                    save_json(cfg.synced_state_file, {"ids": sorted(cleaned)})
+                ids = synced.get("ids", [])
+                if isinstance(ids, list):
+                    # 旧格式
+                    existing = {int(x) for x in ids if isinstance(x, (int, str))}
+                    cleaned = existing - removed_track_ids
+                    if cleaned != existing:
+                        save_json(cfg.synced_state_file, {"ids": sorted(cleaned)})
+                elif isinstance(ids, dict):
+                    # 新格式：{"ids": {"track_id": [playlist_ids]}}
+                    for sid in removed_track_ids:
+                        ids.pop(str(sid), None)
+                    save_json(cfg.synced_state_file, {"ids": ids})
 
     if deleted_dirs:
         logger.info(f"已删除 [bold]{dir_name}[/bold] 的音乐文件（{deleted_dirs} 个目录）")
@@ -179,7 +183,7 @@ def _cleanup_playlist_files(pid: int, cfg: Config) -> None:
 
 
 def _add_playlist_by_id(pid: int, cfg: Config, cookie: str | None) -> int:
-    if pid in cfg.playlist_ids:
+    if cfg.has_playlist(pid):
         cached = _load_playlist_index(cfg)
         entry = cached.get(str(pid), {})
         name = entry.get("name")
@@ -195,19 +199,10 @@ def _add_playlist_by_id(pid: int, cfg: Config, cookie: str | None) -> int:
         else:
             logger.warning("无法获取歌单信息，将仅保存 ID")
 
-    if info is not None:
-        cfg.ensure_dirs()
-        from musicvault.shared.utils import load_json, save_json
+    name = str(info["name"]) if info and info.get("name") else ""
+    track_count = int(info["track_count"]) if info and info.get("track_count") else 0
+    cfg.add_playlist(pid, name=name, track_count=track_count)
 
-        index_path = cfg.state_dir / "playlists.json"
-        cached = load_json(index_path, {})
-        cached[str(pid)] = {"name": info["name"], "track_count": info["track_count"]}
-        save_json(index_path, cached)
-
-    cfg.playlist_ids.append(pid)
-    cfg.save()
-
-    name = info.get("name") if info else None
     if name:
         output_success(f"已添加歌单：[bold]{name}[/bold] [dim]({pid})[/dim]")
     else:
@@ -235,7 +230,8 @@ def _add_playlist_interactive(cfg: Config, cookie: str | None) -> int:
         output_warn("当前账号没有歌单")
         return 1
 
-    existing_ids = set(cfg.playlist_ids)
+    playlist_ids = cfg.get_playlist_ids()
+    existing_ids = set(playlist_ids)
     available = [pl for pl in playlists if int(pl["id"]) not in existing_ids]
     already_added = [pl for pl in playlists if int(pl["id"]) in existing_ids]
 
@@ -293,31 +289,27 @@ def _add_playlist_interactive(cfg: Config, cookie: str | None) -> int:
     for idx in selected_indices:
         pl = available[idx - 1]
         pid = int(pl["id"])
-        if pid in cfg.playlist_ids:
+        if cfg.has_playlist(pid):
             continue
-        cfg.ensure_dirs()
-        from musicvault.shared.utils import load_json, save_json
-
-        index_path = cfg.state_dir / "playlists.json"
-        cached = load_json(index_path, {})
-        cached[str(pid)] = {"name": pl["name"], "track_count": pl.get("trackCount", pl.get("track_count", 0))}
-        save_json(index_path, cached)
-
-        cfg.playlist_ids.append(pid)
+        cfg.add_playlist(
+            pid,
+            name=pl["name"],
+            track_count=int(pl.get("trackCount", pl.get("track_count", 0))),
+        )
         output_success(f"已添加歌单：[bold]{pl['name']}[/bold] (ID: {pid})")
         added += 1
 
-    cfg.save()
     return 0 if added > 0 else 1
 
 
 def _remove_playlist_interactive(cfg: Config) -> int:
-    if not cfg.playlist_ids:
+    playlist_ids = cfg.get_playlist_ids()
+    if not playlist_ids:
         output_info("尚未添加任何歌单，无需移除")
         return 1
 
     cached = _load_playlist_index(cfg)
-    max_show = min(len(cfg.playlist_ids), 50)
+    max_show = min(len(playlist_ids), 50)
 
     console.print()
     console.print("[bold]当前管理的歌单：[/bold]")
@@ -328,7 +320,7 @@ def _remove_playlist_interactive(cfg: Config) -> int:
     table.add_column(justify="left", max_width=40, no_wrap=True)
     table.add_column(justify="right", style="dim")
 
-    for i, pid in enumerate(cfg.playlist_ids[:max_show], 1):
+    for i, pid in enumerate(playlist_ids[:max_show], 1):
         entry = cached.get(str(pid), {})
         name = entry.get("name", "")
         track_count = entry.get("track_count", "?")
@@ -336,8 +328,8 @@ def _remove_playlist_interactive(cfg: Config) -> int:
 
     console.print(table, highlight=False)
 
-    if len(cfg.playlist_ids) > max_show:
-        console.print(f"  [dim]... 还有 {len(cfg.playlist_ids) - max_show} 个歌单未显示[/dim]")
+    if len(playlist_ids) > max_show:
+        console.print(f"  [dim]... 还有 {len(playlist_ids) - max_show} 个歌单未显示[/dim]")
 
     console.print()
     console.print("  输入编号选择要移除的歌单（如: 1,3,5 或 1-5 或 all），输入 q 取消")
@@ -347,23 +339,22 @@ def _remove_playlist_interactive(cfg: Config) -> int:
         output_info("已取消")
         return 1
 
-    selected_indices = _parse_selection(choice, len(cfg.playlist_ids))
+    selected_indices = _parse_selection(choice, len(playlist_ids))
     if not selected_indices:
         output_warn("未选择任何歌单")
         return 1
 
     removed = 0
     for idx in reversed(selected_indices):
-        pid = cfg.playlist_ids[idx - 1]
-        cfg.playlist_ids.remove(pid)
+        pid = playlist_ids[idx - 1]
         _cleanup_playlist_files(pid, cfg)
+        cfg.remove_playlist(pid)
         entry = cached.get(str(pid), {})
         name = entry.get("name")
         label = f"[bold]{name}[/bold] (ID: {pid})" if name else str(pid)
         output_success(f"已移除歌单：{label}")
         removed += 1
 
-    cfg.save()
     return 0 if removed > 0 else 1
 
 

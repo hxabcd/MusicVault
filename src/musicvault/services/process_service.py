@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -20,7 +19,7 @@ from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
 from musicvault.shared.output import warn as output_warn
 from musicvault.shared.tui_progress import BatchProgress
-from musicvault.shared.utils import load_json, safe_filename, save_json, workspace_rel_path
+from musicvault.shared.utils import hardlink_or_copy, load_json, safe_filename, save_json, workspace_rel_path
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +75,7 @@ class ProcessService:
     def _build_track_playlists(self) -> dict[int, list[int]]:
         """通过 API 获取所有配置歌单的 track_id -> [playlist_id] 映射。"""
         mapping: dict[int, list[int]] = {}
-        for pid in self.cfg.playlist_ids:
+        for pid in self.cfg.get_playlist_ids():
             try:
                 tracks = self.api.get_playlist_tracks(pid)
             except Exception:
@@ -227,14 +226,7 @@ class ProcessService:
 
     @staticmethod
     def _hardlink_or_copy(src: Path, dst: Path) -> None:
-        if dst.exists():
-            return
-        try:
-            os.link(src, dst)
-        except OSError:
-            import shutil
-
-            shutil.copy2(src, dst)
+        hardlink_or_copy(src, dst)
 
     def _iter_downloads(self) -> Iterable[Path]:
         allowed = {".ncm", ".flac", ".mp3", ".m4a", ".aac", ".wav"}
