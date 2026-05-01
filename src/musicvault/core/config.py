@@ -35,6 +35,8 @@ class Config:
     cover_max_size_kb: int = 0
     lyrics_embed_in_metadata: bool = True
     lyrics_write_lrc_file: bool = True
+    use_karaoke_lyrics: bool = True
+    include_romaji: bool = False
     filename_lossless: str = "{artist} - {name}"
     filename_lossy: str = "{alias} {name} - {artist}"
     network_download_timeout: int = 30
@@ -211,6 +213,8 @@ class Config:
         # -- lyrics extended --
         lyrics_embed_in_metadata = bool(lyrics.get("embed_in_metadata", True))
         lyrics_write_lrc_file = bool(lyrics.get("write_lrc_file", True))
+        use_karaoke_lyrics = bool(lyrics.get("use_karaoke", True))
+        include_romaji = bool(lyrics.get("include_romaji", False))
 
         # -- filenames section --
         filenames = raw.get("filenames") or {}
@@ -294,6 +298,8 @@ class Config:
             cover_max_size_kb=cover_max_size_kb,
             lyrics_embed_in_metadata=lyrics_embed_in_metadata,
             lyrics_write_lrc_file=lyrics_write_lrc_file,
+            use_karaoke_lyrics=use_karaoke_lyrics,
+            include_romaji=include_romaji,
             filename_lossless=filename_lossless,
             filename_lossy=filename_lossy,
             network_download_timeout=network_download_timeout,
@@ -324,7 +330,7 @@ class Config:
                     for pid in legacy_ids:
                         index.setdefault(str(pid), {"name": "", "track_count": 0})
                     save_json(cfg._playlist_index_path, index)
-                cfg.save(path)
+            cfg.save(path)  # 始终回写以补全新增字段
         else:
             cfg = cls()
             cfg.save(path)
@@ -358,6 +364,8 @@ class Config:
                 "lossy_lrc_encodings": list(self.lossy_lrc_encodings),
                 "embed_in_metadata": self.lyrics_embed_in_metadata,
                 "write_lrc_file": self.lyrics_write_lrc_file,
+                "use_karaoke": self.use_karaoke_lyrics,
+                "include_romaji": self.include_romaji,
             },
             "lossy": {
                 "bitrate": self.lossy_bitrate,

@@ -15,10 +15,10 @@
 - **自动增量同步** — 拉取远端新增曲目，清理远端已删除曲目（以远端为准）
 - **多线程下载** — 自动根据 CPU 核心数调整并发数
 - **无损/有损分流**
-  - `lossless`：Hi-Res 音质、逐字歌词（含翻译）、完整元数据 + 封面
+  - `lossless`：Hi-Res 音质、逐字歌词 / 标准歌词（含翻译、可选罗马音）、完整元数据 + 封面
   - `lossy`：压缩后 mp3/aac/ogg/opus 格式、LRC 歌词（编码可配）、基本元数据
 - **灵活配置** — 下载质量、封面嵌入、歌词嵌入、文件名模板、有损格式/码率、翻译格式、网络参数等均可自定义
-- **歌词翻译合并** — 支持独立行（separate）或同行前置（inline）两种翻译格式
+- **歌词翻译合并** — 支持独立行（separate）或同行前置（inline）两种翻译格式，可选附带罗马音
 - **多歌单共享曲目** — 同一曲目出现在多个歌单时使用硬链接，节省磁盘空间
 - **NCM 解密** — 自动解密网易云 `.ncm` 加密文件
 - **断点续传安全** — 状态文件采用原子写入，防止中断损坏
@@ -150,7 +150,9 @@ msv sync          # 开始同步
   "lyrics": {
     "lossy_lrc_encodings": ["utf-8"],
     "embed_in_metadata": true,
-    "write_lrc_file": true
+    "write_lrc_file": true,
+    "use_karaoke": true,
+    "include_romaji": false
   },
   "lossy": {
     "bitrate": "192k",
@@ -212,6 +214,8 @@ msv sync          # 开始同步
 | `lyrics` | `lossy_lrc_encodings` | `["utf-8"]` | LRC 文件编码顺序 |
 | `lyrics` | `embed_in_metadata` | `true` | 是否在音频元数据中嵌入歌词 |
 | `lyrics` | `write_lrc_file` | `true` | 是否写入独立 `.lrc` 文件 |
+| `lyrics` | `use_karaoke` | `true` | 是否启用逐字（Karaoke）歌词（有 YRC 数据时） |
+| `lyrics` | `include_romaji` | `false` | 是否在歌词中附加罗马音（三行输出） |
 | `lossy` | `bitrate` | `"192k"` | 有损编码码率 |
 | `lossy` | `format` | `"mp3"` | 有损输出格式：`mp3`/`aac`/`ogg`/`opus` |
 | `download` | `quality` | `"hires"` | 下载音质：`standard`/`higher`/`exhire`/`hires`/`lossless` |

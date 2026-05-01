@@ -17,42 +17,58 @@ _YRC_WORD_TOKEN_RE = re.compile(r"\((\d+),(\d+),\d+\)([^()]*)")
 logger = logging.getLogger(__name__)
 
 
-def build_lossless_lyrics(
-    payload: dict[str, str],
-    include_translation: bool = True,
-    translation_format: str = "separate",
-) -> str:
-    """生成无损歌词：原文行后追加同时间轴翻译行。"""
-    yrc = _sanitize_lyrics_text(payload.get("yrc") or "")
-    translated = _normalize_lrc_timestamps(_sanitize_lyrics_text(payload.get("tlyric") or ""))
-    ytranslated = _sanitize_lyrics_text(payload.get("ytlyric") or "")
-    if yrc:
-        return _build_lossless_from_yrc(yrc, translated, include_translation, ytranslated, translation_format)
+class StandardLyrics:
+    """标准 LRC 歌词，提供原文/翻译/罗马音及合并输出。"""
 
-    base = _normalize_lrc_timestamps(_sanitize_lyrics_text(payload.get("lrc") or ""))
-    if not base:
-        return ""
-    if not include_translation:
-        return base
-    return _merge_translation(base, translated, inline=(translation_format == "inline"))
+    __slots__ = ("original", "translation", "romaji")
 
+    def __init__(self, payload: dict[str, str]) -> None:
+        self.original = _normalize_lrc_timestamps(_sanitize_lyrics_text(payload.get("lrc") or ""))
+        self.translation = _normalize_lrc_timestamps(_sanitize_lyrics_text(payload.get("tlyric") or ""))
+        self.romaji = _normalize_lrc_timestamps(_sanitize_lyrics_text(payload.get("romalrc") or ""))
 
-def build_lossy_lyrics(
-    payload: dict[str, str],
-    include_translation: bool = True,
-    translation_format: str = "inline",
-) -> str:
-    """生成有损歌词：同一行前置翻译，再接原文。"""
-    base = _normalize_lrc_timestamps(_sanitize_lyrics_text(payload.get("lrc") or ""))
-    if not base:
-        return ""
-    if not include_translation:
-        return base
-    translated = _normalize_lrc_timestamps(_sanitize_lyrics_text(payload.get("tlyric") or ""))
-    return _merge_translation(base, translated, inline=(translation_format == "inline"))
+    def merge_translation(self, format: str = "separate") -> str:
+        """合并原文与翻译。format: 'separate'（独立行）| 'inline'（同行前置）。"""
+        return _merge_lrc_translation(self.original, self.translation, inline=(format == "inline"))
+
+    def merge_romaji(self, format: str = "separate") -> str:
+        """合并原文与罗马音。format: 'separate'（独立行）| 'inline'（同行前置）。"""
+        return _merge_lrc_translation(self.original, self.romaji, inline=(format == "inline"))
+
+    def merge_all(self) -> str:
+        """合并原文 + 翻译 + 罗马音（三行独立）。"""
+        result = self.original
+        if self.translation:
+            result = _merge_lrc_translation(result, self.translation, inline=False)
+        if self.romaji:
+            result = _merge_lrc_translation(result, self.romaji, inline=False)
+        return result
 
 
-def _merge_translation(base_lrc: str, translated_lrc: str, inline: bool) -> str:
+class KaraokeLyrics:
+    """逐字 YRC 歌词，提供原文/翻译/罗马音及 enhanced LRC 合并输出。"""
+
+    __slots__ = ("original", "translation", "romaji")
+
+    def __init__(self, payload: dict[str, str]) -> None:
+        self.original = _sanitize_lyrics_text(payload.get("yrc") or "")
+        self.translation = _sanitize_lyrics_text(payload.get("ytlrc") or "")
+        self.romaji = _sanitize_lyrics_text(payload.get("yromalrc") or "")
+
+    def merge_translation(self, format: str = "separate") -> str:
+        """逐字原文 + 翻译，输出 enhanced LRC。format: 'separate' | 'inline'。"""
+        return _render_karaoke_merged(self.original, self.translation, translation_format=format)
+
+    def merge_romaji(self, format: str = "separate") -> str:
+        """逐字原文 + 罗马音，输出 enhanced LRC。format: 'separate' | 'inline'。"""
+        return _render_karaoke_merged(self.original, self.romaji, translation_format=format)
+
+    def merge_all(self) -> str:
+        """逐字原文 + 翻译 + 罗马音（三行独立）。"""
+        return _render_karaoke_all(self.original, self.translation, self.romaji)
+
+
+def _merge_lrc_translation(base_lrc: str, translated_lrc: str, inline: bool) -> str:
     # 1. 把翻译歌词预处理成"时间戳 -> 译文"映射。
     translation_map = _build_translation_map(translated_lrc)
     if not translation_map:
@@ -82,19 +98,12 @@ def _merge_translation(base_lrc: str, translated_lrc: str, inline: bool) -> str:
     return "\n".join(merged)
 
 
-def _build_lossless_from_yrc(
+def _render_karaoke_merged(
     yrc_text: str,
-    translated_lrc: str,
-    include_translation: bool,
-    ytranslated_lrc: str = "",
+    secondary_text: str,
     translation_format: str = "separate",
 ) -> str:
-    translation_map = _build_translation_map(ytranslated_lrc)
-    if translated_lrc:
-        lrc_map = _build_translation_map(translated_lrc)
-        for ts, lyric in lrc_map.items():
-            if ts not in translation_map:
-                translation_map[ts] = lyric
+    translation_map = _build_translation_map(secondary_text)
     lines: list[str] = []
     for raw_line in yrc_text.splitlines():
         parsed = _parse_yrc_line(raw_line)
@@ -105,12 +114,10 @@ def _build_lossless_from_yrc(
         start_ms, duration_ms, words, plain_lyric = parsed
         end_ms = start_ms + duration_ms
 
-        if not include_translation:
-            lines.append(_render_yrc_enhanced_line(words, end_ms))
-            continue
-
         start_tag = _ms_to_time_tag(start_ms)
         translated = translation_map.get(start_tag)
+        if not translated:
+            translated = _find_translation_fuzzy(start_ms, translation_map)
         if translated and not _is_same_text(plain_lyric, translated):
             end_tag = _ms_to_time_tag(end_ms)
             if translation_format == "inline":
@@ -121,6 +128,34 @@ def _build_lossless_from_yrc(
                 lines.append(f"[{start_tag}]{translated}[{end_tag}]")
         else:
             lines.append(_render_yrc_enhanced_line(words, end_ms))
+    return "\n".join(lines)
+
+
+def _render_karaoke_all(yrc_text: str, translation_text: str, romaji_text: str) -> str:
+    trans_map = _build_translation_map(translation_text) if translation_text else {}
+    romaji_map = _build_translation_map(romaji_text) if romaji_text else {}
+    lines: list[str] = []
+    for raw_line in yrc_text.splitlines():
+        parsed = _parse_yrc_line(raw_line)
+        if not parsed:
+            if raw_line.strip():
+                lines.append(raw_line)
+            continue
+        start_ms, duration_ms, words, plain_lyric = parsed
+        end_ms = start_ms + duration_ms
+        start_tag = _ms_to_time_tag(start_ms)
+        end_tag = _ms_to_time_tag(end_ms)
+
+        lines.append(_render_yrc_enhanced_line(words, end_ms))
+
+        for sec_map in (trans_map, romaji_map):
+            if not sec_map:
+                continue
+            sec_text = sec_map.get(start_tag)
+            if not sec_text:
+                sec_text = _find_translation_fuzzy(start_ms, sec_map)
+            if sec_text and not _is_same_text(plain_lyric, sec_text):
+                lines.append(f"[{start_tag}]{sec_text}[{end_tag}]")
     return "\n".join(lines)
 
 
@@ -185,6 +220,34 @@ def _find_translation(timestamps: list[str], translation_map: dict[str, str]) ->
         if translated:
             return translated
     return ""
+
+
+def _time_tag_to_ms(ts: str) -> int | None:
+    match = re.match(r"(\d{1,2}):(\d{2})\.(\d{1,3})$", ts)
+    if not match:
+        return None
+    minutes = int(match.group(1))
+    seconds = int(match.group(2))
+    frac = match.group(3).ljust(3, "0")[:3]
+    return minutes * 60000 + seconds * 1000 + int(frac)
+
+
+def _find_translation_fuzzy(
+    start_ms: int,
+    translation_map: dict[str, str],
+    tolerance_ms: int = 500,
+) -> str | None:
+    best_diff = tolerance_ms + 1
+    best_text = None
+    for ts_str, text in translation_map.items():
+        ts_ms = _time_tag_to_ms(ts_str)
+        if ts_ms is None:
+            continue
+        diff = abs(ts_ms - start_ms)
+        if diff < best_diff:
+            best_diff = diff
+            best_text = text
+    return best_text
 
 
 def _is_same_text(base: str, translated: str) -> bool:

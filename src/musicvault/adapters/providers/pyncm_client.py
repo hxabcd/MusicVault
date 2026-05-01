@@ -6,12 +6,12 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-import requests
 import pyncm
 import pyncm.apis.login as login_api
 import pyncm.apis.playlist as playlist_api
 import pyncm.apis.track as track_api
 import pyncm.apis.user as user_api
+import requests
 
 from musicvault.core.models import Track
 
@@ -243,13 +243,20 @@ class PyncmClient:
         return result
 
     def get_track_lyrics(self, track_id: int) -> dict[str, str]:
-        """获取歌词数据（原文/翻译/逐字）"""
+        """获取歌词数据（原文/翻译/罗马音/逐字）"""
         resp = _retry_api(self.track_api.GetTrackLyricsNew, str(track_id))
-        lrc = (resp.get("lrc") or {}).get("lyric", "")
-        tlyric = (resp.get("tlyric") or {}).get("lyric", "")
-        yrc = (resp.get("yrc") or {}).get("lyric", "")
-        ytlyric = (resp.get("ytlyric") or {}).get("lyric", "")
-        return {"lrc": lrc, "tlyric": tlyric, "yrc": yrc, "ytlyric": ytlyric}
+
+        def _lyric(key: str) -> str:
+            return (resp.get(key) or {}).get("lyric", "")
+
+        return {
+            "lrc": _lyric("lrc"),
+            "tlyric": _lyric("tlyric"),
+            "romalrc": _lyric("romalrc"),
+            "yrc": _lyric("yrc"),
+            "ytlrc": _lyric("ytlrc"),
+            "yromalrc": _lyric("yromalrc"),
+        }
 
     @staticmethod
     def _chunk_ids(track_ids: list[int], chunk_size: int) -> list[list[int]]:

@@ -8,8 +8,8 @@ from typing import Iterable, Mapping
 
 from musicvault.adapters.processors.decryptor import Decryptor
 from musicvault.adapters.processors.lyrics import (
-    build_lossless_lyrics,
-    build_lossy_lyrics,
+    StandardLyrics,
+    KaraokeLyrics,
     write_gb18030_lrc,
 )
 from musicvault.adapters.processors.metadata_writer import MetadataWriter
@@ -173,12 +173,15 @@ class ProcessService:
         lossless_path, lossy_path = self.organizer.route_audio(decoded, track_info, self.cfg.downloads_dir)
 
         lyrics = self.api.get_track_lyrics(track_id)
-        lossless_lyrics = build_lossless_lyrics(
-            lyrics, include_translation=include_translation, translation_format=translation_format
-        )
-        lossy_lyrics = build_lossy_lyrics(
-            lyrics, include_translation=include_translation, translation_format=translation_format
-        )
+
+        # Lossless: 优先逐字 YRC（可由 use_karaoke_lyrics 控制），回退标准 LRC
+        if self.cfg.use_karaoke_lyrics and lyrics["yrc"]:
+            lossless_lyrics = self._build_lyrics(KaraokeLyrics(lyrics), include_translation, translation_format)
+        else:
+            lossless_lyrics = self._build_lyrics(StandardLyrics(lyrics), include_translation, translation_format)
+
+        # Lossy: 始终使用标准 LRC
+        lossy_lyrics = self._build_lyrics(StandardLyrics(lyrics), include_translation, translation_format)
 
         same_file = lossless_path.resolve() == lossy_path.resolve()
         self.metadata.write(lossless_path, track_info, lyric_text=lossless_lyrics, is_lossless=True)
@@ -195,6 +198,20 @@ class ProcessService:
                 raw_file.unlink(missing_ok=True)
 
         return lossless_path, lossy_path
+
+    def _build_lyrics(
+        self,
+        lyrics_obj: StandardLyrics | KaraokeLyrics,
+        include_translation: bool,
+        translation_format: str,
+    ) -> str:
+        if include_translation and self.cfg.include_romaji:
+            return lyrics_obj.merge_all()
+        if include_translation:
+            return lyrics_obj.merge_translation(format=translation_format)
+        if self.cfg.include_romaji:
+            return lyrics_obj.merge_romaji(format=translation_format)
+        return lyrics_obj.original
 
     # ------------------------------------------------------------------
     # Library 硬链接

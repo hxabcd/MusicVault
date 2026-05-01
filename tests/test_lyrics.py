@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 from musicvault.adapters.processors.lyrics import (
-    build_lossless_lyrics,
-    build_lossy_lyrics,
+    StandardLyrics,
+    KaraokeLyrics,
     _build_translation_map,
     _find_translation,
     _is_json_metadata_line,
-    _merge_translation,
-    _parse_yrc_line,
-    _sanitize_lyrics_text,
+    _is_same_text,
+    _merge_lrc_translation,
     _normalize_lrc_timestamps,
     _normalize_time_tag,
-    _is_same_text,
+    _parse_yrc_line,
+    _sanitize_lyrics_text,
 )
 
 # fmt: off
@@ -29,114 +29,94 @@ SAMPLE_YRC = """[1000,4000](1000,500,0)First(1500,500,0)line
 # fmt: on
 
 
-# ---- build_lossless_lyrics -------------------------------------------------
+# ---- StandardLyrics -----------------------------------------------------------
 
 
-class TestBuildLosslessLyrics:
-    def test_lrc_only_no_translation(self) -> None:
-        payload = {"lrc": SAMPLE_LRC}
-        result = build_lossless_lyrics(payload, include_translation=False)
-        assert result == _normalize_lrc_timestamps(SAMPLE_LRC)
+class TestStandardLyrics:
+    def test_original_only(self) -> None:
+        s = StandardLyrics({"lrc": SAMPLE_LRC})
+        assert s.original == _normalize_lrc_timestamps(SAMPLE_LRC)
+        assert s.translation == ""
+        assert s.romaji == ""
 
-    def test_lrc_with_translation(self) -> None:
-        payload = {"lrc": SAMPLE_LRC, "tlyric": SAMPLE_TLYRIC}
-        result = build_lossless_lyrics(payload, include_translation=True)
-        # 翻译行插入在原行之间，逐行检查
+    def test_merge_lrc_translation_separate(self) -> None:
+        s = StandardLyrics({"lrc": SAMPLE_LRC, "tlyric": SAMPLE_TLYRIC})
+        result = s.merge_translation(format="separate")
         lines = result.splitlines()
-        assert len(lines) == 6  # 3 原文 + 3 翻译
+        assert len(lines) == 6
         assert "First line" in lines[0]
         assert "第一行" in lines[1]
-        assert "Second line" in lines[2]
-        assert "第二行" in lines[3]
 
-    def test_yrc_no_translation(self) -> None:
-        payload = {"yrc": SAMPLE_YRC}
-        result = build_lossless_lyrics(payload, include_translation=False)
-        # YRC 每词带独立时间戳，输出为 [00:01.000]First[00:01.500]line[00:05.000]
-        assert "First" in result
-        assert "line" in result
-        assert "Second" in result
-        assert "Third" in result
-        # 无翻译行
-        assert "第一行" not in result
+    def test_merge_lrc_translation_inline(self) -> None:
+        s = StandardLyrics({"lrc": SAMPLE_LRC, "tlyric": SAMPLE_TLYRIC})
+        result = s.merge_translation(format="inline")
+        assert "第一行 First line" in result
 
-    def test_yrc_with_ytlyric(self) -> None:
-        ytlyric = """[1000,4000](1000,500,0)第一(1500,500,0)行
+    def test_merge_romaji(self) -> None:
+        s = StandardLyrics({"lrc": SAMPLE_LRC, "romalrc": SAMPLE_TLYRIC})
+        result = s.merge_romaji(format="separate")
+        assert "第一行" in result
+
+    def test_empty_payload(self) -> None:
+        s = StandardLyrics({})
+        assert s.original == ""
+
+    def test_no_translation_merge_returns_original(self) -> None:
+        s = StandardLyrics({"lrc": SAMPLE_LRC})
+        result = s.merge_translation()
+        assert result == _normalize_lrc_timestamps(SAMPLE_LRC)
+
+    def test_merge_all(self) -> None:
+        s = StandardLyrics({"lrc": SAMPLE_LRC, "tlyric": SAMPLE_TLYRIC, "romalrc": SAMPLE_TLYRIC})
+        result = s.merge_all()
+        lines = result.splitlines()
+        assert len(lines) == 9  # 3 原文 + 3 翻译 + 3 罗马音
+
+
+# ---- KaraokeLyrics -----------------------------------------------------------
+
+
+class TestKaraokeLyrics:
+    def test_original_only(self) -> None:
+        v = KaraokeLyrics({"yrc": SAMPLE_YRC})
+        assert "First" in v.original
+        assert v.translation == ""
+
+    def test_merge_lrc_translation_separate(self) -> None:
+        ytlrc = """[1000,4000](1000,500,0)第一(1500,500,0)行
 [5500,4000](5500,500,0)第二(6000,500,0)行"""
-        payload = {"yrc": SAMPLE_YRC, "ytlyric": ytlyric, "tlyric": ""}
-        result = build_lossless_lyrics(payload, include_translation=True)
-        # ytlyric translation should appear after each yrc line
+        v = KaraokeLyrics({"yrc": SAMPLE_YRC, "ytlrc": ytlrc})
+        result = v.merge_translation(format="separate")
         assert "第一行" in result
         assert "第二行" in result
 
-    def test_yrc_falls_back_to_tlyric(self) -> None:
-        payload = {"yrc": SAMPLE_YRC, "tlyric": SAMPLE_TLYRIC}
-        result = build_lossless_lyrics(payload, include_translation=True)
-        assert "第一行" in result
-
-    def test_empty_payload(self) -> None:
-        result = build_lossless_lyrics({})
-        assert result == ""
-
-    def test_translation_disabled(self) -> None:
-        ytlyric = """[1000,4000](1000,500,0)第一行"""
-        payload = {"yrc": SAMPLE_YRC, "ytlyric": ytlyric, "tlyric": SAMPLE_TLYRIC}
-        result = build_lossless_lyrics(payload, include_translation=False)
-        assert "第一行" not in result
-
-    def test_yrc_with_stray_non_yrc_lines(self) -> None:
-        yrc_with_stray = SAMPLE_YRC + "\n[meta]some info"
-        payload = {"yrc": yrc_with_stray}
-        result = build_lossless_lyrics(payload, include_translation=False)
-        assert "[meta]some info" in result
-
-    def test_lrc_with_inline_translation_format(self) -> None:
-        payload = {"lrc": SAMPLE_LRC, "tlyric": SAMPLE_TLYRIC}
-        result = build_lossless_lyrics(payload, include_translation=True, translation_format="inline")
-        # inline 模式下翻译应出现在原文同一行
-        assert "第一行 First line" in result
-
-    def test_yrc_with_inline_translation_format(self) -> None:
-        payload = {"yrc": SAMPLE_YRC, "tlyric": SAMPLE_TLYRIC}
-        result = build_lossless_lyrics(payload, include_translation=True, translation_format="inline")
-        # YRC 内联模式：翻译前置在逐词时间戳行中
+    def test_merge_lrc_translation_inline(self) -> None:
+        v = KaraokeLyrics({"yrc": SAMPLE_YRC, "ytlrc": SAMPLE_TLYRIC})
+        result = v.merge_translation(format="inline")
         assert "第一行" in result
         assert "First" in result
 
-
-# ---- build_lossy_lyrics ----------------------------------------------------
-
-
-class TestBuildLossyLyrics:
-    def test_lrc_only_no_translation(self) -> None:
-        payload = {"lrc": SAMPLE_LRC}
-        result = build_lossy_lyrics(payload, include_translation=False)
-        assert result == _normalize_lrc_timestamps(SAMPLE_LRC)
-
-    def test_lrc_with_inline_translation(self) -> None:
-        payload = {"lrc": SAMPLE_LRC, "tlyric": SAMPLE_TLYRIC}
-        result = build_lossy_lyrics(payload, include_translation=True)
-        # inline: [00:01.000]第一行 First line
-        assert "第一行" in result
-        assert "First line" in result
+    def test_stray_non_yrc_lines(self) -> None:
+        yrc_with_stray = SAMPLE_YRC + "\n[meta]some info"
+        v = KaraokeLyrics({"yrc": yrc_with_stray})
+        assert "[meta]some info" in v.original
 
     def test_empty_payload(self) -> None:
-        result = build_lossy_lyrics({})
-        assert result == ""
+        v = KaraokeLyrics({})
+        assert v.original == ""
 
-    def test_translation_disabled(self) -> None:
-        payload = {"lrc": SAMPLE_LRC, "tlyric": SAMPLE_TLYRIC}
-        result = build_lossy_lyrics(payload, include_translation=False)
-        assert "第一行" not in result
+    def test_merge_romaji(self) -> None:
+        v = KaraokeLyrics({"yrc": SAMPLE_YRC, "yromalrc": SAMPLE_TLYRIC})
+        result = v.merge_romaji(format="separate")
+        assert "第一行" in result
 
-    def test_lrc_with_separate_translation_format(self) -> None:
-        payload = {"lrc": SAMPLE_LRC, "tlyric": SAMPLE_TLYRIC}
-        result = build_lossy_lyrics(payload, include_translation=True, translation_format="separate")
-        # separate 模式：翻译应在单独一行
+    def test_merge_all(self) -> None:
+        v = KaraokeLyrics({"yrc": SAMPLE_YRC, "ytlrc": SAMPLE_TLYRIC, "yromalrc": SAMPLE_TLYRIC})
+        result = v.merge_all()
+        assert "First" in result
+        assert "第一行" in result
         lines = result.splitlines()
-        assert len(lines) == 6  # 3 原文 + 3 翻译
-        assert "First line" in lines[0]
-        assert "第一行" in lines[1]
+        assert len(lines) == 9  # 3 原文 + 3 翻译 + 3 罗马音
 
 
 # ---- _build_translation_map -------------------------------------------------
@@ -160,30 +140,30 @@ class TestBuildTranslationMap:
         assert mapping == {}
 
 
-# ---- _merge_translation ----------------------------------------------------
+# ---- _merge_lrc_translation ----------------------------------------------------
 
 
 class TestMergeTranslation:
     def test_inline(self) -> None:
-        result = _merge_translation("[00:01.000]Hello", "[00:01.000]你好", inline=True)
+        result = _merge_lrc_translation("[00:01.000]Hello", "[00:01.000]你好", inline=True)
         assert result == "[00:01.000]你好 Hello"
 
     def test_append_next_line(self) -> None:
-        result = _merge_translation("[00:01.000]Hello", "[00:01.000]你好", inline=False)
+        result = _merge_lrc_translation("[00:01.000]Hello", "[00:01.000]你好", inline=False)
         assert "[00:01.000]Hello\n[00:01.000]你好" == result
 
     def test_skip_same_text(self) -> None:
-        result = _merge_translation("[00:01.000]Hello", "[00:01.000]Hello", inline=True)
+        result = _merge_lrc_translation("[00:01.000]Hello", "[00:01.000]Hello", inline=True)
         assert "[00:01.000]你好" not in result
         assert result == "[00:01.000]Hello"
 
     def test_empty_translation_map(self) -> None:
-        result = _merge_translation("[00:01.000]X", "", inline=True)
+        result = _merge_lrc_translation("[00:01.000]X", "", inline=True)
         assert result == "[00:01.000]X"
 
     def test_metadata_lines_preserved(self) -> None:
         # 无时间戳的元数据行应原样透传（覆盖 line 59-60）
-        result = _merge_translation("[ti:Title]\n[00:01.000]Hello", "[00:01.000]你好", inline=False)
+        result = _merge_lrc_translation("[ti:Title]\n[00:01.000]Hello", "[00:01.000]你好", inline=False)
         lines = result.splitlines()
         assert "[ti:Title]" in lines[0]
         assert "Hello" in lines[1]
