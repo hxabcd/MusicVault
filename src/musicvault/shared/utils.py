@@ -29,7 +29,7 @@ def format_track_name(template: str, track: "Track") -> str:
 
     支持的占位符：
         {name} / {title}  -- 歌曲名
-        {artist}          -- 歌手（多个以 / 分隔）
+        {artist}          -- 歌手（多个以 , 分隔）
         {alias}           -- 第一个别名（无别名时为空）
         {album}           -- 专辑名
         {track_id}        -- 曲目 ID
@@ -41,7 +41,7 @@ def format_track_name(template: str, track: "Track") -> str:
         if key in ("name", "title"):
             return track.name
         if key == "artist":
-            return track.artist_text
+            return track.artist_text.replace("/", ",")
         if key == "alias":
             return alias_text
         if key == "album":
