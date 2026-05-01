@@ -51,7 +51,7 @@ class RunService:
         playlist_index: dict[str, dict[str, object]] = {}
         downloaded: list = []
         if not only_process:
-            downloaded = self.sync_service.run_sync(cookie=cookie, playlist_ids=self.cfg.playlist_ids)
+            downloaded = self.sync_service.run_sync(cookie=cookie, playlist_ids=self.cfg.get_playlist_ids())
             playlist_index = self.sync_service.playlist_index
 
         if not only_pull:

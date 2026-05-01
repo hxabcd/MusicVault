@@ -8,6 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # 安装（可编辑模式）
 uv pip install -e .
 
+# 初始化（登录并创建配置文件）
+msv init
+
 # 同步（拉取 + 后处理）
 msv sync
 

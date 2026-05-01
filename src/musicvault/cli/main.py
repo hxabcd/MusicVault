@@ -68,6 +68,13 @@ def build_parser() -> argparse.ArgumentParser:
     help_parser = sub.add_parser("help", help="显示帮助信息")
     help_parser.add_argument("subcommand", nargs="?", default=None, help="要查看的子命令名称")
 
+    init = sub.add_parser("init", help="初始化配置", description="登录网易云音乐账号并创建配置文件")
+    init.add_argument("--cookie", default=None, help="网易云 Cookie（跳过交互登录）")
+    init.add_argument(
+        "--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）"
+    )
+    init.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
+
     sync = sub.add_parser("sync", help="同步音乐", description="拉取并处理音乐")
     _add_common_args(sync)
 
@@ -143,6 +150,20 @@ def main(argv: list[str] | None = None) -> int:
     else:
         logger.info("配置文件不存在，已按默认值自动生成：%s", cfg_path)
 
+    # init 命令：仅登录并创建配置
+    if args.command == "init":
+        if getattr(args, "cookie", None):
+            cfg.cookie = args.cookie
+            cfg.save()
+            output_success("已通过 --cookie 初始化配置文件")
+            return 0
+        if cfg.cookie:
+            output_info("已登录，配置文件已就绪")
+            output_info(f"配置路径：{cfg_path}")
+            return 0
+        cookie, _ = _ensure_cookie(args, cfg)
+        return 0 if cookie else 2
+
     # 任意需要 API 的操作前先确保登录
     cookie, just_logged_in = _ensure_cookie(args, cfg)
     if cookie is None:
@@ -150,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # sync / pull 首次登录后退出，让用户有机会配置歌单
     if args.command in ("sync", "pull") and just_logged_in:
-        if not cfg.playlist_ids:
+        if not cfg.get_playlist_ids():
             console.print(
                 """
   [bold]下一步操作：[/bold]

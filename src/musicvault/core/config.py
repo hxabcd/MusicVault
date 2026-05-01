@@ -13,7 +13,6 @@ DEFAULT_LOSSY_LRC_ENCODINGS = ("gb18030", "utf-8-sig")
 class Config:
     cookie: str = ""
     workspace: str = "./workspace"
-    playlist_ids: list[int] = field(default_factory=list)
     force: bool = False
     include_translation: bool = True
     text_cleaning_enabled: bool = True
@@ -65,28 +64,35 @@ class Config:
         ):
             path.mkdir(parents=True, exist_ok=True)
 
+    @property
+    def _playlist_index_path(self) -> Path:
+        return self.state_dir / "playlists.json"
+
+    def get_playlist_ids(self) -> list[int]:
+        index = load_json(self._playlist_index_path, {})
+        return sorted(int(k) for k in index if k.lstrip("-").isdigit())
+
+    def has_playlist(self, pid: int) -> bool:
+        index = load_json(self._playlist_index_path, {})
+        return str(pid) in index
+
+    def add_playlist(self, pid: int, name: str = "", track_count: int = 0) -> None:
+        self.ensure_dirs()
+        index = load_json(self._playlist_index_path, {})
+        index[str(pid)] = {"name": name, "track_count": track_count}
+        save_json(self._playlist_index_path, index)
+
+    def remove_playlist(self, pid: int) -> None:
+        index = load_json(self._playlist_index_path, {})
+        index.pop(str(pid), None)
+        save_json(self._playlist_index_path, index)
+
     # -- serialization -------------------------------------------------------
 
     @classmethod
     def from_dict(cls, raw: Any) -> Config:
         if not isinstance(raw, dict):
             raise RuntimeError("配置文件格式错误（需为 JSON 对象）")
-
-        playlist_ids = raw.get("playlist_ids") or raw.get("playlist_id")
-        if playlist_ids is None:
-            playlist_ids = []
-        elif isinstance(playlist_ids, int):
-            playlist_ids = [playlist_ids]
-        elif isinstance(playlist_ids, list):
-            parsed: list[int] = []
-            for pid in playlist_ids:
-                try:
-                    parsed.append(int(pid))
-                except (TypeError, ValueError):
-                    raise RuntimeError(f"playlist_ids 格式错误：{pid}") from None
-            playlist_ids = parsed
-        else:
-            raise RuntimeError(f"playlist_ids 格式错误：{playlist_ids}")
 
         workers = raw.get("workers") or {}
         if not isinstance(workers, dict):
@@ -113,7 +119,6 @@ class Config:
         return cls(
             cookie=str(raw.get("cookie") or "").strip(),
             workspace=str(raw.get("workspace") or "./workspace"),
-            playlist_ids=playlist_ids,
             force=bool(raw.get("force", False)),
             include_translation=bool(raw.get("include_translation", True)),
             text_cleaning_enabled=bool(text_cleaning.get("enabled", True)),
@@ -127,7 +132,17 @@ class Config:
     def load(cls, file: str | Path) -> Config:
         path = Path(file)
         if path.exists():
-            cfg = cls.from_dict(load_json(path, {}))
+            raw = load_json(path, {})
+            cfg = cls.from_dict(raw)
+            if "playlist_ids" in raw or "playlist_id" in raw:
+                legacy_ids = _extract_legacy_playlist_ids(raw)
+                if legacy_ids:
+                    cfg.ensure_dirs()
+                    index = load_json(cfg._playlist_index_path, {})
+                    for pid in legacy_ids:
+                        index.setdefault(str(pid), {"name": "", "track_count": 0})
+                    save_json(cfg._playlist_index_path, index)
+                cfg.save(path)
         else:
             cfg = cls()
             cfg.save(path)
@@ -145,7 +160,6 @@ class Config:
         return {
             "cookie": self.cookie,
             "workspace": self.workspace,
-            "playlist_ids": self.playlist_ids,
             "force": self.force,
             "include_translation": self.include_translation,
             "text_cleaning": {"enabled": self.text_cleaning_enabled},
@@ -156,6 +170,23 @@ class Config:
             },
             "lyrics": {"lossy_lrc_encodings": list(self.lossy_lrc_encodings)},
         }
+
+
+def _extract_legacy_playlist_ids(raw: dict[str, Any]) -> list[int]:
+    playlist_ids = raw.get("playlist_ids") or raw.get("playlist_id")
+    if playlist_ids is None:
+        return []
+    if isinstance(playlist_ids, int):
+        return [playlist_ids]
+    if isinstance(playlist_ids, list):
+        parsed: list[int] = []
+        for pid in playlist_ids:
+            try:
+                parsed.append(int(pid))
+            except (TypeError, ValueError):
+                raise RuntimeError(f"playlist_ids 格式错误：{pid}") from None
+        return parsed
+    raise RuntimeError(f"playlist_ids 格式错误：{playlist_ids}")
 
 
 def _parse_workers_int(value: Any) -> int | None:
