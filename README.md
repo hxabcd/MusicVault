@@ -41,15 +41,16 @@ pip install -e .
 
 ### 命令总览
 
-| 命令 | 别名 | 说明 |
-|------|------|------|
-| `msv sync` | — | 完整流水线：拉取 + 下载 + 处理 |
-| `msv pull` | — | 仅拉取与下载，不进行后处理 |
-| `msv process` | — | 仅对本地下载文件进行后处理 |
-| `msv add` | — | 添加要同步的歌单 |
-| `msv remove` | — | 移除已添加的歌单 |
-| `msv list` | `msv ls` | 查看已添加的歌单 |
-| `msv help` | — | 显示帮助信息 |
+| 命令 | 说明 |
+|------|------|
+| `msv sync` | 完整流水线：拉取 + 下载 + 处理 |
+| `msv pull` | 仅拉取与下载，不进行后处理 |
+| `msv process` | 仅对本地下载文件进行后处理 |
+| `msv add` | 添加要同步的歌单 |
+| `msv remove` | 移除已添加的歌单 |
+| `msv list` | 查看已添加的歌单 |
+| `msv ls` | `list` 的别名 |
+| `msv help` | 显示帮助信息 |
 
 ### msv sync — 同步音乐
 
@@ -86,9 +87,6 @@ msv add 123456789
 
 # 指定歌单链接
 msv add https://music.163.com/playlist?id=123456789
-
-# 带 cookie（用于验证歌单信息）
-msv add 123456789 --cookie "MUSIC_U=..."
 ```
 
 ### msv remove — 移除歌单
@@ -124,17 +122,8 @@ msv ls    # 等效
 ## 首次使用流程
 
 ```
-msv sync          # 首次运行：交互式登录 + 自动生成配置文件
-msv add           # 交互式选择要同步的歌单
-msv sync          # 再次运行：正式同步
-```
-
-或直接指定歌单：
-
-```
-msv sync          # 登录
-msv add 123456789 # 添加歌单
-msv sync          # 同步
+msv add           # 交互式登录选择要同步的歌单
+msv sync          # 开始同步
 ```
 
 ## 配置文件
@@ -143,37 +132,25 @@ msv sync          # 同步
 
 ```json
 {
-  "cookie": "",
-  "workspace": "./workspace",
-  "playlist_ids": [],
-  "force": false,
-  "include_translation": true,
-  "text_cleaning": {
+  "cookie": "", // 网易云 Cookie（登录后自动填入）
+  "workspace": "./workspace", // 工作目录路径
+  "playlist_ids": [], // 要同步的歌单 ID 列表
+  "force": false, // 是否每次强制重处理
+  "include_translation": true, // 是否合并翻译歌词
+  "text_cleaning": { // 是否清理 API 返回文本中的不可见字符
     "enabled": true
   },
-  "workers": {
-    "download": null,
-    "process": null,
-    "ffmpeg_threads": null
+  "workers": { 
+    "download": null, // 下载并发数（null = 自动，取 CPU 核心数，上限 6）
+    "process": null, // 处理并发数（null = 自动，取 CPU 核心数一半，上限 4）
+    "ffmpeg_threads": null // ffmpeg 编码线程数（null = 自动）
   },
   "lyrics": {
+    // LRC 文件编码（按顺序尝试写入，首个失败则尝试下一个）
     "lossy_lrc_encodings": ["gb18030", "utf-8-sig"]
   }
 }
 ```
-
-| 字段 | 说明 |
-|------|------|
-| `cookie` | 网易云 Cookie（登录后自动填入） |
-| `workspace` | 工作目录路径 |
-| `playlist_ids` | 要同步的歌单 ID 列表 |
-| `force` | 是否每次强制重处理 |
-| `include_translation` | 是否合并翻译歌词 |
-| `text_cleaning.enabled` | 是否清理 API 返回文本中的不可见字符 |
-| `workers.download` | 下载并发数（`null` = 自动，取 CPU 核心数，上限 6） |
-| `workers.process` | 处理并发数（`null` = 自动，取 CPU 核心数一半，上限 4） |
-| `workers.ffmpeg_threads` | ffmpeg 编码线程数（`null` = 自动） |
-| `lyrics.lossy_lrc_encodings` | 有损 LRC 文件编码（按顺序尝试写入，首个失败则尝试下一个） |
 
 环境变量：
 
@@ -211,7 +188,3 @@ python -m pytest tests/ -v
 ruff check src/ tests/
 ruff format --check src/ tests/
 ```
-
-## 许可
-
-MIT
