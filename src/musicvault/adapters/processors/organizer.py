@@ -32,7 +32,8 @@ class Organizer:
                 self._transcode_to_flac(src, lossless_target)
             self._transcode_to_mp3(src, lossy_target)
         else:
-            self._copy(src, lossless_target)
+            # 有损源 → 转码为 FLAC（保真，格式一致），同时输出有损 MP3
+            self._transcode_to_flac(src, lossless_target)
             if suffix == ".mp3":
                 self._copy(src, lossy_target)
             else:
