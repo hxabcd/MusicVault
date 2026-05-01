@@ -35,7 +35,8 @@ class Config:
     cover_max_size_kb: int = 0
     lyrics_embed_in_metadata: bool = True
     lyrics_write_lrc_file: bool = True
-    use_karaoke_lyrics: bool = True
+    karaoke_lossless: bool = True
+    karaoke_lossy: bool = False
     include_romaji: bool = False
     filename_lossless: str = "{artist} - {name}"
     filename_lossy: str = "{alias} {name} - {artist}"
@@ -187,8 +188,10 @@ class Config:
         if lossy_format not in _LOSSY_FORMAT_VALUES:
             raise RuntimeError(f"lossy.format 格式错误：需为 {sorted(_LOSSY_FORMAT_VALUES)}，当前={lossy_format}")
 
-        # -- translation_format --
-        translation_format = str(raw.get("translation_format") or "separate").strip()
+        # -- translation_format (lyrics group, fallback to top-level) --
+        translation_format = str(
+            lyrics.get("translation_format") or raw.get("translation_format") or "separate"
+        ).strip()
         if translation_format not in ("separate", "inline"):
             raise RuntimeError(f"translation_format 格式错误：需为 separate 或 inline，当前={translation_format}")
 
@@ -213,7 +216,11 @@ class Config:
         # -- lyrics extended --
         lyrics_embed_in_metadata = bool(lyrics.get("embed_in_metadata", True))
         lyrics_write_lrc_file = bool(lyrics.get("write_lrc_file", True))
-        use_karaoke_lyrics = bool(lyrics.get("use_karaoke", True))
+        # 逐字歌词：优先新 key，fallback 旧 use_karaoke（仅影响 lossless）
+        karaoke_lossless = bool(
+            lyrics.get("lossless_use_karaoke") if "lossless_use_karaoke" in lyrics else lyrics.get("use_karaoke", True)
+        )
+        karaoke_lossy = bool(lyrics.get("lossy_use_karaoke", False))
         include_romaji = bool(lyrics.get("include_romaji", False))
 
         # -- filenames section --
@@ -283,8 +290,11 @@ class Config:
         return cls(
             cookie=str(raw.get("cookie") or "").strip(),
             workspace=str(raw.get("workspace") or "./workspace"),
-            force=bool(raw.get("force", False)),
-            include_translation=bool(raw.get("include_translation", True)),
+            include_translation=bool(
+                lyrics.get("include_translation")
+                if "include_translation" in lyrics
+                else raw.get("include_translation", True)
+            ),
             text_cleaning_enabled=bool(text_cleaning.get("enabled", True)),
             download_workers=_parse_workers_int(workers.get("download")),
             process_workers=_parse_workers_int(workers.get("process")),
@@ -298,7 +308,8 @@ class Config:
             cover_max_size_kb=cover_max_size_kb,
             lyrics_embed_in_metadata=lyrics_embed_in_metadata,
             lyrics_write_lrc_file=lyrics_write_lrc_file,
-            use_karaoke_lyrics=use_karaoke_lyrics,
+            karaoke_lossless=karaoke_lossless,
+            karaoke_lossy=karaoke_lossy,
             include_romaji=include_romaji,
             filename_lossless=filename_lossless,
             filename_lossy=filename_lossy,
@@ -348,9 +359,6 @@ class Config:
         return {
             "cookie": self.cookie,
             "workspace": self.workspace,
-            "force": self.force,
-            "include_translation": self.include_translation,
-            "translation_format": self.translation_format,
             "text_cleaning": {
                 "enabled": self.text_cleaning_enabled,
                 "allowlist": self.text_cleaning_allowlist,
@@ -364,8 +372,11 @@ class Config:
                 "lossy_lrc_encodings": list(self.lossy_lrc_encodings),
                 "embed_in_metadata": self.lyrics_embed_in_metadata,
                 "write_lrc_file": self.lyrics_write_lrc_file,
-                "use_karaoke": self.use_karaoke_lyrics,
+                "lossless_use_karaoke": self.karaoke_lossless,
+                "lossy_use_karaoke": self.karaoke_lossy,
                 "include_romaji": self.include_romaji,
+                "include_translation": self.include_translation,
+                "translation_format": self.translation_format,
             },
             "lossy": {
                 "bitrate": self.lossy_bitrate,

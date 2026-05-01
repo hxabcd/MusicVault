@@ -55,7 +55,7 @@ def test_load_and_save_roundtrip() -> None:
         assert loaded["cookie"] == "xyz"
         # 保存后 config 中不应再有 playlist_ids
         assert "playlist_ids" not in loaded
-        assert loaded["translation_format"] == "inline"
+        assert loaded["lyrics"]["translation_format"] == "inline"
         assert loaded["lossy"]["bitrate"] == "256k"
 
 

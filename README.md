@@ -135,9 +135,6 @@ msv sync          # 开始同步
 {
   "cookie": "",
   "workspace": "./workspace",
-  "force": false,
-  "include_translation": true,
-  "translation_format": "separate",
   "text_cleaning": {
     "enabled": true,
     "allowlist": ""
@@ -151,8 +148,11 @@ msv sync          # 开始同步
     "lossy_lrc_encodings": ["utf-8"],
     "embed_in_metadata": true,
     "write_lrc_file": true,
-    "use_karaoke": true,
-    "include_romaji": false
+    "lossless_use_karaoke": true,
+    "lossy_use_karaoke": false,
+    "include_romaji": false,
+    "include_translation": true,
+    "translation_format": "separate"
   },
   "lossy": {
     "bitrate": "192k",
@@ -203,9 +203,6 @@ msv sync          # 开始同步
 |------|------|--------|------|
 | 顶层 | `cookie` | `""` | 网易云 Cookie（登录后自动填入） |
 | 顶层 | `workspace` | `"./workspace"` | 工作目录路径 |
-| 顶层 | `force` | `false` | 是否每次强制重处理 |
-| 顶层 | `include_translation` | `true` | 是否合并翻译歌词 |
-| 顶层 | `translation_format` | `"separate"` | 翻译格式：`separate`（独立行）/ `inline`（同行前置） |
 | `text_cleaning` | `enabled` | `true` | 是否清理 API 返回文本中的不可见字符 |
 | `text_cleaning` | `allowlist` | `""` | Unicode 类别白名单（空=内置规则） |
 | `workers` | `download` | `null` | 下载并发数（null=自动，上限6） |
@@ -214,8 +211,11 @@ msv sync          # 开始同步
 | `lyrics` | `lossy_lrc_encodings` | `["utf-8"]` | LRC 文件编码顺序 |
 | `lyrics` | `embed_in_metadata` | `true` | 是否在音频元数据中嵌入歌词 |
 | `lyrics` | `write_lrc_file` | `true` | 是否写入独立 `.lrc` 文件 |
-| `lyrics` | `use_karaoke` | `true` | 是否启用逐字（Karaoke）歌词（有 YRC 数据时） |
+| `lyrics` | `lossless_use_karaoke` | `true` | 无损是否启用逐字（Karaoke）歌词 |
+| `lyrics` | `lossy_use_karaoke` | `false` | 有损是否启用逐字（Karaoke）歌词 |
 | `lyrics` | `include_romaji` | `false` | 是否在歌词中附加罗马音（三行输出） |
+| `lyrics` | `include_translation` | `true` | 是否合并翻译歌词 |
+| `lyrics` | `translation_format` | `"separate"` | 翻译格式：`separate`（独立行）/ `inline`（同行前置） |
 | `lossy` | `bitrate` | `"192k"` | 有损编码码率 |
 | `lossy` | `format` | `"mp3"` | 有损输出格式：`mp3`/`aac`/`ogg`/`opus` |
 | `download` | `quality` | `"hires"` | 下载音质：`standard`/`higher`/`exhire`/`hires`/`lossless` |

@@ -174,14 +174,17 @@ class ProcessService:
 
         lyrics = self.api.get_track_lyrics(track_id)
 
-        # Lossless: 优先逐字 YRC（可由 use_karaoke_lyrics 控制），回退标准 LRC
-        if self.cfg.use_karaoke_lyrics and lyrics["yrc"]:
+        # Lossless：有 YRC 且启用时优先逐字，否则回退标准 LRC
+        if self.cfg.karaoke_lossless and lyrics["yrc"]:
             lossless_lyrics = self._build_lyrics(KaraokeLyrics(lyrics), include_translation, translation_format)
         else:
             lossless_lyrics = self._build_lyrics(StandardLyrics(lyrics), include_translation, translation_format)
 
-        # Lossy: 始终使用标准 LRC
-        lossy_lyrics = self._build_lyrics(StandardLyrics(lyrics), include_translation, translation_format)
+        # Lossy：同样可按配置启用逐字歌词
+        if self.cfg.karaoke_lossy and lyrics["yrc"]:
+            lossy_lyrics = self._build_lyrics(KaraokeLyrics(lyrics), include_translation, translation_format)
+        else:
+            lossy_lyrics = self._build_lyrics(StandardLyrics(lyrics), include_translation, translation_format)
 
         same_file = lossless_path.resolve() == lossy_path.resolve()
         self.metadata.write(lossless_path, track_info, lyric_text=lossless_lyrics, is_lossless=True)
