@@ -17,9 +17,8 @@ from musicvault.adapters.processors.organizer import Organizer
 from musicvault.adapters.providers.pyncm_client import PyncmClient
 from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
-from musicvault.shared.output import warn as output_warn
 from musicvault.shared.tui_progress import BatchProgress
-from musicvault.shared.utils import hardlink_or_copy, load_json, safe_filename, save_json, workspace_rel_path
+from musicvault.shared.utils import create_link, hardlink_or_copy, load_json, remove_link, safe_filename, save_json, workspace_rel_path
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +42,10 @@ class ProcessService:
         self.metadata = metadata
         self.workers = max(1, workers)
 
+    # ------------------------------------------------------------------
+    # 公开入口
+    # ------------------------------------------------------------------
+
     def run_process(
         self,
         downloaded: list[DownloadedTrack],
@@ -60,61 +63,9 @@ class ProcessService:
             return
         self._process_local(include_translation, force)
 
-    def _resolve_playlist_names(
-        self,
-        playlist_ids: list[int],
-        playlist_index: Mapping[str, Mapping[str, object]],
-    ) -> list[str]:
-        names: list[str] = []
-        for pid in playlist_ids:
-            entry = playlist_index.get(str(pid))
-            name = str(entry["name"]) if entry and entry.get("name") else str(pid)
-            names.append(safe_filename(name))
-        return names or [_DEFAULT_PLAYLIST]
-
-    def _build_track_playlists(self) -> dict[int, list[int]]:
-        """通过 API 获取所有配置歌单的 track_id -> [playlist_id] 映射。"""
-        mapping: dict[int, list[int]] = {}
-        for pid in self.cfg.get_playlist_ids():
-            try:
-                tracks = self.api.get_playlist_tracks(pid)
-            except Exception:
-                logger.info("获取歌单曲目失败 playlist_id=%s，跳过分类", pid)
-                continue
-            for track in tracks:
-                mapping.setdefault(track.id, []).append(pid)
-        return mapping
-
-    def _process_local(self, include_translation: bool, force: bool) -> None:
-        raw_files = list(self._iter_downloads())
-        processed = load_json(self.cfg.processed_state_file, {})
-        if raw_files and not isinstance(processed, dict):
-            processed = {}
-        if raw_files and not processed:
-            output_warn(
-                f"下载目录有 {len(raw_files)} 个文件，但 processed_files.json 为空，"
-                "无法匹配 track_id。请先执行 sync 建立索引。"
-            )
-        pending: list[tuple[Path, int]] = []
-        for raw_file in raw_files:
-            track_id = self._guess_track_id(raw_file, index=processed)
-            if track_id is None:
-                logger.info("跳过文件：无法推断 track_id，文件=%s", raw_file.name)
-                continue
-            pending.append((raw_file, track_id))
-
-        track_playlists = self._build_track_playlists()
-        playlist_index = load_json(self.cfg.state_dir / "playlists.json", {})
-
-        detail_map = self.api.get_tracks_detail([track_id for _, track_id in pending])
-        tasks: list[tuple[Path, Track, list[str]]] = []
-        for raw_file, track_id in pending:
-            track_info = detail_map.get(track_id) or self._fallback_track(track_id, raw_file.stem)
-            pids = track_playlists.get(track_id, [])
-            names = self._resolve_playlist_names(pids, playlist_index)
-            tasks.append((raw_file, track_info, names))
-
-        self._run_process_batch(tasks, "处理中", include_translation, force)
+    # ------------------------------------------------------------------
+    # 处理管线
+    # ------------------------------------------------------------------
 
     def _run_process_batch(
         self,
@@ -137,21 +88,32 @@ class ProcessService:
         total = len(pending)
         workers = min(self.workers, total)
 
+        # 收集处理结果，随后统一创建 library 链接
+        results: list[tuple[Path, Path, Track, list[str]]] = []
+
         with ThreadPoolExecutor(max_workers=workers) as pool, BatchProgress(total=total, phase=stage_name) as bp:
             future_map = {
-                pool.submit(self._process_file, raw_file, track_info, include_translation, playlist_names): (
+                pool.submit(self._process_file, raw_file, track_info, include_translation): (
                     idx,
                     raw_file,
                 )
-                for idx, (raw_file, track_info, playlist_names) in enumerate(pending, start=1)
+                for idx, (raw_file, track_info, _names) in enumerate(pending, start=1)
             }
 
             try:
                 for future in as_completed(future_map):
                     idx, raw_file = future_map[future]
                     try:
-                        primary_lossless, primary_lossy, link_targets = future.result()
-                        self._mark_processed(raw_file, primary_lossless, primary_lossy, link_targets, processed_index)
+                        lossless_path, lossy_path = future.result()
+                        track_info = None
+                        playlist_names = None
+                        for rf, ti, pn in pending:
+                            if rf == raw_file:
+                                track_info, playlist_names = ti, pn
+                                break
+                        self._mark_processed(raw_file, lossless_path, lossy_path, track_info, processed_index)
+                        if track_info and playlist_names:
+                            results.append((lossless_path, lossy_path, track_info, playlist_names))
                         bp.advance(success=True, idx=idx, item_name=raw_file.name)
                     except Exception as exc:
                         bp.advance(success=False, idx=idx, item_name=raw_file.name)
@@ -166,13 +128,17 @@ class ProcessService:
 
         self._save_processed_index(processed_index)
 
+        # 为所有新处理的 track 创建 library 硬链接
+        for lossless_path, lossy_path, track_info, playlist_names in results:
+            self._link_track(lossless_path, lossy_path, track_info, playlist_names)
+
     def _process_file(
         self,
         raw_file: Path,
         prefetched_track: Track | None = None,
         include_translation: bool = True,
-        playlist_names: list[str] | None = None,
-    ) -> tuple[Path, Path, list[tuple[Path, Path]]]:
+    ) -> tuple[Path, Path]:
+        """处理单个下载文件，输出 canonical 文件到 downloads/。返回 (lossless, lossy)。"""
         track_info = prefetched_track
         track_id = prefetched_track.id if prefetched_track else None
         if track_info is None:
@@ -183,6 +149,7 @@ class ProcessService:
 
         if track_id is None:
             raise RuntimeError(f"无法推断 track_id：{raw_file.name}")
+
         downloaded = DownloadedTrack(
             track=track_info,
             source_file=str(raw_file),
@@ -190,75 +157,99 @@ class ProcessService:
         )
         decoded = self.decryptor.decrypt_if_needed(downloaded, self.cfg.workspace_path / "decoded")
 
-        names = playlist_names or [_DEFAULT_PLAYLIST]
-        primary_name = names[0]
-
-        lossless_dir = self.cfg.lossless_dir / primary_name
-        lossy_dir = self.cfg.lossy_dir / primary_name
-
-        primary_lossless, primary_lossy = self.organizer.route_audio(decoded, track_info, lossless_dir, lossy_dir)
-
-        # 为多歌单的共享曲目创建硬链接
-        link_targets: list[tuple[Path, Path]] = []
-        for name in names[1:]:
-            alt_lossless_dir = self.cfg.lossless_dir / name
-            alt_lossy_dir = self.cfg.lossy_dir / name
-            alt_lossless_dir.mkdir(parents=True, exist_ok=True)
-            alt_lossy_dir.mkdir(parents=True, exist_ok=True)
-
-            link_lossless = alt_lossless_dir / primary_lossless.name
-            link_lossy = alt_lossy_dir / primary_lossy.name
-            self._hardlink_or_copy(primary_lossless, link_lossless)
-            self._hardlink_or_copy(primary_lossy, link_lossy)
-            link_targets.append((link_lossless, link_lossy))
+        # 输出到 downloads/{track_id}.flac + downloads/{track_id}.mp3
+        lossless_path, lossy_path = self.organizer.route_audio(decoded, track_info, self.cfg.downloads_dir)
 
         lyrics = self.api.get_track_lyrics(track_id)
         lossless_lyrics = build_lossless_lyrics(lyrics, include_translation=include_translation)
         lossy_lyrics = build_lossy_lyrics(lyrics, include_translation=include_translation)
 
-        self.metadata.write(primary_lossless, track_info, lyric_text=lossless_lyrics, is_lossless=True)
-        self.metadata.write(primary_lossy, track_info, lyric_text=None, is_lossless=False)
-        write_gb18030_lrc(primary_lossy, lossy_lyrics, encodings=self.cfg.lossy_lrc_encodings)
+        self.metadata.write(lossless_path, track_info, lyric_text=lossless_lyrics, is_lossless=True)
+        self.metadata.write(lossy_path, track_info, lyric_text=None, is_lossless=False)
+        write_gb18030_lrc(lossy_path, lossy_lyrics, encodings=self.cfg.lossy_lrc_encodings)
 
-        if downloaded.is_ncm and decoded.exists():
-            decoded.unlink()
-        return primary_lossless, primary_lossy, link_targets
+        # 清理临时文件
+        if downloaded.is_ncm and decoded.exists() and decoded != Path(downloaded.source_file):
+            decoded.unlink(missing_ok=True)
+        # 删除原始下载文件（已转换为 canonical 格式）
+        if raw_file.exists() and raw_file.resolve() != lossless_path.resolve():
+            raw_file.unlink(missing_ok=True)
+
+        return lossless_path, lossy_path
+
+    # ------------------------------------------------------------------
+    # Library 硬链接
+    # ------------------------------------------------------------------
+
+    def _link_track(
+        self,
+        lossless_src: Path,
+        lossy_src: Path,
+        track: Track,
+        playlist_names: list[str],
+    ) -> None:
+        """为一个 track 在所有歌单目录中创建 library 硬链接。"""
+        lrc_src = lossy_src.with_suffix(".lrc")
+        names = playlist_names or [_DEFAULT_PLAYLIST]
+
+        for name in names:
+            ll_dst = self.cfg.lossless_dir / name / self._lossless_link_name(track)
+            ly_dst = self.cfg.lossy_dir / name / self._lossy_link_name(track)
+            lrc_dst = ly_dst.with_suffix(".lrc")
+            create_link(lossless_src, ll_dst)
+            create_link(lossy_src, ly_dst)
+            if lrc_src.exists():
+                create_link(lrc_src, lrc_dst)
+
+    def _unlink_track(self, track: Track, playlist_names: list[str]) -> None:
+        """删除指定歌单中的 library 硬链接。"""
+        for name in playlist_names:
+            ll = self.cfg.lossless_dir / name / self._lossless_link_name(track)
+            ly = self.cfg.lossy_dir / name / self._lossy_link_name(track)
+            lrc = ly.with_suffix(".lrc")
+            remove_link(ll)
+            remove_link(ly)
+            remove_link(lrc)
+
+    def _update_track_links(
+        self,
+        track: Track,
+        old_names: list[str],
+        new_names: list[str],
+    ) -> bool:
+        """对比歌单分配变化，删除旧链接 + 创建新链接。返回是否有变更。"""
+        old_set = set(old_names)
+        new_set = set(new_names)
+        if old_set == new_set:
+            return False
+
+        removed = old_set - new_set
+        added = new_set - old_set
+        if removed:
+            self._unlink_track(track, list(removed))
+        if added:
+            lossless_src = self.cfg.downloads_dir / f"{track.id}.flac"
+            lossy_src = self.cfg.downloads_dir / f"{track.id}.mp3"
+            if lossless_src.exists() and lossy_src.exists():
+                self._link_track(lossless_src, lossy_src, track, list(added))
+        return True
+
+    # ------------------------------------------------------------------
+    # 链接文件名生成
+    # ------------------------------------------------------------------
 
     @staticmethod
-    def _hardlink_or_copy(src: Path, dst: Path) -> None:
-        hardlink_or_copy(src, dst)
+    def _lossless_link_name(track: Track) -> str:
+        return safe_filename(f"{track.artist_text} - {track.name}") + ".flac"
 
-    def _iter_downloads(self) -> Iterable[Path]:
-        allowed = {".ncm", ".flac", ".mp3", ".m4a", ".aac", ".wav"}
-        if not self.cfg.downloads_dir.exists():
-            return
-        for file_path in self.cfg.downloads_dir.iterdir():
-            if file_path.is_file() and file_path.suffix.lower() in allowed:
-                yield file_path
+    @staticmethod
+    def _lossy_link_name(track: Track) -> str:
+        prefix = f"{track.alias} " if track.alias else ""
+        return safe_filename(f"{prefix}{track.name} - {track.artist_text}") + ".mp3"
 
-    def _guess_track_id(self, file_path: Path, index: Mapping[str, object] | None = None) -> int | None:
-        index_map: Mapping[str, object]
-        if index is None:
-            index_path = self.cfg.processed_state_file
-            loaded = load_json(index_path, {})
-            index_map = loaded if isinstance(loaded, dict) else {}
-        else:
-            index_map = index
-
-        rel = workspace_rel_path(file_path, self.cfg.workspace_path)
-        entry = index_map.get(rel)
-        if isinstance(entry, dict):
-            try:
-                return int(entry.get("track_id", 0))
-            except (TypeError, ValueError):
-                return None
-        # 兼容旧格式：value 直接是 track_id (int 或 str)
-        if isinstance(entry, (int, str)):
-            try:
-                return int(entry)
-            except (TypeError, ValueError):
-                return None
-        return None
+    # ------------------------------------------------------------------
+    # processed_files.json（新格式：key = track_id 字符串）
+    # ------------------------------------------------------------------
 
     def _load_processed_index(self) -> dict[str, dict[str, object]]:
         loaded = load_json(self.cfg.processed_state_file, {})
@@ -269,18 +260,20 @@ class ProcessService:
         for key, value in loaded.items():
             if not isinstance(key, str) or not isinstance(value, dict):
                 continue
-            lossless_rel = value.get("lossless")
-            lossy_rel = value.get("lossy")
-            ll_exists = isinstance(lossless_rel, str) and (self.cfg.workspace_path / lossless_rel).exists()
-            ly_exists = isinstance(lossy_rel, str) and (self.cfg.workspace_path / lossy_rel).exists()
+            # 新格式：key = track_id；旧格式：key = 相对源路径
+            flac_rel = value.get("flac") or value.get("lossless")
+            if isinstance(flac_rel, str) and (self.cfg.workspace_path / flac_rel).exists():
+                normalized[key] = dict(value)
+                continue
+            # 旧格式兼容：key 是源文件路径
             source_exists = (self.cfg.workspace_path / key).exists()
-            if not ll_exists and not ly_exists and not source_exists:
+            if not source_exists:
                 stale_keys.append(key)
                 continue
             normalized[key] = dict(value)
         if stale_keys:
             save_json(self.cfg.processed_state_file, normalized)
-            logger.info("清理过期处理记录：%s 条（输出及源文件均已不存在）", len(stale_keys))
+            logger.info("清理过期处理记录：%s 条", len(stale_keys))
         return normalized
 
     def _save_processed_index(self, index: dict[str, dict[str, object]]) -> None:
@@ -297,61 +290,131 @@ class ProcessService:
         pending: list[tuple[Path, Track, list[str]]] = []
         skipped = 0
         for raw_file, track, playlist_names in tasks:
-            if self._is_processed(raw_file, processed_index):
+            if str(track.id) in processed_index:
                 skipped += 1
-                logger.info("跳过已处理文件：%s", raw_file.name)
+                logger.info("跳过已处理文件：track_id=%s", track.id)
                 continue
             pending.append((raw_file, track, playlist_names))
         return pending, skipped
-
-    def _is_processed(self, raw_file: Path, processed_index: Mapping[str, Mapping[str, object]]) -> bool:
-        rel = workspace_rel_path(raw_file, self.cfg.workspace_path)
-        record = processed_index.get(rel)
-        if not isinstance(record, Mapping) or not raw_file.exists():
-            return False
-        try:
-            stat = raw_file.stat()
-        except OSError:
-            return False
-        mtime = record.get("source_mtime_ns")
-        size = record.get("source_size")
-        try:
-            return int(mtime) == stat.st_mtime_ns and int(size) == stat.st_size
-        except (TypeError, ValueError):
-            return False
 
     def _mark_processed(
         self,
         raw_file: Path,
         lossless_path: Path,
         lossy_path: Path,
-        link_targets: list[tuple[Path, Path]],
+        track: Track | None,
         processed_index: dict[str, dict[str, object]],
     ) -> None:
-        try:
-            stat = raw_file.stat()
-        except OSError:
+        if track is None:
             return
-        rel = workspace_rel_path(raw_file, self.cfg.workspace_path)
-        links_data = [
-            {
-                "lossless": workspace_rel_path(ll, self.cfg.workspace_path),
-                "lossy": workspace_rel_path(ly, self.cfg.workspace_path),
-            }
-            for ll, ly in link_targets
-        ]
-        # 保留已存在的 track_id（由 sync 阶段写入）
-        existing = processed_index.get(rel)
-        track_id = existing.get("track_id") if isinstance(existing, dict) else None
-        processed_index[rel] = {
-            "track_id": track_id,
-            "source_mtime_ns": stat.st_mtime_ns,
-            "source_size": stat.st_size,
-            "lossless": workspace_rel_path(lossless_path, self.cfg.workspace_path),
-            "lossy": workspace_rel_path(lossy_path, self.cfg.workspace_path),
-            "links": links_data,
+        lrc_path = lossy_path.with_suffix(".lrc")
+        processed_index[str(track.id)] = {
+            "flac": str(lossless_path.relative_to(self.cfg.workspace_path)),
+            "mp3": str(lossy_path.relative_to(self.cfg.workspace_path)),
+            "lrc": str(lrc_path.relative_to(self.cfg.workspace_path)) if lrc_path.exists() else "",
             "updated_at": int(time.time()),
         }
+
+    # ------------------------------------------------------------------
+    # 本地处理（msv process 独立模式）
+    # ------------------------------------------------------------------
+
+    def _process_local(self, include_translation: bool, force: bool) -> None:
+        raw_files = [f for f in self._iter_downloads() if not f.stem.isdigit()]
+        if not raw_files:
+            logger.info("下载目录中无待处理文件")
+            return
+
+        processed = load_json(self.cfg.processed_state_file, {})
+        if not isinstance(processed, dict):
+            processed = {}
+
+        pending: list[tuple[Path, int]] = []
+        for raw_file in raw_files:
+            track_id = self._guess_track_id(raw_file, index=processed)
+            if track_id is None:
+                logger.info("跳过文件：无法推断 track_id，文件=%s", raw_file.name)
+                continue
+            pending.append((raw_file, track_id))
+
+        track_playlists = self._build_track_playlists()
+        playlist_index = load_json(self.cfg.state_dir / "playlists.json", {})
+
+        detail_map = self.api.get_tracks_detail([track_id for _, track_id in pending])
+        tasks: list[tuple[Path, Track, list[str]]] = []
+        for raw_file, track_id in pending:
+            track_info = detail_map.get(track_id) or self._fallback_track(track_id, raw_file.stem)
+            pids = track_playlists.get(track_id, [])
+            names = self._resolve_playlist_names(pids, playlist_index)
+            tasks.append((raw_file, track_info, names))
+
+        self._run_process_batch(tasks, "处理中", include_translation, force)
+
+    def _build_track_playlists(self) -> dict[int, list[int]]:
+        mapping: dict[int, list[int]] = {}
+        for pid in self.cfg.get_playlist_ids():
+            try:
+                tracks = self.api.get_playlist_tracks(pid)
+            except Exception:
+                logger.info("获取歌单曲目失败 playlist_id=%s，跳过分类", pid)
+                continue
+            for track in tracks:
+                mapping.setdefault(track.id, []).append(pid)
+        return mapping
+
+    def _iter_downloads(self) -> Iterable[Path]:
+        allowed = {".ncm", ".flac", ".mp3", ".m4a", ".aac", ".wav"}
+        if not self.cfg.downloads_dir.exists():
+            return
+        for file_path in self.cfg.downloads_dir.iterdir():
+            if file_path.is_file() and file_path.suffix.lower() in allowed:
+                yield file_path
+
+    def _resolve_playlist_names(
+        self,
+        playlist_ids: list[int],
+        playlist_index: Mapping[str, Mapping[str, object]],
+    ) -> list[str]:
+        names: list[str] = []
+        for pid in playlist_ids:
+            entry = playlist_index.get(str(pid))
+            name = str(entry["name"]) if entry and entry.get("name") else str(pid)
+            names.append(safe_filename(name))
+        return names or [_DEFAULT_PLAYLIST]
+
+    # ------------------------------------------------------------------
+    # track_id 推断
+    # ------------------------------------------------------------------
+
+    def _guess_track_id(self, file_path: Path, index: Mapping[str, object] | None = None) -> int | None:
+        index_map: Mapping[str, object]
+        if index is None:
+            index_path = self.cfg.processed_state_file
+            loaded = load_json(index_path, {})
+            index_map = loaded if isinstance(loaded, dict) else {}
+        else:
+            index_map = index
+
+        rel = workspace_rel_path(file_path, self.cfg.workspace_path)
+        # 新格式：key = track_id；旧格式：key = 源文件相对路径
+        entry = index_map.get(rel)
+        if isinstance(entry, dict):
+            # 旧格式：value 含 track_id 字段
+            try:
+                return int(entry.get("track_id", 0))
+            except (TypeError, ValueError):
+                pass
+        # 兼容旧格式：value 直接是 track_id
+        if isinstance(entry, (int, str)):
+            try:
+                return int(entry)
+            except (TypeError, ValueError):
+                pass
+        return None
+
+    # ------------------------------------------------------------------
+    # 辅助
+    # ------------------------------------------------------------------
 
     def _safe_track(self, track_id: int, fallback_name: str) -> Track:
         detail = self.api.get_track_detail(track_id)
@@ -369,3 +432,7 @@ class ProcessService:
             cover_url=None,
             raw={},
         )
+
+    @staticmethod
+    def _hardlink_or_copy(src: Path, dst: Path) -> None:
+        hardlink_or_copy(src, dst)

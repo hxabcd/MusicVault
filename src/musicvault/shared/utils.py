@@ -60,3 +60,19 @@ def hardlink_or_copy(src: Path, dst: Path) -> None:
         os.link(src, dst)
     except OSError:
         shutil.copy2(src, dst)
+
+
+def create_link(src: Path, dst: Path) -> None:
+    """创建硬链接（自动创建父目录），目标已存在时跳过，源不存在时跳过"""
+    if dst.exists() or not src.exists():
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+def remove_link(path: Path) -> None:
+    """删除硬链接/文件，不存在时静默跳过"""
+    path.unlink(missing_ok=True)

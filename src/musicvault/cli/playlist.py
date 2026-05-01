@@ -115,6 +115,7 @@ def _cleanup_playlist_files(pid: int, cfg: Config) -> None:
     name = entry.get("name")
     dir_name = safe_filename(str(name)) if name else safe_filename(str(pid))
 
+    # 删除 library 目录（仅含硬链接，直接 rmtree）
     deleted_dirs = 0
     for parent in (cfg.lossless_dir, cfg.lossy_dir):
         target = parent / dir_name
@@ -122,64 +123,33 @@ def _cleanup_playlist_files(pid: int, cfg: Config) -> None:
             shutil.rmtree(target)
             deleted_dirs += 1
 
-    prefix_ll = f"library/lossless/{dir_name}/"
-    prefix_ly = f"library/lossy/{dir_name}/"
+    # 更新 synced_tracks.json：移除该歌单的关联
+    synced = load_json(cfg.synced_state_file, {"ids": []})
+    ids_to_remove: set[int] = set()
+    if isinstance(synced, dict):
+        ids = synced.get("ids", [])
+        if isinstance(ids, list):
+            # 旧格式：无法区分歌单，跳过
+            pass
+        elif isinstance(ids, dict):
+            for tid_str, pids in list(ids.items()):
+                new_pids = [p for p in pids if p != pid]
+                if new_pids:
+                    ids[tid_str] = new_pids
+                else:
+                    ids_to_remove.add(int(tid_str))
+                    del ids[tid_str]
+            save_json(cfg.synced_state_file, {"ids": ids})
 
-    processed = load_json(cfg.processed_state_file, {})
-    if isinstance(processed, dict) and processed:
-        removed_source_keys: list[str] = []
-        for key, value in list(processed.items()):
-            if not isinstance(value, dict):
-                continue
-            ll = str(value.get("lossless", ""))
-            ly = str(value.get("lossy", ""))
-            if ll.startswith(prefix_ll) or ly.startswith(prefix_ly):
-                removed_source_keys.append(key)
-            else:
-                links = value.get("links")
-                if isinstance(links, list):
-                    filtered = [
-                        lnk
-                        for lnk in links
-                        if isinstance(lnk, dict)
-                        and not str(lnk.get("lossless", "")).startswith(prefix_ll)
-                        and not str(lnk.get("lossy", "")).startswith(prefix_ly)
-                    ]
-                    if len(filtered) != len(links):
-                        value["links"] = filtered
-                        processed[key] = value
-
-        removed_track_ids: set[int] = set()
-        for key in removed_source_keys:
-            entry = processed[key]
-            if isinstance(entry, dict):
-                try:
-                    removed_track_ids.add(int(entry.get("track_id", 0)))
-                except (TypeError, ValueError):
-                    pass
-            del processed[key]
-        save_json(cfg.processed_state_file, processed)
-
-        if removed_track_ids:
-            synced = load_json(cfg.synced_state_file, {"ids": []})
-            if isinstance(synced, dict):
-                ids = synced.get("ids", [])
-                if isinstance(ids, list):
-                    # 旧格式
-                    existing = {int(x) for x in ids if isinstance(x, (int, str))}
-                    cleaned = existing - removed_track_ids
-                    if cleaned != existing:
-                        save_json(cfg.synced_state_file, {"ids": sorted(cleaned)})
-                elif isinstance(ids, dict):
-                    # 新格式：{"ids": {"track_id": [playlist_ids]}}
-                    for sid in removed_track_ids:
-                        ids.pop(str(sid), None)
-                    save_json(cfg.synced_state_file, {"ids": ids})
+    # 删除无歌单归属的 canonical 文件
+    for track_id in ids_to_remove:
+        for ext in (".flac", ".mp3", ".lrc"):
+            (cfg.downloads_dir / f"{track_id}{ext}").unlink(missing_ok=True)
 
     if deleted_dirs:
-        logger.info(f"已删除 [bold]{dir_name}[/bold] 的音乐文件（{deleted_dirs} 个目录）")
+        logger.info("已删除 [bold]%s[/bold] 的音乐文件（%s 个目录）", dir_name, deleted_dirs)
     elif name:
-        logger.info(f"未找到 {dir_name} 的音乐目录，已跳过文件删除")
+        logger.info("未找到 %s 的音乐目录，已跳过文件删除", dir_name)
 
 
 def _add_playlist_by_id(pid: int, cfg: Config, cookie: str | None) -> int:
