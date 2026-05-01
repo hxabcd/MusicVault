@@ -11,7 +11,15 @@ from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
 from musicvault.shared.output import warn as output_warn
 from musicvault.shared.tui_progress import BatchProgress, console
-from musicvault.shared.utils import create_link, load_json, remove_link, safe_filename, save_json, workspace_rel_path
+from musicvault.shared.utils import (
+    create_link,
+    format_track_name,
+    load_json,
+    remove_link,
+    safe_filename,
+    save_json,
+    workspace_rel_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -139,9 +147,7 @@ class SyncService:
                 self._save_synced_state(self.cfg, state_map)
                 logger.info("清理过期状态：%s 个文件已不存在，已从索引中移除", len(stale_ids))
 
-    def _handle_playlist_rename(
-        self, pid: int, old_name: str, new_name: str, all_tracks: dict[int, Track]
-    ) -> None:
+    def _handle_playlist_rename(self, pid: int, old_name: str, new_name: str, all_tracks: dict[int, Track]) -> None:
         old_safe = safe_filename(old_name)
         new_safe = safe_filename(new_name)
         if old_safe == new_safe:
@@ -210,11 +216,11 @@ class SyncService:
                 continue
 
             # 删除已移除歌单的链接
-            for name in (old_names - new_names):
+            for name in old_names - new_names:
                 self._remove_track_links(track, name)
 
             # 创建新增歌单的链接
-            for name in (new_names - old_names):
+            for name in new_names - old_names:
                 self._create_track_links(flac_src, mp3_src, track, name)
 
         # 写回更新后的歌单分配
@@ -232,7 +238,7 @@ class SyncService:
         create_link(mp3_src, ly_dir / self._lossy_link_name(track))
         lrc_src = mp3_src.with_suffix(".lrc")
         if lrc_src.exists():
-            create_link(lrc_src, ly_dir / self._lossy_link_name(track).replace(".mp3", ".lrc"))
+            create_link(lrc_src, ly_dir / self._lossy_link_name(track, suffix=".lrc"))
 
     def _remove_track_links(self, track: Track, dirname: str) -> None:
         """删除 library 中一个歌单目录下的硬链接（尝试 .flac / .mp3 两种扩展名）。"""
@@ -254,14 +260,17 @@ class SyncService:
     # 链接文件名（与 ProcessService 保持一致）
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _lossless_link_name(track: Track, suffix: str = ".flac") -> str:
-        return safe_filename(f"{track.artist_text} - {track.name}") + suffix
+    def _lossless_link_name(self, track: Track, suffix: str = ".flac") -> str:
+        stem = format_track_name(
+            self.cfg.filename_lossless, track, include_alias_prefix=self.cfg.include_alias_in_filename
+        )
+        return stem + suffix
 
-    @staticmethod
-    def _lossy_link_name(track: Track) -> str:
-        prefix = f"{track.alias} " if track.alias else ""
-        return safe_filename(f"{prefix}{track.name} - {track.artist_text}") + ".mp3"
+    def _lossy_link_name(self, track: Track, suffix: str = ".mp3") -> str:
+        stem = format_track_name(
+            self.cfg.filename_lossy, track, include_alias_prefix=self.cfg.include_alias_in_filename
+        )
+        return stem + suffix
 
     def _pid_to_dirname(self, pid: int, playlist_index: dict[str, dict[str, object]]) -> str:
         """将 playlist_id 映射为安全的目录名。"""
@@ -369,13 +378,14 @@ class SyncService:
             except KeyboardInterrupt:
                 pool.shutdown(wait=False, cancel_futures=True)
                 if results:
-                    output_warn(f"Ctrl+C 中断，保存已完成的 {len(results)} 项下载...")
                     _save_partial_downloads(self.cfg, results)
                 raise
 
         return results
 
-    def _mark_synced(self, downloaded: list[DownloadedTrack], existing_ids: set[int], track_playlists: dict[int, list[int]]) -> None:
+    def _mark_synced(
+        self, downloaded: list[DownloadedTrack], existing_ids: set[int], track_playlists: dict[int, list[int]]
+    ) -> None:
         """将新下载的 track ID 合并到 existing_ids 并写回状态文件"""
         if not downloaded:
             return

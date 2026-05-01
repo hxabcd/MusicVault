@@ -17,6 +17,7 @@ from musicvault.services.sync_service import SyncService
 class TestLoadSyncedState:
     def test_old_format_flat_list(self) -> None:
         import tempfile
+
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp)
             state_file = ws / "state" / "synced_tracks.json"
@@ -31,13 +32,12 @@ class TestLoadSyncedState:
 
     def test_new_format_dict(self) -> None:
         import tempfile
+
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp)
             state_file = ws / "state" / "synced_tracks.json"
             state_file.parent.mkdir(parents=True)
-            state_file.write_text(
-                json.dumps({"ids": {"123": [10, 20], "456": [10]}}), encoding="utf-8"
-            )
+            state_file.write_text(json.dumps({"ids": {"123": [10, 20], "456": [10]}}), encoding="utf-8")
 
             cfg = MagicMock(spec=Config)
             cfg.synced_state_file = state_file
@@ -47,6 +47,7 @@ class TestLoadSyncedState:
 
     def test_missing_file_returns_empty(self) -> None:
         import tempfile
+
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp)
             state_file = ws / "state" / "nonexistent.json"
@@ -61,6 +62,7 @@ class TestLoadSyncedState:
 class TestSaveSyncedState:
     def test_save_and_reload(self) -> None:
         import tempfile
+
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp)
             state_file = ws / "state" / "synced_tracks.json"
@@ -75,6 +77,7 @@ class TestSaveSyncedState:
 
     def test_playlist_ids_are_sorted(self) -> None:
         import tempfile
+
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp)
             state_file = ws / "state" / "synced_tracks.json"
@@ -102,6 +105,9 @@ def _make_config(tmp_path: Path) -> Config:
     cfg.lossless_dir = tmp_path / "library" / "lossless"
     cfg.lossy_dir = tmp_path / "library" / "lossy"
     cfg.downloads_dir = tmp_path / "downloads"
+    cfg.filename_lossless = "{artist} - {name}"
+    cfg.filename_lossy = "{prefix}{name} - {artist}"
+    cfg.include_alias_in_filename = True
     return cfg
 
 
@@ -135,9 +141,7 @@ class TestReconcileNoChange:
         SyncService._save_synced_state(cfg, {})
 
         svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
-        svc._reconcile_playlist_assignments(
-            {123: [10]}, _make_playlist_index(), {}
-        )
+        svc._reconcile_playlist_assignments({123: [10]}, _make_playlist_index(), {})
         # 不应抛异常
 
     def test_assignments_unchanged(self, tmp_path: Path) -> None:
@@ -147,9 +151,7 @@ class TestReconcileNoChange:
         cfg.processed_state_file.parent.mkdir(parents=True, exist_ok=True)
 
         svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
-        svc._reconcile_playlist_assignments(
-            {123: [10, 20]}, _make_playlist_index(), {}
-        )
+        svc._reconcile_playlist_assignments({123: [10, 20]}, _make_playlist_index(), {})
 
         result = SyncService._load_synced_state(cfg)
         assert result[123] == [10, 20]
@@ -161,9 +163,7 @@ class TestReconcileNoChange:
         SyncService._save_synced_state(cfg, {123: [10]})
 
         svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
-        svc._reconcile_playlist_assignments(
-            {123: [20]}, _make_playlist_index(), {}
-        )
+        svc._reconcile_playlist_assignments({123: [20]}, _make_playlist_index(), {})
 
         # 状态应更新但无文件操作（无 track 信息）
         result = SyncService._load_synced_state(cfg)
@@ -188,9 +188,7 @@ class TestReconcilePlaylistChanged:
         lrc_src.write_text("lrc")
 
         svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
-        svc._reconcile_playlist_assignments(
-            {123: [10, 20]}, _make_playlist_index(), {123: track}
-        )
+        svc._reconcile_playlist_assignments({123: [10, 20]}, _make_playlist_index(), {123: track})
 
         # B 目录中应有链接
         assert (cfg.lossless_dir / "歌单B" / "Test Artist - Test Song.flac").exists()
@@ -222,9 +220,7 @@ class TestReconcilePlaylistChanged:
         b_ly.write_text("mp3")
 
         svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
-        svc._reconcile_playlist_assignments(
-            {123: [10]}, _make_playlist_index(), {123: track}
-        )
+        svc._reconcile_playlist_assignments({123: [10]}, _make_playlist_index(), {123: track})
 
         # B 目录中的链接应被删除
         assert not b_ll.exists()
@@ -245,9 +241,7 @@ class TestReconcilePlaylistChanged:
         # 不创建 canonical 文件
 
         svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
-        svc._reconcile_playlist_assignments(
-            {123: [10, 20]}, _make_playlist_index(), {123: track}
-        )
+        svc._reconcile_playlist_assignments({123: [10, 20]}, _make_playlist_index(), {123: track})
 
         # 不应创建任何链接（canonical 缺失）
         b_dir = cfg.lossless_dir / "歌单B"
@@ -261,17 +255,37 @@ class TestReconcilePlaylistChanged:
 
 class TestLinkNames:
     def test_lossless_link_name(self) -> None:
+        cfg = MagicMock(spec=Config)
+        cfg.filename_lossless = "{artist} - {name}"
+        cfg.include_alias_in_filename = True
+        svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
         track = Track(id=1, name="Song", artists=["Artist"], album="A", cover_url=None, raw={})
-        name = SyncService._lossless_link_name(track)
+        name = svc._lossless_link_name(track)
         assert name == "Artist - Song.flac"
 
     def test_lossy_link_name(self) -> None:
+        cfg = MagicMock(spec=Config)
+        cfg.filename_lossy = "{prefix}{name} - {artist}"
+        cfg.include_alias_in_filename = True
+        svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
         track = Track(id=1, name="Song", artists=["Artist"], album="A", cover_url=None, raw={})
-        name = SyncService._lossy_link_name(track)
+        name = svc._lossy_link_name(track)
         assert name == "Song - Artist.mp3"
 
     def test_lossy_link_name_with_alias(self) -> None:
-        track = Track(id=1, name="Song", artists=["Artist"], album="A",
-                      aliases=["Alias"], cover_url=None, raw={})
-        name = SyncService._lossy_link_name(track)
+        cfg = MagicMock(spec=Config)
+        cfg.filename_lossy = "{prefix}{name} - {artist}"
+        cfg.include_alias_in_filename = True
+        svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
+        track = Track(id=1, name="Song", artists=["Artist"], album="A", aliases=["Alias"], cover_url=None, raw={})
+        name = svc._lossy_link_name(track)
         assert name == "Alias Song - Artist.mp3"
+
+    def test_lossy_link_name_alias_disabled(self) -> None:
+        cfg = MagicMock(spec=Config)
+        cfg.filename_lossy = "{prefix}{name} - {artist}"
+        cfg.include_alias_in_filename = False
+        svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
+        track = Track(id=1, name="Song", artists=["Artist"], album="A", aliases=["Alias"], cover_url=None, raw={})
+        name = svc._lossy_link_name(track)
+        assert name == "Song - Artist.mp3"

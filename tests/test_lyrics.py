@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import pytest
 from musicvault.adapters.processors.lyrics import (
     build_lossless_lyrics,
     build_lossy_lyrics,
@@ -86,11 +85,23 @@ class TestBuildLosslessLyrics:
         assert "第一行" not in result
 
     def test_yrc_with_stray_non_yrc_lines(self) -> None:
-        # YRC 中夹带非 YRC 的非空行应原样透传（覆盖 line 90-92）
         yrc_with_stray = SAMPLE_YRC + "\n[meta]some info"
         payload = {"yrc": yrc_with_stray}
         result = build_lossless_lyrics(payload, include_translation=False)
         assert "[meta]some info" in result
+
+    def test_lrc_with_inline_translation_format(self) -> None:
+        payload = {"lrc": SAMPLE_LRC, "tlyric": SAMPLE_TLYRIC}
+        result = build_lossless_lyrics(payload, include_translation=True, translation_format="inline")
+        # inline 模式下翻译应出现在原文同一行
+        assert "第一行 First line" in result
+
+    def test_yrc_with_inline_translation_format(self) -> None:
+        payload = {"yrc": SAMPLE_YRC, "tlyric": SAMPLE_TLYRIC}
+        result = build_lossless_lyrics(payload, include_translation=True, translation_format="inline")
+        # YRC 内联模式：翻译前置在逐词时间戳行中
+        assert "第一行" in result
+        assert "First" in result
 
 
 # ---- build_lossy_lyrics ----------------------------------------------------
@@ -117,6 +128,15 @@ class TestBuildLossyLyrics:
         payload = {"lrc": SAMPLE_LRC, "tlyric": SAMPLE_TLYRIC}
         result = build_lossy_lyrics(payload, include_translation=False)
         assert "第一行" not in result
+
+    def test_lrc_with_separate_translation_format(self) -> None:
+        payload = {"lrc": SAMPLE_LRC, "tlyric": SAMPLE_TLYRIC}
+        result = build_lossy_lyrics(payload, include_translation=True, translation_format="separate")
+        # separate 模式：翻译应在单独一行
+        lines = result.splitlines()
+        assert len(lines) == 6  # 3 原文 + 3 翻译
+        assert "First line" in lines[0]
+        assert "第一行" in lines[1]
 
 
 # ---- _build_translation_map -------------------------------------------------
@@ -145,21 +165,15 @@ class TestBuildTranslationMap:
 
 class TestMergeTranslation:
     def test_inline(self) -> None:
-        result = _merge_translation(
-            "[00:01.000]Hello", "[00:01.000]你好", inline=True
-        )
+        result = _merge_translation("[00:01.000]Hello", "[00:01.000]你好", inline=True)
         assert result == "[00:01.000]你好 Hello"
 
     def test_append_next_line(self) -> None:
-        result = _merge_translation(
-            "[00:01.000]Hello", "[00:01.000]你好", inline=False
-        )
+        result = _merge_translation("[00:01.000]Hello", "[00:01.000]你好", inline=False)
         assert "[00:01.000]Hello\n[00:01.000]你好" == result
 
     def test_skip_same_text(self) -> None:
-        result = _merge_translation(
-            "[00:01.000]Hello", "[00:01.000]Hello", inline=True
-        )
+        result = _merge_translation("[00:01.000]Hello", "[00:01.000]Hello", inline=True)
         assert "[00:01.000]你好" not in result
         assert result == "[00:01.000]Hello"
 
@@ -169,9 +183,7 @@ class TestMergeTranslation:
 
     def test_metadata_lines_preserved(self) -> None:
         # 无时间戳的元数据行应原样透传（覆盖 line 59-60）
-        result = _merge_translation(
-            "[ti:Title]\n[00:01.000]Hello", "[00:01.000]你好", inline=False
-        )
+        result = _merge_translation("[ti:Title]\n[00:01.000]Hello", "[00:01.000]你好", inline=False)
         lines = result.splitlines()
         assert "[ti:Title]" in lines[0]
         assert "Hello" in lines[1]

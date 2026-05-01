@@ -49,10 +49,16 @@ class Track:
         return compacted.strip()
 
     @classmethod
-    def from_ncm_payload(cls, payload: dict[str, Any], *, clean_text: bool = True) -> "Track":
+    def from_ncm_payload(
+        cls,
+        payload: dict[str, Any],
+        *,
+        clean_text: bool = True,
+        alias_split_re: re.Pattern[str] | None = None,
+    ) -> "Track":
         """从网易云接口数据构建 Track"""
+        split_re = alias_split_re or ALIAS_SPLIT_RE
 
-        # 兼容网易云接口常见字段：ar/al 与 artists/album。
         def clean(value: str) -> str:
             return cls._clean_metadata_text(value) if clean_text else value
 
@@ -64,7 +70,7 @@ class Track:
             text = clean(str(item))
             if not text:
                 continue
-            parts = [part.strip() for part in ALIAS_SPLIT_RE.split(text)]
+            parts = [part.strip() for part in split_re.split(text)]
             for part in parts:
                 if part and part not in aliases:
                     aliases.append(part)

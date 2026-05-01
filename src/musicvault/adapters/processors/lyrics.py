@@ -17,24 +17,31 @@ _YRC_WORD_TOKEN_RE = re.compile(r"\((\d+),(\d+),\d+\)([^()]*)")
 logger = logging.getLogger(__name__)
 
 
-def build_lossless_lyrics(payload: dict[str, str], include_translation: bool = True) -> str:
+def build_lossless_lyrics(
+    payload: dict[str, str],
+    include_translation: bool = True,
+    translation_format: str = "separate",
+) -> str:
     """生成无损歌词：原文行后追加同时间轴翻译行。"""
-    # 无损优先使用 yrc，保留逐字节奏；缺失时再回退 lrc。
     yrc = _sanitize_lyrics_text(payload.get("yrc") or "")
     translated = _normalize_lrc_timestamps(_sanitize_lyrics_text(payload.get("tlyric") or ""))
     ytranslated = _sanitize_lyrics_text(payload.get("ytlyric") or "")
     if yrc:
-        return _build_lossless_from_yrc(yrc, translated, include_translation, ytranslated)
+        return _build_lossless_from_yrc(yrc, translated, include_translation, ytranslated, translation_format)
 
     base = _normalize_lrc_timestamps(_sanitize_lyrics_text(payload.get("lrc") or ""))
     if not base:
         return ""
     if not include_translation:
         return base
-    return _merge_translation(base, translated, inline=False)
+    return _merge_translation(base, translated, inline=(translation_format == "inline"))
 
 
-def build_lossy_lyrics(payload: dict[str, str], include_translation: bool = True) -> str:
+def build_lossy_lyrics(
+    payload: dict[str, str],
+    include_translation: bool = True,
+    translation_format: str = "inline",
+) -> str:
     """生成有损歌词：同一行前置翻译，再接原文。"""
     base = _normalize_lrc_timestamps(_sanitize_lyrics_text(payload.get("lrc") or ""))
     if not base:
@@ -42,7 +49,7 @@ def build_lossy_lyrics(payload: dict[str, str], include_translation: bool = True
     if not include_translation:
         return base
     translated = _normalize_lrc_timestamps(_sanitize_lyrics_text(payload.get("tlyric") or ""))
-    return _merge_translation(base, translated, inline=True)
+    return _merge_translation(base, translated, inline=(translation_format == "inline"))
 
 
 def _merge_translation(base_lrc: str, translated_lrc: str, inline: bool) -> str:
@@ -75,8 +82,13 @@ def _merge_translation(base_lrc: str, translated_lrc: str, inline: bool) -> str:
     return "\n".join(merged)
 
 
-def _build_lossless_from_yrc(yrc_text: str, translated_lrc: str, include_translation: bool, ytranslated_lrc: str = "") -> str:
-    # ytlyric 的时间戳与 yrc 完全对齐，优先使用；tlyric 作为回退。
+def _build_lossless_from_yrc(
+    yrc_text: str,
+    translated_lrc: str,
+    include_translation: bool,
+    ytranslated_lrc: str = "",
+    translation_format: str = "separate",
+) -> str:
     translation_map = _build_translation_map(ytranslated_lrc)
     if translated_lrc:
         lrc_map = _build_translation_map(translated_lrc)
@@ -92,17 +104,23 @@ def _build_lossless_from_yrc(yrc_text: str, translated_lrc: str, include_transla
             continue
         start_ms, duration_ms, words, plain_lyric = parsed
         end_ms = start_ms + duration_ms
-        # 先输出逐字时间戳行，格式形如 [00:22.200]字...[00:26.040]
-        lines.append(_render_yrc_enhanced_line(words, end_ms))
 
         if not include_translation:
+            lines.append(_render_yrc_enhanced_line(words, end_ms))
             continue
+
         start_tag = _ms_to_time_tag(start_ms)
         translated = translation_map.get(start_tag)
         if translated and not _is_same_text(plain_lyric, translated):
             end_tag = _ms_to_time_tag(end_ms)
-            # 翻译行使用原句起止时间，保证播放器滚动和高亮稳定。
-            lines.append(f"[{start_tag}]{translated}[{end_tag}]")
+            if translation_format == "inline":
+                rendered = _render_yrc_enhanced_line(words, end_ms, translated)
+                lines.append(rendered)
+            else:
+                lines.append(_render_yrc_enhanced_line(words, end_ms))
+                lines.append(f"[{start_tag}]{translated}[{end_tag}]")
+        else:
+            lines.append(_render_yrc_enhanced_line(words, end_ms))
     return "\n".join(lines)
 
 
@@ -153,9 +171,11 @@ def _parse_yrc_line(line: str) -> tuple[int, int, list[tuple[int, str]], str] | 
     return start_ms, duration_ms, words, plain_lyric
 
 
-def _render_yrc_enhanced_line(words: list[tuple[int, str]], end_ms: int) -> str:
-    # 将 yrc 逐词时间转换为增强 lrc 风格，结尾补一句结束时间标签。
+def _render_yrc_enhanced_line(words: list[tuple[int, str]], end_ms: int, translation: str = "") -> str:
     out = "".join(f"[{_ms_to_time_tag(start_ms)}]{text}" for start_ms, text in words)
+    if translation:
+        first_tag_end = out.index("]", 1) if "]" in out[1:] else len(out)
+        out = f"{out[: first_tag_end + 1]}{translation} {out[first_tag_end + 1 :]}"
     return f"{out}[{_ms_to_time_tag(end_ms)}]"
 
 
@@ -257,6 +277,8 @@ def write_gb18030_lrc(
             continue
 
     # 理论上不会走到这里；保底避免写文件失败。
-    lrc_path.write_bytes(content.encode("utf-8", errors="replace"))  # pragma: no cover — 回退列表含 utf-8-sig，前面必成功
+    lrc_path.write_bytes(
+        content.encode("utf-8", errors="replace")
+    )  # pragma: no cover — 回退列表含 utf-8-sig，前面必成功
     logger.warning("歌词编码回退到 utf-8(replace)：%s", lrc_path.name)  # pragma: no cover
     return lrc_path  # pragma: no cover

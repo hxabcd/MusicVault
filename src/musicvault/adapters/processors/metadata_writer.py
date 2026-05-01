@@ -36,8 +36,17 @@ _COVER_FETCH_TIMEOUT = 15
 class MetadataWriter:
     """音频标签写入器"""
 
-    def __init__(self) -> None:
-        # 同一轮运行内按封面 URL 复用，避免重复 HTTP 请求；失败结果不缓存，避免一次瞬时错误污染整轮。
+    def __init__(
+        self,
+        embed_cover: bool = True,
+        embed_lyrics: bool = True,
+        cover_timeout: int = 15,
+        metadata_fields: tuple[str, ...] = (),
+    ) -> None:
+        self.embed_cover = embed_cover
+        self.embed_lyrics = embed_lyrics
+        self.cover_timeout = cover_timeout
+        self.metadata_fields = set(metadata_fields) if metadata_fields else set()
         self._cover_cache: dict[str, bytes] = {}
         self._cover_cache_lock = threading.Lock()
 
@@ -71,8 +80,7 @@ class MetadataWriter:
             self._cover_cache[url] = data
         return data
 
-    @staticmethod
-    def _fetch_cover(url: str) -> bytes | None:
+    def _fetch_cover(self, url: str) -> bytes | None:
         headers = {
             "User-Agent": "MusicVault/1.0",
             "Accept": "image/*,*/*;q=0.8",
@@ -85,7 +93,7 @@ class MetadataWriter:
                 time.sleep(sleep_seconds)
             req = Request(url, headers=headers, method="GET")
             try:
-                with urlopen(req, timeout=_COVER_FETCH_TIMEOUT) as resp:  # nosec B310 - trusted metadata URL
+                with urlopen(req, timeout=self.cover_timeout) as resp:  # nosec B310
                     return resp.read()
             except HTTPError as exc:
                 if 400 <= exc.code < 500 and exc.code not in {408, 429}:
@@ -116,15 +124,16 @@ class MetadataWriter:
             self._set_id3_text(tags, "TEXT", TEXT, extras.get("lyricist"))
             self._set_id3_comment(tags, extras.get("comment"))
 
-            # 3. 仅在 lossless 写嵌入歌词和封面。
+            # 3. 仅在 lossless 写嵌入歌词和封面（受配置控制）。
             tags.delall("USLT")
-            if lyric_text:
+            if self.embed_lyrics and lyric_text:
                 tags.add(USLT(encoding=3, lang="eng", desc="", text=lyric_text))
 
-            cover = self._download_cover(track.cover_url)
-            if cover:
-                tags.delall("APIC")
-                tags.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover", data=cover))
+            if self.embed_cover:
+                cover = self._download_cover(track.cover_url)
+                if cover:
+                    tags.delall("APIC")
+                    tags.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover", data=cover))
 
         # 4. 回写 ID3 标签。
         audio.tags = tags
@@ -165,22 +174,22 @@ class MetadataWriter:
                 if key in audio:
                     del audio[key]
 
-        # 3. 仅在有歌词时写 lyrics，并在 lossless 增加 description。
-        if lyric_text:
-            # 无损路径默认保留更完整歌词内容。
+        # 3. 仅在有歌词且配置启用时写歌词。
+        if self.embed_lyrics and lyric_text:
             audio["lyrics"] = lyric_text
             if is_lossless:
                 audio["description"] = "Synced by MusicVault"
 
-        # 4. 按需覆盖封面并保存。
-        cover = self._download_cover(track.cover_url)
-        if cover:
-            pic = Picture()
-            pic.type = 3
-            pic.mime = "image/jpeg"
-            pic.data = cover
-            audio.clear_pictures()
-            audio.add_picture(pic)
+        # 4. 按需覆盖封面并保存（受配置控制）。
+        if self.embed_cover:
+            cover = self._download_cover(track.cover_url)
+            if cover:
+                pic = Picture()
+                pic.type = 3
+                pic.mime = "image/jpeg"
+                pic.data = cover
+                audio.clear_pictures()
+                audio.add_picture(pic)
         audio.save()
 
     @staticmethod
@@ -203,9 +212,8 @@ class MetadataWriter:
             del audio[key]
 
     def _build_extra_metadata(self, track: Track) -> dict[str, str | None]:
-        # 按网易云歌曲详情结构提取扩展元数据。
         raw = track.raw or {}
-        return {
+        extras = {
             "year": self._extract_year(raw),
             "track_number": self._extract_track_number(raw.get("no")),
             "disc_number": self._extract_disc(raw.get("cd")),
@@ -215,6 +223,9 @@ class MetadataWriter:
             "lyricist": self._extract_named_people(raw.get("lyricist")),
             "comment": self._extract_comment(raw, track),
         }
+        if self.metadata_fields:
+            return {k: v for k, v in extras.items() if k in self.metadata_fields}
+        return extras
 
     def _extract_year(self, raw: dict[str, object]) -> str | None:
         ts = raw.get("publishTime")

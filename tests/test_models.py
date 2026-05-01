@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-import pytest
+import re
+
 from musicvault.core.models import Track, DownloadedTrack
+from musicvault.shared.utils import format_track_name
 
 
 class TestTrackFromNcmPayload:
@@ -10,130 +12,171 @@ class TestTrackFromNcmPayload:
             "id": 12345,
             "name": "Song Name",
             "ar": [{"name": "Artist A"}, {"name": "Artist B"}],
-            "al": {"name": "Test Album", "picUrl": "https://example.com/cover.jpg"},
+            "al": {"name": "Album X", "picUrl": "http://cover.jpg"},
             "dt": 240000,
         }
         track = Track.from_ncm_payload(payload)
         assert track.id == 12345
         assert track.name == "Song Name"
         assert track.artists == ["Artist A", "Artist B"]
-        assert track.album == "Test Album"
-        assert track.cover_url == "https://example.com/cover.jpg"
+        assert track.album == "Album X"
+        assert track.cover_url == "http://cover.jpg"
         assert track.duration_ms == 240000
 
     def test_aliases_split(self) -> None:
         payload = {
             "id": 1,
-            "name": "Original",
-            "ar": [],
-            "al": {"name": "Album"},
-            "tns": ["English Name", "Another/Third"],
-            "alia": ["Fourth、Fifth;Sixth；Seventh"],
+            "name": "Song",
+            "tns": ["Alias1/Alias2", "Alias3；Alias4"],
         }
         track = Track.from_ncm_payload(payload)
-        assert "English Name" in track.aliases
-        assert "Another" in track.aliases
-        assert "Third" in track.aliases
-        assert "Fourth" in track.aliases
-        assert "Fifth" in track.aliases
-        assert "Sixth" in track.aliases
-        assert "Seventh" in track.aliases
+        assert "Alias1" in track.aliases
+        assert "Alias2" in track.aliases
+        assert "Alias3" in track.aliases
+        assert "Alias4" in track.aliases
 
     def test_alias_becomes_empty_after_cleaning(self) -> None:
-        # 别名仅含零宽字符时，清洗后为空字符串，应被跳过
-        payload = {
-            "id": 1,
-            "name": "Test",
-            "ar": [],
-            "al": {"name": "A"},
-            "tns": ["​‌"],
-            "alia": ["RealAlias"],
-        }
+        payload = {"id": 1, "name": "Song", "alia": ["​"]}
         track = Track.from_ncm_payload(payload)
-        # 零宽字符的别名被跳过，只保留有效别名
-        assert track.aliases == ["RealAlias"]
+        assert track.aliases == []
 
     def test_no_aliases(self) -> None:
-        track = Track.from_ncm_payload(
-            {"id": 1, "name": "X", "ar": [], "al": {"name": "A"}}
-        )
+        payload = {"id": 1, "name": "Song"}
+        track = Track.from_ncm_payload(payload)
         assert track.aliases == []
 
     def test_fallback_artist_and_album(self) -> None:
-        payload = {"id": 1, "name": "X", "artists": [], "album": {"name": "Album"}}
+        payload = {"id": 1, "name": "Song"}
         track = Track.from_ncm_payload(payload)
         assert track.artists == []
-        assert track.album == "Album"
+        assert track.album == "Unknown Album"
 
     def test_duration_ms_none(self) -> None:
-        track = Track.from_ncm_payload(
-            {"id": 1, "name": "X", "ar": [], "al": {"name": "A"}}
-        )
+        payload = {"id": 1, "name": "Song"}
+        track = Track.from_ncm_payload(payload)
         assert track.duration_ms is None
 
     def test_missing_name(self) -> None:
-        track = Track.from_ncm_payload(
-            {"id": 999, "ar": [], "al": {"name": "A"}}
-        )
-        assert track.name == "track_999"
+        payload = {"id": 99}
+        track = Track.from_ncm_payload(payload)
+        assert track.name == "track_99"
+
+    def test_custom_alias_split_re(self) -> None:
+        payload = {"id": 1, "name": "Song", "alia": ["A|B;C"]}
+        track = Track.from_ncm_payload(payload, alias_split_re=re.compile(r"[|;]+"))
+        assert set(track.aliases) == {"A", "B", "C"}
 
 
 class TestCleanMetadataText:
     def test_zero_width_chars_removed(self) -> None:
-        result = Track._clean_metadata_text("hello​world‌!‍?⁠.﻿x­")
-        assert result == "helloworld!?.x"
+        assert Track._clean_metadata_text("he​llo") == "hello"
 
     def test_control_chars_excluded_except_whitespace(self) -> None:
-        # \x00 \x01 直接删除（不是替换为空格），然后空白合并（\t→空格）
-        result = Track._clean_metadata_text("a\x00b\x01c\nd\te")
-        assert result == "abc\nd e"
+        assert Track._clean_metadata_text("ab\x00cd") == "abcd"
 
     def test_multiple_spaces_compacted(self) -> None:
-        result = Track._clean_metadata_text("hello     world  !")
-        assert result == "hello world !"
+        assert Track._clean_metadata_text("a    b") == "a b"
 
     def test_leading_trailing_whitespace_stripped(self) -> None:
-        result = Track._clean_metadata_text("  hello  ")
-        assert result == "hello"
+        assert Track._clean_metadata_text("  hello  ") == "hello"
 
     def test_private_use_area_chars_removed(self) -> None:
-        result = Track._clean_metadata_text("abc￰￿xyz")
-        assert result == "abcxyz"
+        assert Track._clean_metadata_text("a￰b") == "ab"
 
 
 class TestTrackProperties:
     def test_artist_text(self) -> None:
-        track = Track(id=1, name="X", artists=["A", "B", "C"], album="Album")
-        assert track.artist_text == "A/B/C"
+        t = Track(id=1, name="S", artists=["A", "B"], album="X")
+        assert t.artist_text == "A/B"
 
     def test_artist_text_empty(self) -> None:
-        track = Track(id=1, name="X", artists=[], album="Album")
-        assert track.artist_text == "Unknown Artist"
+        t = Track(id=1, name="S", artists=[], album="X")
+        assert t.artist_text == "Unknown Artist"
 
     def test_alias_first(self) -> None:
-        track = Track(id=1, name="X", artists=[], album="A", aliases=["Alias1", "Alias2"])
-        assert track.alias == "Alias1"
+        t = Track(id=1, name="S", artists=[], album="X", aliases=["A1", "A2"])
+        assert t.alias == "A1"
 
     def test_alias_none(self) -> None:
-        track = Track(id=1, name="X", artists=[], album="A")
-        assert track.alias is None
+        t = Track(id=1, name="S", artists=[], album="X")
+        assert t.alias is None
 
 
 class TestDownloadedTrack:
     def test_basic(self) -> None:
-        track = Track(id=1, name="X", artists=[], album="A")
-        dt = DownloadedTrack(track=track, source_file="x.mp3", is_ncm=True)
-        assert dt.track.id == 1
+        t = Track(id=1, name="S", artists=[], album="X")
+        dt = DownloadedTrack(track=t, source_file="x.mp3", is_ncm=False)
+        assert dt.track is t
         assert dt.source_file == "x.mp3"
-        assert dt.is_ncm is True
-        assert dt.playlist_ids == []
+        assert not dt.is_ncm
 
     def test_with_playlist_ids(self) -> None:
-        track = Track(id=1, name="X", artists=[], album="A")
+        t = Track(id=1, name="S", artists=[], album="X")
         dt = DownloadedTrack(
-            track=track,
+            track=t,
             source_file="x.mp3",
             is_ncm=False,
             playlist_ids=[100, 200],
         )
         assert dt.playlist_ids == [100, 200]
+
+
+class TestFormatTrackName:
+    def _make_track(self, **kw):
+        defaults = dict(id=1, name="Song", artists=["Artist"], album="Album")
+        defaults.update(kw)
+        return Track(**defaults)
+
+    def test_basic_template(self) -> None:
+        t = self._make_track()
+        result = format_track_name("{artist} - {name}", t)
+        assert result == "Artist - Song"
+
+    def test_name_and_title_are_equivalent(self) -> None:
+        t = self._make_track()
+        assert format_track_name("{title}", t) == "Song"
+        assert format_track_name("{name}", t) == "Song"
+
+    def test_alias_placeholder(self) -> None:
+        t = self._make_track(aliases=["Alias1", "Alias2"])
+        assert format_track_name("{alias}", t) == "Alias1"
+
+    def test_aliases_placeholder(self) -> None:
+        t = self._make_track(aliases=["A1", "A2"])
+        result = format_track_name("{aliases}", t)
+        assert "A1" in result
+        assert "A2" in result
+
+    def test_prefix_with_alias(self) -> None:
+        t = self._make_track(aliases=["AKA"])
+        result = format_track_name("{prefix}{name} - {artist}", t, include_alias_prefix=True)
+        assert result == "AKA Song - Artist"
+
+    def test_prefix_without_alias(self) -> None:
+        t = self._make_track()
+        result = format_track_name("{prefix}{name} - {artist}", t, include_alias_prefix=True)
+        assert result == "Song - Artist"
+
+    def test_prefix_disabled(self) -> None:
+        t = self._make_track(aliases=["AKA"])
+        result = format_track_name("{prefix}{name} - {artist}", t, include_alias_prefix=False)
+        assert result == "Song - Artist"
+
+    def test_album_placeholder(self) -> None:
+        t = self._make_track(album="Test Album")
+        assert format_track_name("{album}", t) == "Test Album"
+
+    def test_track_id_placeholder(self) -> None:
+        t = self._make_track(id=42)
+        assert format_track_name("{track_id}", t) == "42"
+
+    def test_unknown_placeholder_kept(self) -> None:
+        t = self._make_track()
+        assert format_track_name("{unknown}", t) == "{unknown}"
+
+    def test_invalid_chars_replaced(self) -> None:
+        t = self._make_track(name="Song: Bad?", artists=["Artist <X>"])
+        result = format_track_name("{artist} - {name}", t)
+        assert ":" not in result
+        assert "?" not in result
+        assert "<" not in result

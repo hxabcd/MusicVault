@@ -18,11 +18,20 @@ from musicvault.adapters.providers.pyncm_client import PyncmClient
 from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
 from musicvault.shared.tui_progress import BatchProgress
-from musicvault.shared.utils import create_link, hardlink_or_copy, load_json, remove_link, safe_filename, save_json, workspace_rel_path
+from musicvault.shared.utils import (
+    create_link,
+    format_track_name,
+    hardlink_or_copy,
+    load_json,
+    remove_link,
+    safe_filename,
+    save_json,
+    workspace_rel_path,
+)
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PLAYLIST = "未分类"
+_DEFAULT_PLAYLIST = "未分类"  # 仅在 cfg.default_playlist_name 不可用时作为后备
 
 
 class ProcessService:
@@ -50,6 +59,7 @@ class ProcessService:
         self,
         downloaded: list[DownloadedTrack],
         include_translation: bool,
+        translation_format: str,
         force: bool,
         playlist_index: dict[str, dict[str, object]] | None = None,
     ) -> None:
@@ -59,9 +69,9 @@ class ProcessService:
             for item in downloaded:
                 names = self._resolve_playlist_names(item.playlist_ids, playlist_index)
                 tasks.append((Path(item.source_file), item.track, names))
-            self._run_process_batch(tasks, "处理中", include_translation, force)
+            self._run_process_batch(tasks, "处理中", include_translation, translation_format, force)
             return
-        self._process_local(include_translation, force)
+        self._process_local(include_translation, translation_format, force)
 
     # ------------------------------------------------------------------
     # 处理管线
@@ -72,6 +82,7 @@ class ProcessService:
         tasks: list[tuple[Path, Track, list[str]]],
         stage_name: str,
         include_translation: bool,
+        translation_format: str,
         force: bool,
     ) -> None:
         if not tasks:
@@ -93,7 +104,7 @@ class ProcessService:
 
         with ThreadPoolExecutor(max_workers=workers) as pool, BatchProgress(total=total, phase=stage_name) as bp:
             future_map = {
-                pool.submit(self._process_file, raw_file, track_info, include_translation): (
+                pool.submit(self._process_file, raw_file, track_info, include_translation, translation_format): (
                     idx,
                     raw_file,
                 )
@@ -137,6 +148,7 @@ class ProcessService:
         raw_file: Path,
         prefetched_track: Track | None = None,
         include_translation: bool = True,
+        translation_format: str = "separate",
     ) -> tuple[Path, Path]:
         """处理单个下载文件，输出 canonical 文件到 downloads/。返回 (lossless, lossy)。"""
         track_info = prefetched_track
@@ -161,21 +173,26 @@ class ProcessService:
         lossless_path, lossy_path = self.organizer.route_audio(decoded, track_info, self.cfg.downloads_dir)
 
         lyrics = self.api.get_track_lyrics(track_id)
-        lossless_lyrics = build_lossless_lyrics(lyrics, include_translation=include_translation)
-        lossy_lyrics = build_lossy_lyrics(lyrics, include_translation=include_translation)
+        lossless_lyrics = build_lossless_lyrics(
+            lyrics, include_translation=include_translation, translation_format=translation_format
+        )
+        lossy_lyrics = build_lossy_lyrics(
+            lyrics, include_translation=include_translation, translation_format=translation_format
+        )
 
         same_file = lossless_path.resolve() == lossy_path.resolve()
         self.metadata.write(lossless_path, track_info, lyric_text=lossless_lyrics, is_lossless=True)
         if not same_file:
             self.metadata.write(lossy_path, track_info, lyric_text=None, is_lossless=False)
-        write_gb18030_lrc(lossy_path, lossy_lyrics, encodings=self.cfg.lossy_lrc_encodings)
+        if self.cfg.lyrics_write_lrc_file:
+            write_gb18030_lrc(lossy_path, lossy_lyrics, encodings=self.cfg.lossy_lrc_encodings)
 
         # 清理临时文件
         if downloaded.is_ncm and decoded.exists() and decoded != Path(downloaded.source_file):
             decoded.unlink(missing_ok=True)
-        # 删除原始下载文件（已转换为 canonical 格式）
-        if raw_file.exists() and raw_file.resolve() != lossless_path.resolve():
-            raw_file.unlink(missing_ok=True)
+        if not self.cfg.keep_downloads:
+            if raw_file.exists() and raw_file.resolve() != lossless_path.resolve():
+                raw_file.unlink(missing_ok=True)
 
         return lossless_path, lossy_path
 
@@ -192,7 +209,7 @@ class ProcessService:
     ) -> None:
         """为一个 track 在所有歌单目录中创建 library 硬链接。"""
         lrc_src = lossy_src.with_suffix(".lrc")
-        names = playlist_names or [_DEFAULT_PLAYLIST]
+        names = playlist_names or [self.cfg.default_playlist_name]
 
         for name in names:
             ll_dst = self.cfg.lossless_dir / name / self._lossless_link_name(track, lossless_src.suffix)
@@ -248,14 +265,17 @@ class ProcessService:
     # 链接文件名生成
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _lossless_link_name(track: Track, suffix: str = ".flac") -> str:
-        return safe_filename(f"{track.artist_text} - {track.name}") + suffix
+    def _lossless_link_name(self, track: Track, suffix: str = ".flac") -> str:
+        stem = format_track_name(
+            self.cfg.filename_lossless, track, include_alias_prefix=self.cfg.include_alias_in_filename
+        )
+        return stem + suffix
 
-    @staticmethod
-    def _lossy_link_name(track: Track) -> str:
-        prefix = f"{track.alias} " if track.alias else ""
-        return safe_filename(f"{prefix}{track.name} - {track.artist_text}") + ".mp3"
+    def _lossy_link_name(self, track: Track, suffix: str = ".mp3") -> str:
+        stem = format_track_name(
+            self.cfg.filename_lossy, track, include_alias_prefix=self.cfg.include_alias_in_filename
+        )
+        return stem + suffix
 
     # ------------------------------------------------------------------
     # processed_files.json（新格式：key = track_id 字符串）
@@ -329,7 +349,7 @@ class ProcessService:
     # 本地处理（msv process 独立模式）
     # ------------------------------------------------------------------
 
-    def _process_local(self, include_translation: bool, force: bool) -> None:
+    def _process_local(self, include_translation: bool, translation_format: str, force: bool) -> None:
         raw_files = [f for f in self._iter_downloads() if not f.stem.isdigit()]
         if not raw_files:
             logger.info("下载目录中无待处理文件")
@@ -358,7 +378,7 @@ class ProcessService:
             names = self._resolve_playlist_names(pids, playlist_index)
             tasks.append((raw_file, track_info, names))
 
-        self._run_process_batch(tasks, "处理中", include_translation, force)
+        self._run_process_batch(tasks, "处理中", include_translation, translation_format, force)
 
     def _build_track_playlists(self) -> dict[int, list[int]]:
         mapping: dict[int, list[int]] = {}
@@ -390,7 +410,7 @@ class ProcessService:
             entry = playlist_index.get(str(pid))
             name = str(entry["name"]) if entry and entry.get("name") else str(pid)
             names.append(safe_filename(name))
-        return names or [_DEFAULT_PLAYLIST]
+        return names or [self.cfg.default_playlist_name]
 
     # ------------------------------------------------------------------
     # track_id 推断

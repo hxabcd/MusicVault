@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -46,12 +47,24 @@ def _retry_api(func, *args, **kwargs):
 class PyncmClient:
     """pyncm API 访问封装"""
 
-    def __init__(self, text_cleaning_enabled: bool = True) -> None:
+    def __init__(
+        self,
+        text_cleaning_enabled: bool = True,
+        download_quality: str = "hires",
+        api_download_url_chunk_size: int = 200,
+        api_track_detail_chunk_size: int = 500,
+        alias_split_separators: str = "/、;；",
+    ) -> None:
         self.login_api = login_api
         self.user_api = user_api
         self.playlist_api = playlist_api
         self.track_api = track_api
         self.text_cleaning_enabled = text_cleaning_enabled
+        self.download_quality = download_quality
+        self.api_download_url_chunk_size = api_download_url_chunk_size
+        self.api_track_detail_chunk_size = api_track_detail_chunk_size
+        sanitized = re.escape(alias_split_separators)
+        self.alias_split_re: re.Pattern[str] = re.compile(rf"[{sanitized}]+")
 
     # -- 登录方式 -----------------------------------------------------------
 
@@ -72,9 +85,7 @@ class PyncmClient:
             session.cookies.set(key.strip(), value.strip())
         return self.get_login_status()
 
-    def login_via_phone(
-        self, phone: str, password: str = "", captcha: str = "", ctcode: int = 86
-    ) -> LoginResult:
+    def login_via_phone(self, phone: str, password: str = "", captcha: str = "", ctcode: int = 86) -> LoginResult:
         """手机号登录（密码或验证码二选一）"""
         self.login_api.LoginViaCellphone(
             phone=phone, password=password, captcha=captcha, ctcode=ctcode, remeberLogin=True
@@ -192,8 +203,8 @@ class PyncmClient:
         if not track_ids:
             return result
 
-        for chunk in self._chunk_ids(track_ids, chunk_size=_DOWNLOAD_URL_CHUNK_SIZE):
-            resp = _retry_api(self.track_api.GetTrackAudioV1, chunk, level="hires", encodeType="flac")
+        for chunk in self._chunk_ids(track_ids, chunk_size=self.api_download_url_chunk_size):
+            resp = _retry_api(self.track_api.GetTrackAudioV1, chunk, level=self.download_quality, encodeType="flac")
             data = resp.get("data") or []
             if isinstance(data, dict):
                 data = [data]
@@ -218,14 +229,16 @@ class PyncmClient:
         if not track_ids:
             return result
 
-        for chunk in self._chunk_ids(track_ids, chunk_size=_TRACK_DETAIL_CHUNK_SIZE):
+        for chunk in self._chunk_ids(track_ids, chunk_size=self.api_track_detail_chunk_size):
             resp = _retry_api(self.track_api.GetTrackDetail, chunk)
             songs = resp.get("songs") or (resp.get("data") or {}).get("songs") or []
 
             for song in songs:
                 if not song.get("id"):
                     continue
-                track = Track.from_ncm_payload(song, clean_text=self.text_cleaning_enabled)
+                track = Track.from_ncm_payload(
+                    song, clean_text=self.text_cleaning_enabled, alias_split_re=self.alias_split_re
+                )
                 result[track.id] = track
         return result
 

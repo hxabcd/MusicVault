@@ -19,6 +19,7 @@ from musicvault.shared.tui_progress import console
 _DEFAULT_CONFIG = os.environ.get("MUSIC_VAULT_CONFIG", "./config.json")
 logger: logging.Logger
 
+
 def _silence_libs() -> None:
     for name in ("pyncm", "urllib3.connectionpool", "App"):
         muted = logging.getLogger(name)
@@ -70,9 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     init = sub.add_parser("init", help="初始化配置", description="登录网易云音乐账号并创建配置文件")
     init.add_argument("--cookie", default=None, help="网易云 Cookie（跳过交互登录）")
-    init.add_argument(
-        "--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）"
-    )
+    init.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）")
     init.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
 
     sync = sub.add_parser("sync", help="同步音乐", description="拉取并处理音乐")
@@ -207,7 +206,13 @@ def main(argv: list[str] | None = None) -> int:
 
     service = RunService(
         cfg=cfg,
-        api=PyncmClient(text_cleaning_enabled=cfg.text_cleaning_enabled),
+        api=PyncmClient(
+            text_cleaning_enabled=cfg.text_cleaning_enabled,
+            download_quality=cfg.download_quality,
+            api_download_url_chunk_size=cfg.api_download_url_chunk_size,
+            api_track_detail_chunk_size=cfg.api_track_detail_chunk_size,
+            alias_split_separators=cfg.alias_split_separators,
+        ),
     )
     try:
         service.run_pipeline(cookie=cookie, command=pipeline_cmd)

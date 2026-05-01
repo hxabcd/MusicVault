@@ -30,15 +30,25 @@ class RunService:
         self.sync_service = SyncService(
             cfg=cfg,
             api=api,
-            downloader=Downloader(),
+            downloader=Downloader(filename_template=cfg.filename_lossless),
             workers=max(1, download_workers),
         )
         self.process_service = ProcessService(
             cfg=cfg,
             api=api,
             decryptor=Decryptor(),
-            organizer=Organizer(ffmpeg_threads=max(1, ffmpeg_threads)),
-            metadata=MetadataWriter(),
+            organizer=Organizer(
+                ffmpeg_threads=max(1, ffmpeg_threads),
+                lossy_bitrate=cfg.lossy_bitrate,
+                lossy_format=cfg.lossy_format,
+                ffmpeg_path=cfg.ffmpeg_path,
+            ),
+            metadata=MetadataWriter(
+                embed_cover=cfg.embed_cover,
+                embed_lyrics=cfg.lyrics_embed_in_metadata,
+                cover_timeout=cfg.network_cover_timeout,
+                metadata_fields=cfg.metadata_fields,
+            ),
             workers=max(1, process_workers),
         )
 
@@ -58,6 +68,7 @@ class RunService:
             self.process_service.run_process(
                 downloaded=downloaded,
                 include_translation=self.cfg.include_translation,
+                translation_format=self.cfg.translation_format,
                 force=self.cfg.force,
                 playlist_index=playlist_index,
             )

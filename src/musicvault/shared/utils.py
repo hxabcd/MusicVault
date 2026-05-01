@@ -6,18 +6,58 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from musicvault.core.models import Track
 
 INVALID_FILENAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1F]')
+_FILENAME_TEMPLATE_RE = re.compile(r"\{(\w+)\}")
 
 logger = logging.getLogger(__name__)
 
 
 def safe_filename(name: str, fallback: str = "untitled") -> str:
     """将文本转成可安全落盘的文件名"""
-    # 过滤 Windows 非法字符，避免落盘失败。
     clean = INVALID_FILENAME_RE.sub("_", name).strip(" .")
     return clean or fallback
+
+
+def format_track_name(template: str, track: "Track", *, include_alias_prefix: bool = True) -> str:
+    """用模板格式化曲目文件名。
+
+    支持的占位符：
+        {name} / {title}  -- 歌曲名
+        {artist}          -- 歌手（多个以 / 分隔）
+        {alias}           -- 第一个别名
+        {aliases}         -- 全部别名（/ 分隔）
+        {prefix}          -- 别名前缀（有别名时为 "{alias} "，否则为空）
+        {album}           -- 专辑名
+        {track_id}        -- 曲目 ID
+    """
+    aliases_text = "/".join(track.aliases) if track.aliases else ""
+    prefix = f"{track.alias} " if (include_alias_prefix and track.alias) else ""
+
+    def _replacer(m: re.Match[str]) -> str:
+        key = m.group(1)
+        if key in ("name", "title"):
+            return track.name
+        if key == "artist":
+            return track.artist_text
+        if key == "alias":
+            return track.alias or ""
+        if key == "aliases":
+            return aliases_text
+        if key == "prefix":
+            return prefix
+        if key == "album":
+            return track.album
+        if key == "track_id":
+            return str(track.id)
+        return m.group(0)
+
+    raw = _FILENAME_TEMPLATE_RE.sub(_replacer, template).strip()
+    return safe_filename(raw)
 
 
 def workspace_rel_path(path: Path, workspace: Path) -> str:

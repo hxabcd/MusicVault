@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from musicvault.core.models import DownloadedTrack, Track
-from musicvault.shared.utils import safe_filename
+from musicvault.shared.utils import format_track_name
 
 _DOWNLOAD_TIMEOUT = 30
 _DOWNLOAD_CHUNK_SIZE = 1024 * 128
@@ -16,9 +16,12 @@ _RETRY_BACKOFF = (1.0, 3.0, 5.0)
 
 
 class Downloader:
+    def __init__(self, filename_template: str = "{artist} - {name}") -> None:
+        self.filename_template = filename_template
+
     def download_track(self, track: Track, url: str, output_dir: Path) -> DownloadedTrack:
         output_dir.mkdir(parents=True, exist_ok=True)
-        stem = safe_filename(f"{track.artist_text} - {track.name}")
+        stem = format_track_name(self.filename_template, track)
 
         resp = self._open_with_retry(url)
         content_type = resp.headers.get("Content-Type", "")
