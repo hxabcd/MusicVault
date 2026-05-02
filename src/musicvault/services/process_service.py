@@ -162,17 +162,36 @@ class ProcessService:
         if track_id is None:
             raise RuntimeError(f"无法推断 track_id：{raw_file.name}")
 
-        # 判断是否已是 downloads/ 下的已有 FLAC（跳过解密和音频路由，仅重写元数据/歌词）
-        is_existing_flac = (
-            raw_file.suffix.lower() == ".flac"
-            and raw_file.parent.resolve() == self.cfg.downloads_dir.resolve()
+        # 回退：当 track publishTime 为 0 时使用专辑 publishTime
+        if not track_info.raw.get("publishTime"):
+            al = track_info.raw.get("al") or {}
+            album_id = al.get("id")
+            if album_id:
+                try:
+                    import pyncm.apis.album as album_api
+                    from musicvault.adapters.providers.pyncm_client import _retry_api
+
+                    alb_resp = _retry_api(album_api.GetAlbumInfo, int(album_id))
+                    alb_pt = (alb_resp.get("album") or {}).get("publishTime")
+                    if alb_pt:
+                        track_info.raw["publishTime"] = alb_pt
+                except Exception:
+                    pass
+
+        # 判断是否已是 downloads/ 下的已有 canonical 文件（跳过解密和音频路由，仅重写元数据/歌词）
+        is_canonical = (
+            raw_file.parent.resolve() == self.cfg.downloads_dir.resolve()
+            and raw_file.stem.isdigit()
         )
 
-        if is_existing_flac:
+        if is_canonical:
             lossless_path = raw_file
-            lossy_path = raw_file.with_suffix(self.organizer.lossy_suffix)
-            if not lossy_path.exists():
-                self.organizer.transcode_lossy(raw_file, lossy_path)
+            if raw_file.suffix.lower() == ".flac":
+                lossy_path = raw_file.with_suffix(self.organizer.lossy_suffix)
+                if not lossy_path.exists():
+                    self.organizer.transcode_lossy(raw_file, lossy_path)
+            else:
+                lossy_path = raw_file  # 有损源，canonical 文件本身即 "lossless"
         else:
             downloaded = DownloadedTrack(
                 track=track_info,
@@ -204,7 +223,7 @@ class ProcessService:
             write_gb18030_lrc(lossy_path, lossy_lyrics, encodings=self.cfg.lossy_lrc_encodings)
 
         # 清理临时文件
-        if not is_existing_flac:
+        if not is_canonical:
             if downloaded.is_ncm and decoded.exists() and decoded != Path(downloaded.source_file):
                 decoded.unlink(missing_ok=True)
             if not self.cfg.keep_downloads:
@@ -378,11 +397,11 @@ class ProcessService:
                     continue
                 pending.append((raw_file, track_id))
 
-        # 2. 合并 downloads/ 下已有的 FLAC（文件名即 track_id）
+        # 2. 合并 downloads/ 下已有的 canonical 文件（文件名即 track_id）
         seen_ids = {pid for _, pid in pending}
-        for flac_path, track_id in self._scan_existing_flacs():
+        for canon_path, track_id in self._scan_canonical_files():
             if track_id not in seen_ids:
-                pending.append((flac_path, track_id))
+                pending.append((canon_path, track_id))
                 seen_ids.add(track_id)
 
         if not pending:
@@ -422,18 +441,28 @@ class ProcessService:
             if file_path.is_file() and file_path.suffix.lower() in allowed:
                 yield file_path
 
-    def _scan_existing_flacs(self) -> list[tuple[Path, int]]:
-        """回退扫描：从 downloads/ 目录读取已有 {track_id}.flac 文件"""
+    def _scan_canonical_files(self) -> list[tuple[Path, int]]:
+        """从 downloads/ 目录读取已有 {track_id}.flac/.mp3 文件（同名时优先 flac）。"""
         downloads = self.cfg.downloads_dir
         if not downloads.exists():
             return []
+        seen: set[int] = set()
         result: list[tuple[Path, int]] = []
         for file_path in sorted(downloads.iterdir()):
-            if not file_path.is_file() or file_path.suffix.lower() != ".flac":
+            if not file_path.is_file() or file_path.suffix.lower() not in (".flac", ".mp3"):
                 continue
             if not file_path.stem.isdigit():
                 continue
-            result.append((file_path, int(file_path.stem)))
+            track_id = int(file_path.stem)
+            if track_id in seen:
+                continue
+            # 同时有 flac 和 mp3 时仅用 flac
+            if file_path.suffix.lower() == ".mp3" and (downloads / f"{track_id}.flac").exists():
+                seen.add(track_id)
+                result.append((downloads / f"{track_id}.flac", track_id))
+                continue
+            result.append((file_path, track_id))
+            seen.add(track_id)
         return result
 
     def _resolve_playlist_names(

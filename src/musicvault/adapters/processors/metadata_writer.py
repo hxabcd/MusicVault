@@ -259,7 +259,7 @@ class MetadataWriter:
 
     def _extract_year(self, raw: dict[str, object]) -> str | None:
         ts = raw.get("publishTime")
-        if ts is None:
+        if not ts:
             return None
         try:
             value = int(str(ts))
