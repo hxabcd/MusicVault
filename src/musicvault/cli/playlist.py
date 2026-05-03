@@ -138,8 +138,8 @@ def _cleanup_playlist_files(pid: int, cfg: Config) -> None:
 
     # 删除 library 目录（仅含硬链接，直接 rmtree）
     deleted_dirs = 0
-    for parent in (cfg.lossless_dir, cfg.lossy_dir):
-        target = parent / dir_name
+    for preset in cfg.presets:
+        target = cfg.preset_dir(preset.name) / dir_name
         if target.is_dir():
             shutil.rmtree(target)
             deleted_dirs += 1
