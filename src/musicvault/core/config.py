@@ -5,12 +5,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from musicvault.core.preset import Preset, default_presets, validate_presets
 from musicvault.shared.utils import load_json, save_json
 
-DEFAULT_LOSSY_LRC_ENCODINGS = ("utf-8",)
-
-_DOWNLOAD_QUALITY_VALUES = frozenset({"standard", "higher", "exhire", "hires", "lossless"})
-_LOSSY_FORMAT_VALUES = frozenset({"mp3", "aac", "ogg", "opus"})
 _METADATA_FIELD_NAMES = frozenset(
     {"year", "track_number", "disc_number", "genre", "album_artist", "composer", "lyricist", "comment"}
 )
@@ -21,26 +18,11 @@ class Config:
     cookie: str = ""
     workspace: str = "./workspace"
     force: bool = False
-    include_translation: bool = True
     text_cleaning_enabled: bool = True
     download_workers: int | None = None
     process_workers: int | None = None
     ffmpeg_threads: int | None = None
-    lossy_lrc_encodings: tuple[str, ...] = DEFAULT_LOSSY_LRC_ENCODINGS
-    lossy_bitrate: str = "192k"
-    lossy_format: str = "mp3"
-    lossless_translation_format: str = "separate"
-    lossy_translation_format: str = "inline"
     download_quality: str = "hires"
-    embed_cover: bool = True
-    cover_max_size: int = 0
-    lyrics_embed_in_metadata: bool = True
-    lyrics_write_lrc_file: bool = True
-    karaoke_lossless: bool = True
-    karaoke_lossy: bool = False
-    include_romaji: bool = False
-    filename_lossless: str = "{artist} - {name}"
-    filename_lossy: str = "{alias} {name} - {artist}"
     network_download_timeout: int = 30
     network_api_timeout: int = 15
     network_cover_timeout: int = 15
@@ -53,6 +35,7 @@ class Config:
     api_download_url_chunk_size: int = 200
     api_track_detail_chunk_size: int = 500
     alias_split_separators: str = "/、;；"
+    presets: list[Preset] = field(default_factory=default_presets)
     _file: Path | None = field(default=None, init=False, repr=False)
 
     @property
@@ -75,13 +58,8 @@ class Config:
     def library_dir(self) -> Path:
         return self.workspace_path / "library"
 
-    @property
-    def lossless_dir(self) -> Path:
-        return self.library_dir / "lossless"
-
-    @property
-    def lossy_dir(self) -> Path:
-        return self.library_dir / "lossy"
+    def preset_dir(self, preset_name: str) -> Path:
+        return self.library_dir / preset_name
 
     @property
     def synced_state_file(self) -> Path:
@@ -97,11 +75,12 @@ class Config:
             self.downloads_dir,
             self.downloads_cache_dir,
             self.state_dir,
-            self.lossless_dir,
-            self.lossy_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
+        for preset in self.presets:
+            self.preset_dir(preset.name).mkdir(parents=True, exist_ok=True)
 
+    # -- song management --
     @property
     def _songs_path(self) -> Path:
         return self.state_dir / "songs.json"
@@ -151,117 +130,72 @@ class Config:
         index.pop(str(pid), None)
         save_json(self._playlist_index_path, index)
 
-    # -- serialization -------------------------------------------------------
+    # -- serialization --
 
     @classmethod
     def from_dict(cls, raw: Any) -> Config:
         if not isinstance(raw, dict):
             raise RuntimeError("配置文件格式错误（需为 JSON 对象）")
 
+        _check_legacy_format(raw)
+
         workers = raw.get("workers") or {}
         if not isinstance(workers, dict):
             workers = {}
 
-        lyrics = raw.get("lyrics") or {}
-        if not isinstance(lyrics, dict):
-            lyrics = {}
+        network = raw.get("network") or {}
+        if not isinstance(network, dict):
+            network = {}
 
         text_cleaning = raw.get("text_cleaning") or {}
         if not isinstance(text_cleaning, dict):
             text_cleaning = {}
 
-        raw_encodings = lyrics.get("lossy_lrc_encodings")
-        if raw_encodings is not None:
-            if not isinstance(raw_encodings, list):
-                raise RuntimeError("lyrics.lossy_lrc_encodings 格式错误：需为字符串数组")
-            encodings = tuple(str(item).strip() for item in raw_encodings if str(item).strip())
-            if not encodings:
-                raise RuntimeError("lyrics.lossy_lrc_encodings 不能为空")
+        metadata_cfg = raw.get("metadata") or {}
+        if not isinstance(metadata_cfg, dict):
+            metadata_cfg = {}
+
+        process = raw.get("process") or {}
+        if not isinstance(process, dict):
+            process = {}
+
+        playlist_cfg = raw.get("playlist") or {}
+        if not isinstance(playlist_cfg, dict):
+            playlist_cfg = {}
+
+        ffmpeg_cfg = raw.get("ffmpeg") or {}
+        if not isinstance(ffmpeg_cfg, dict):
+            ffmpeg_cfg = {}
+
+        api_cfg = raw.get("api") or {}
+        if not isinstance(api_cfg, dict):
+            api_cfg = {}
+
+        alias_cfg = raw.get("alias") or {}
+        if not isinstance(alias_cfg, dict):
+            alias_cfg = {}
+
+        # Parse presets
+        presets_raw = raw.get("presets")
+        if isinstance(presets_raw, list) and presets_raw:
+            presets = [Preset(**_normalize_preset_dict(p)) for p in presets_raw]
         else:
-            encodings = DEFAULT_LOSSY_LRC_ENCODINGS
+            presets = default_presets()
+        validate_presets(presets)
 
-        # -- lossy section --
-        lossy = raw.get("lossy") or {}
-        if not isinstance(lossy, dict):
-            lossy = {}
-        lossy_bitrate = str(lossy.get("bitrate") or "192k").strip()
-        lossy_format = str(lossy.get("format") or "mp3").strip()
-        if lossy_format not in _LOSSY_FORMAT_VALUES:
-            raise RuntimeError(f"lossy.format 格式错误：需为 {sorted(_LOSSY_FORMAT_VALUES)}，当前={lossy_format}")
+        # Derive download_quality from presets (max)
+        quality_order = {"standard": 0, "higher": 1, "exhigh": 2, "hires": 3, "lossless": 4}
+        max_q = "hires"
+        max_val = quality_order["hires"]
+        for p in presets:
+            qv = quality_order.get(p.quality, 0)
+            if qv > max_val:
+                max_val = qv
+                max_q = p.quality
+        download_quality = max_q
 
-        # -- translation_format (lossless/lossy 各自配置，均可回退到旧 key) --
-        _VALID_TRANSLATION_FORMATS = ("separate", "inline", "notimestamp")
-        legacy_fmt = lyrics.get("translation_format") or raw.get("translation_format")
-
-        lossless_translation_format = str(
-            lyrics.get("lossless_translation_format") or legacy_fmt or "separate"
-        ).strip()
-        if lossless_translation_format not in _VALID_TRANSLATION_FORMATS:
-            raise RuntimeError(
-                f"lossless_translation_format 格式错误：需为 {sorted(_VALID_TRANSLATION_FORMATS)}，"
-                f"当前={lossless_translation_format}"
-            )
-
-        lossy_translation_format = str(
-            lyrics.get("lossy_translation_format") or legacy_fmt or "inline"
-        ).strip()
-        if lossy_translation_format not in _VALID_TRANSLATION_FORMATS:
-            raise RuntimeError(
-                f"lossy_translation_format 格式错误：需为 {sorted(_VALID_TRANSLATION_FORMATS)}，"
-                f"当前={lossy_translation_format}"
-            )
-
-        # -- download section --
-        download = raw.get("download") or {}
-        if not isinstance(download, dict):
-            download = {}
-        download_quality = str(download.get("quality") or "hires").strip()
-        if download_quality not in _DOWNLOAD_QUALITY_VALUES:
-            raise RuntimeError(
-                f"download.quality 格式错误：需为 {sorted(_DOWNLOAD_QUALITY_VALUES)}，当前={download_quality}"
-            )
-
-        # -- cover section --
-        cover = raw.get("cover") or {}
-        if not isinstance(cover, dict):
-            cover = {}
-        embed_cover = bool(cover.get("embed", True))
-        cover_max_size = _parse_positive_int(cover.get("max_size"), 0)
-
-        # -- lyrics extended --
-        lyrics_embed_in_metadata = bool(lyrics.get("embed_in_metadata", True))
-        lyrics_write_lrc_file = bool(lyrics.get("write_lrc_file", True))
-        # 逐字歌词：优先新 key，fallback 旧 use_karaoke（仅影响 lossless）
-        karaoke_lossless = bool(
-            lyrics.get("lossless_use_karaoke") if "lossless_use_karaoke" in lyrics else lyrics.get("use_karaoke", True)
-        )
-        karaoke_lossy = bool(lyrics.get("lossy_use_karaoke", False))
-        include_romaji = bool(lyrics.get("include_romaji", False))
-
-        # -- filenames section --
-        filenames = raw.get("filenames") or {}
-        if not isinstance(filenames, dict):
-            filenames = {}
-        filename_lossless = str(filenames.get("lossless") or "{artist} - {name}").strip()
-        filename_lossy = str(filenames.get("lossy") or "{alias} {name} - {artist}").strip()
-
-        # -- network section --
-        network = raw.get("network") or {}
-        if not isinstance(network, dict):
-            network = {}
-        network_download_timeout = max(5, _parse_positive_int(network.get("download_timeout"), 30))
-        network_api_timeout = max(5, _parse_positive_int(network.get("api_timeout"), 15))
-        network_cover_timeout = max(5, _parse_positive_int(network.get("cover_timeout"), 15))
-        network_max_retries = max(0, min(10, _parse_positive_int(network.get("max_retries"), 3)))
-
-        # -- text_cleaning extended --
-        text_cleaning_allowlist = str(text_cleaning.get("allowlist", "")).strip()
-
-        # -- metadata section --
-        metadata = raw.get("metadata") or {}
-        if not isinstance(metadata, dict):
-            metadata = {}
-        metadata_fields_raw = metadata.get("fields")
+        # metadata fields
+        metadata_fields_raw = metadata_cfg.get("fields")
         if metadata_fields_raw is None:
             metadata_fields: tuple[str, ...] = ()
         else:
@@ -271,76 +205,27 @@ class Config:
                 str(f).strip() for f in metadata_fields_raw if str(f).strip() in _METADATA_FIELD_NAMES
             )
 
-        # -- process section --
-        process = raw.get("process") or {}
-        if not isinstance(process, dict):
-            process = {}
-        keep_downloads = bool(process.get("keep_downloads", False))
-
-        # -- playlist section --
-        playlist_cfg = raw.get("playlist") or {}
-        if not isinstance(playlist_cfg, dict):
-            playlist_cfg = {}
-        default_playlist_name = str(playlist_cfg.get("default_name") or "未分类").strip() or "未分类"
-
-        # -- ffmpeg section --
-        ffmpeg_cfg = raw.get("ffmpeg") or {}
-        if not isinstance(ffmpeg_cfg, dict):
-            ffmpeg_cfg = {}
-        ffmpeg_path = str(ffmpeg_cfg.get("path") or "").strip()
-
-        # -- api section --
-        api_cfg = raw.get("api") or {}
-        if not isinstance(api_cfg, dict):
-            api_cfg = {}
-        api_download_url_chunk_size = max(50, _parse_positive_int(api_cfg.get("download_url_chunk_size"), 200))
-        api_track_detail_chunk_size = max(50, _parse_positive_int(api_cfg.get("track_detail_chunk_size"), 500))
-
-        # -- alias section --
-        alias_cfg = raw.get("alias") or {}
-        if not isinstance(alias_cfg, dict):
-            alias_cfg = {}
-        alias_split_separators = str(alias_cfg.get("split_separators") or "/、;；")
-
         return cls(
             cookie=str(raw.get("cookie") or "").strip(),
             workspace=str(raw.get("workspace") or "./workspace"),
-            include_translation=bool(
-                lyrics.get("include_translation")
-                if "include_translation" in lyrics
-                else raw.get("include_translation", True)
-            ),
             text_cleaning_enabled=bool(text_cleaning.get("enabled", True)),
             download_workers=_parse_workers_int(workers.get("download")),
             process_workers=_parse_workers_int(workers.get("process")),
             ffmpeg_threads=_parse_workers_int(workers.get("ffmpeg_threads")),
-            lossy_lrc_encodings=encodings,
-            lossy_bitrate=lossy_bitrate,
-            lossy_format=lossy_format,
-            lossless_translation_format=lossless_translation_format,
-            lossy_translation_format=lossy_translation_format,
             download_quality=download_quality,
-            embed_cover=embed_cover,
-            cover_max_size=cover_max_size,
-            lyrics_embed_in_metadata=lyrics_embed_in_metadata,
-            lyrics_write_lrc_file=lyrics_write_lrc_file,
-            karaoke_lossless=karaoke_lossless,
-            karaoke_lossy=karaoke_lossy,
-            include_romaji=include_romaji,
-            filename_lossless=filename_lossless,
-            filename_lossy=filename_lossy,
-            network_download_timeout=network_download_timeout,
-            network_api_timeout=network_api_timeout,
-            network_cover_timeout=network_cover_timeout,
-            network_max_retries=network_max_retries,
-            text_cleaning_allowlist=text_cleaning_allowlist,
+            network_download_timeout=max(5, _parse_positive_int(network.get("download_timeout"), 30)),
+            network_api_timeout=max(5, _parse_positive_int(network.get("api_timeout"), 15)),
+            network_cover_timeout=max(5, _parse_positive_int(network.get("cover_timeout"), 15)),
+            network_max_retries=max(0, min(10, _parse_positive_int(network.get("max_retries"), 3))),
+            text_cleaning_allowlist=str(text_cleaning.get("allowlist", "")).strip(),
             metadata_fields=metadata_fields,
-            keep_downloads=keep_downloads,
-            default_playlist_name=default_playlist_name,
-            ffmpeg_path=ffmpeg_path,
-            api_download_url_chunk_size=api_download_url_chunk_size,
-            api_track_detail_chunk_size=api_track_detail_chunk_size,
-            alias_split_separators=alias_split_separators,
+            keep_downloads=bool(process.get("keep_downloads", False)),
+            default_playlist_name=str(playlist_cfg.get("default_name") or "未分类").strip() or "未分类",
+            ffmpeg_path=str(ffmpeg_cfg.get("path") or "").strip(),
+            api_download_url_chunk_size=max(50, _parse_positive_int(api_cfg.get("download_url_chunk_size"), 200)),
+            api_track_detail_chunk_size=max(50, _parse_positive_int(api_cfg.get("track_detail_chunk_size"), 500)),
+            alias_split_separators=str(alias_cfg.get("split_separators") or "/、;；"),
+            presets=presets,
         )
 
     @classmethod
@@ -357,7 +242,7 @@ class Config:
                     for pid in legacy_ids:
                         index.setdefault(str(pid), {"name": "", "track_count": 0})
                     save_json(cfg._playlist_index_path, index)
-            cfg.save(path)  # 始终回写以补全新增字段
+            cfg.save(path)
         else:
             cfg = cls()
             cfg.save(path)
@@ -375,6 +260,26 @@ class Config:
         return {
             "cookie": self.cookie,
             "workspace": self.workspace,
+            "presets": [
+                {
+                    "name": p.name,
+                    "quality": p.quality,
+                    "format": p.format,
+                    "bitrate": p.bitrate,
+                    "filename_template": p.filename_template,
+                    "embed_cover": p.embed_cover,
+                    "cover_max_size": p.cover_max_size if p.cover_max_size else None,
+                    "embed_lyrics": p.embed_lyrics,
+                    "metadata_fields": list(p.metadata_fields) if p.metadata_fields else None,
+                    "use_karaoke": p.use_karaoke,
+                    "include_translation": p.include_translation,
+                    "translation_format": p.translation_format,
+                    "include_romaji": p.include_romaji,
+                    "write_lrc_file": p.write_lrc_file,
+                    "lrc_encodings": list(p.lrc_encodings),
+                }
+                for p in self.presets
+            ],
             "text_cleaning": {
                 "enabled": self.text_cleaning_enabled,
                 "allowlist": self.text_cleaning_allowlist,
@@ -383,32 +288,6 @@ class Config:
                 "download": self.download_workers,
                 "process": self.process_workers,
                 "ffmpeg_threads": self.ffmpeg_threads,
-            },
-            "lyrics": {
-                "lossy_lrc_encodings": list(self.lossy_lrc_encodings),
-                "embed_in_metadata": self.lyrics_embed_in_metadata,
-                "write_lrc_file": self.lyrics_write_lrc_file,
-                "lossless_use_karaoke": self.karaoke_lossless,
-                "lossy_use_karaoke": self.karaoke_lossy,
-                "include_romaji": self.include_romaji,
-                "include_translation": self.include_translation,
-                "lossless_translation_format": self.lossless_translation_format,
-                "lossy_translation_format": self.lossy_translation_format,
-            },
-            "lossy": {
-                "bitrate": self.lossy_bitrate,
-                "format": self.lossy_format,
-            },
-            "download": {
-                "quality": self.download_quality,
-            },
-            "cover": {
-                "embed": self.embed_cover,
-                "max_size": self.cover_max_size,
-            },
-            "filenames": {
-                "lossless": self.filename_lossless,
-                "lossy": self.filename_lossy,
             },
             "network": {
                 "download_timeout": self.network_download_timeout,
@@ -437,11 +316,50 @@ class Config:
             },
         }
 
-    # -- alias regex cache (built from config) -------------------------------
-
     def build_alias_split_re(self) -> re.Pattern[str]:
         sanitized = re.escape(self.alias_split_separators)
         return re.compile(rf"[{sanitized}]+")
+
+
+# -- helpers --
+
+def _check_legacy_format(raw: dict[str, Any]) -> None:
+    legacy_keys = {"lossy", "filenames", "cover", "lyrics"}
+    found = legacy_keys & set(raw.keys())
+    if found:
+        raise RuntimeError(
+            f"旧版配置格式已不再支持。请手动迁移到 preset 格式。"
+            f"检测到旧字段：{sorted(found)}。参见文档。"
+        )
+
+
+def _normalize_preset_dict(d: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for k, v in d.items():
+        result[k] = v
+
+    if "lrc_encodings" in result:
+        enc = result["lrc_encodings"]
+        if isinstance(enc, list):
+            result["lrc_encodings"] = tuple(str(e).strip() for e in enc if str(e).strip())
+            if not result["lrc_encodings"]:
+                result["lrc_encodings"] = ("utf-8",)
+
+    if "metadata_fields" in result:
+        mf = result["metadata_fields"]
+        if isinstance(mf, list):
+            result["metadata_fields"] = tuple(str(f).strip() for f in mf if str(f).strip())
+        elif mf is None:
+            result["metadata_fields"] = ()
+        else:
+            result["metadata_fields"] = ()
+
+    # Remove None-valued optional fields so Preset defaults apply
+    for key in ("format", "bitrate"):
+        if result.get(key) is None and key in result:
+            del result[key]
+
+    return result
 
 
 def _extract_legacy_playlist_ids(raw: dict[str, Any]) -> list[int]:

@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import pytest
 from musicvault.core.config import Config
+from musicvault.core.preset import Preset
 
 
 def test_load_creates_default_file() -> None:
@@ -13,206 +15,137 @@ def test_load_creates_default_file() -> None:
         cfg = Config.load(path)
         assert path.exists()
         assert cfg.workspace == "./workspace"
-        assert cfg.lossy_lrc_encodings == ("utf-8",)
+        assert len(cfg.presets) == 2
+        assert cfg.presets[0].name == "archive"
+        assert cfg.presets[1].name == "portable"
 
 
-def test_load_and_save_roundtrip() -> None:
+def test_load_with_presets() -> None:
     with TemporaryDirectory() as tmp:
         path = Path(tmp) / "config.json"
         path.write_text(
             json.dumps(
                 {
                     "cookie": "abc",
-                    "workspace": "./workspace2",
-                    "playlist_ids": [123, 456],
-                    "force": True,
-                    "include_translation": False,
-                    "text_cleaning": {"enabled": False},
-                    "workers": {"download": 3, "process": 2, "ffmpeg_threads": 5},
-                    "lyrics": {
-                        "lossy_lrc_encodings": ["utf-8-sig", "gb18030"],
-                        "lossless_translation_format": "notimestamp",
-                        "lossy_translation_format": "inline",
-                    },
-                    "lossy": {"bitrate": "256k"},
+                    "workspace": "./ws",
+                    "presets": [
+                        {
+                            "name": "archive",
+                            "quality": "hires",
+                            "format": "flac",
+                            "filename_template": "{artist} - {name}",
+                            "embed_cover": True,
+                            "use_karaoke": True,
+                            "translation_format": "separate",
+                            "write_lrc_file": False,
+                        },
+                        {
+                            "name": "portable",
+                            "quality": "hires",
+                            "format": "mp3",
+                            "bitrate": "192k",
+                            "filename_template": "{alias} {name} - {artist}",
+                            "embed_cover": False,
+                            "write_lrc_file": True,
+                            "lrc_encodings": ["utf-8", "gb18030"],
+                        },
+                    ],
                 }
             ),
             encoding="utf-8",
         )
         cfg = Config.load(path)
         assert cfg.cookie == "abc"
-        assert cfg.workspace == "./workspace2"
-        assert not cfg.include_translation
-        assert cfg.lossless_translation_format == "notimestamp"
-        assert cfg.lossy_translation_format == "inline"
-        assert cfg.lossy_bitrate == "256k"
-        assert not cfg.text_cleaning_enabled
-        assert cfg.download_workers == 3
-        assert cfg.lossy_lrc_encodings == ("utf-8-sig", "gb18030")
+        assert cfg.workspace == "./ws"
+        assert len(cfg.presets) == 2
+        assert cfg.presets[0].name == "archive"
+        assert cfg.presets[0].format == "flac"
+        assert cfg.presets[0].use_karaoke is True
+        assert cfg.presets[1].name == "portable"
+        assert cfg.presets[1].format == "mp3"
+        assert cfg.presets[1].bitrate == "192k"
+        assert cfg.presets[1].lrc_encodings == ("utf-8", "gb18030")
 
-        # 旧 playlist_ids 已迁移到 playlists.json
-        assert cfg.get_playlist_ids() == [123, 456]
 
+def test_roundtrip_presets() -> None:
+    with TemporaryDirectory() as tmp:
+        path = Path(tmp) / "config.json"
+        cfg = Config.load(path)
         cfg.cookie = "xyz"
+        cfg.presets[0].format = "flac"
         cfg.save()
         loaded = json.loads(path.read_text(encoding="utf-8"))
         assert loaded["cookie"] == "xyz"
-        # 保存后 config 中不应再有 playlist_ids
-        assert "playlist_ids" not in loaded
-        assert loaded["lyrics"]["lossless_translation_format"] == "notimestamp"
-        assert loaded["lyrics"]["lossy_translation_format"] == "inline"
-        assert loaded["lossy"]["bitrate"] == "256k"
+        assert len(loaded["presets"]) == 2
+        assert loaded["presets"][0]["name"] == "archive"
+        assert loaded["presets"][1]["name"] == "portable"
 
 
-def test_new_fields_have_defaults() -> None:
-    with TemporaryDirectory() as tmp:
-        path = Path(tmp) / "config.json"
-        cfg = Config.load(path)
-        assert cfg.lossy_bitrate == "192k"
-        assert cfg.lossless_translation_format == "separate"
-        assert cfg.lossy_translation_format == "inline"
-
-
-def test_translation_format_validation() -> None:
-    from musicvault.core.config import Config as Cfg
-
+def test_old_format_raises() -> None:
     with TemporaryDirectory() as tmp:
         path = Path(tmp) / "config.json"
         path.write_text(
-            json.dumps({"lyrics": {"lossless_translation_format": "invalid"}}),
+            json.dumps({
+                "lossy": {"bitrate": "192k", "format": "mp3"},
+                "filenames": {"lossless": "{artist} - {name}", "lossy": "{name}"},
+            }),
             encoding="utf-8",
         )
-        import pytest
+        with pytest.raises(RuntimeError, match="旧版配置"):
+            Config.load(path)
 
-        with pytest.raises(RuntimeError, match="lossless_translation_format"):
-            Cfg.load(path)
 
-    # notimestamp is valid
+def test_ensure_dirs_creates_preset_dirs() -> None:
+    with TemporaryDirectory() as tmp:
+        cfg = Config(workspace=tmp, presets=[
+            Preset(name="archive"),
+            Preset(name="portable"),
+        ])
+        cfg.ensure_dirs()
+        assert (Path(tmp) / "library" / "archive").is_dir()
+        assert (Path(tmp) / "library" / "portable").is_dir()
+        assert (Path(tmp) / "downloads").is_dir()
+        assert (Path(tmp) / "state").is_dir()
+
+
+def test_preset_dir_property() -> None:
+    cfg = Config(workspace="./ws", presets=[Preset(name="archive")])
+    assert cfg.preset_dir("archive") == Path("./ws").resolve() / "library" / "archive"
+
+
+def test_all_global_fields_retained() -> None:
     with TemporaryDirectory() as tmp:
         path = Path(tmp) / "config.json"
         path.write_text(
-            json.dumps({"lyrics": {"lossless_translation_format": "notimestamp", "lossy_translation_format": "notimestamp"}}),
-            encoding="utf-8",
-        )
-        cfg = Cfg.load(path)
-        assert cfg.lossless_translation_format == "notimestamp"
-        assert cfg.lossy_translation_format == "notimestamp"
-
-    # legacy translation_format fallback
-    with TemporaryDirectory() as tmp:
-        path = Path(tmp) / "config.json"
-        path.write_text(
-            json.dumps({"translation_format": "inline"}),
-            encoding="utf-8",
-        )
-        cfg = Cfg.load(path)
-        assert cfg.lossless_translation_format == "inline"
-        assert cfg.lossy_translation_format == "inline"
-
-
-def test_download_quality_validation() -> None:
-    from musicvault.core.config import Config as Cfg
-
-    with TemporaryDirectory() as tmp:
-        path = Path(tmp) / "config.json"
-        path.write_text(json.dumps({"download": {"quality": "ultra_hd"}}), encoding="utf-8")
-        import pytest
-
-        with pytest.raises(RuntimeError, match="download.quality"):
-            Cfg.load(path)
-
-
-def test_lossy_format_validation() -> None:
-    from musicvault.core.config import Config as Cfg
-
-    with TemporaryDirectory() as tmp:
-        path = Path(tmp) / "config.json"
-        path.write_text(json.dumps({"lossy": {"format": "wma"}}), encoding="utf-8")
-        import pytest
-
-        with pytest.raises(RuntimeError, match="lossy.format"):
-            Cfg.load(path)
-
-
-def test_all_new_fields_defaults() -> None:
-    with TemporaryDirectory() as tmp:
-        path = Path(tmp) / "config.json"
-        cfg = Config.load(path)
-        assert cfg.download_quality == "hires"
-        assert cfg.embed_cover is True
-        assert cfg.cover_max_size == 0
-        assert cfg.lyrics_embed_in_metadata is True
-        assert cfg.lyrics_write_lrc_file is True
-        assert cfg.filename_lossless == "{artist} - {name}"
-        assert cfg.filename_lossy == "{alias} {name} - {artist}"
-        assert cfg.network_download_timeout == 30
-        assert cfg.network_max_retries == 3
-        assert cfg.lossy_format == "mp3"
-        assert cfg.keep_downloads is False
-        assert cfg.default_playlist_name == "未分类"
-        assert cfg.ffmpeg_path == ""
-        assert cfg.api_download_url_chunk_size == 200
-        assert cfg.api_track_detail_chunk_size == 500
-        assert cfg.alias_split_separators == "/、;；"
-        assert cfg.metadata_fields == ()
-        assert cfg.build_alias_split_re().pattern == r"[/、;；]+"
-
-
-def test_new_fields_in_roundtrip() -> None:
-    with TemporaryDirectory() as tmp:
-        path = Path(tmp) / "config.json"
-        path.write_text(
-            json.dumps(
-                {
-                    "download": {"quality": "lossless"},
-                    "cover": {"embed": False, "max_size": 100},
-                    "lyrics": {"embed_in_metadata": False, "write_lrc_file": False},
-                    "filenames": {"lossless": "{track_id} - {name}", "lossy": "{name}"},
-                    "network": {"download_timeout": 60, "max_retries": 5},
-                    "lossy": {"format": "opus", "bitrate": "128k"},
-                    "metadata": {"fields": ["year", "genre"]},
-                    "process": {"keep_downloads": True},
-                    "playlist": {"default_name": "其他"},
-                    "ffmpeg": {"path": "/usr/bin/ffmpeg"},
-                    "alias": {"split_separators": "|;"},
-                }
-            ),
+            json.dumps({
+                "workers": {"download": 3, "process": 2, "ffmpeg_threads": 4},
+                "network": {"download_timeout": 60},
+                "process": {"keep_downloads": True},
+                "playlist": {"default_name": "其他"},
+                "ffmpeg": {"path": "/usr/bin/ffmpeg"},
+                "api": {"download_url_chunk_size": 100},
+                "alias": {"split_separators": "|"},
+                "presets": [{"name": "test"}],
+            }),
             encoding="utf-8",
         )
         cfg = Config.load(path)
-        assert cfg.download_quality == "lossless"
-        assert cfg.embed_cover is False
-        assert cfg.cover_max_size == 100
-        assert cfg.lyrics_embed_in_metadata is False
-        assert cfg.lyrics_write_lrc_file is False
-        assert cfg.filename_lossless == "{track_id} - {name}"
-        assert cfg.filename_lossy == "{name}"
+        assert cfg.download_workers == 3
+        assert cfg.process_workers == 2
+        assert cfg.ffmpeg_threads == 4
         assert cfg.network_download_timeout == 60
-        assert cfg.network_max_retries == 5
-        assert cfg.lossy_format == "opus"
-        assert cfg.metadata_fields == ("year", "genre")
         assert cfg.keep_downloads is True
         assert cfg.default_playlist_name == "其他"
         assert cfg.ffmpeg_path == "/usr/bin/ffmpeg"
-        assert cfg.alias_split_separators == "|;"
-
-        cfg.save()
-        loaded = json.loads(path.read_text(encoding="utf-8"))
-        assert loaded["download"]["quality"] == "lossless"
-        assert loaded["cover"] == {"embed": False, "max_size": 100}
-        assert loaded["lyrics"]["embed_in_metadata"] is False
-        assert loaded["lyrics"]["write_lrc_file"] is False
-        assert loaded["lossy"]["format"] == "opus"
-        assert loaded["metadata"]["fields"] == ["year", "genre"]
-        assert loaded["process"]["keep_downloads"] is True
-        assert loaded["playlist"]["default_name"] == "其他"
+        assert cfg.api_download_url_chunk_size == 100
+        assert cfg.alias_split_separators == "|"
 
 
 class TestSongManagement:
     def test_add_and_get_songs(self) -> None:
         with TemporaryDirectory() as tmp:
             ws = Path(tmp)
-            cfg = Config(workspace=str(ws))
+            cfg = Config(workspace=str(ws), presets=[Preset(name="archive")])
             cfg.ensure_dirs()
             assert cfg.get_song_ids() == []
 
@@ -223,7 +156,7 @@ class TestSongManagement:
     def test_add_duplicate(self) -> None:
         with TemporaryDirectory() as tmp:
             ws = Path(tmp)
-            cfg = Config(workspace=str(ws))
+            cfg = Config(workspace=str(ws), presets=[Preset(name="archive")])
             cfg.add_song(100)
             cfg.add_song(100)
             assert cfg.get_song_ids() == [100]
@@ -231,7 +164,7 @@ class TestSongManagement:
     def test_has_song(self) -> None:
         with TemporaryDirectory() as tmp:
             ws = Path(tmp)
-            cfg = Config(workspace=str(ws))
+            cfg = Config(workspace=str(ws), presets=[Preset(name="archive")])
             cfg.add_song(42)
             assert cfg.has_song(42) is True
             assert cfg.has_song(99) is False
@@ -239,7 +172,7 @@ class TestSongManagement:
     def test_remove_song(self) -> None:
         with TemporaryDirectory() as tmp:
             ws = Path(tmp)
-            cfg = Config(workspace=str(ws))
+            cfg = Config(workspace=str(ws), presets=[Preset(name="archive")])
             cfg.add_song(1)
             cfg.add_song(2)
             cfg.remove_song(1)
@@ -248,7 +181,7 @@ class TestSongManagement:
     def test_remove_last_song_deletes_file(self) -> None:
         with TemporaryDirectory() as tmp:
             ws = Path(tmp)
-            cfg = Config(workspace=str(ws))
+            cfg = Config(workspace=str(ws), presets=[Preset(name="archive")])
             cfg.add_song(1)
             assert cfg._songs_path.exists()
             cfg.remove_song(1)
@@ -257,9 +190,9 @@ class TestSongManagement:
     def test_songs_survive_roundtrip(self) -> None:
         with TemporaryDirectory() as tmp:
             ws = Path(tmp)
-            cfg1 = Config(workspace=str(ws))
+            cfg1 = Config(workspace=str(ws), presets=[Preset(name="archive")])
             cfg1.add_song(10)
             cfg1.add_song(20)
 
-            cfg2 = Config(workspace=str(ws))
+            cfg2 = Config(workspace=str(ws), presets=[Preset(name="archive")])
             assert cfg2.get_song_ids() == [10, 20]
