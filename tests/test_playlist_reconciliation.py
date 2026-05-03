@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 from musicvault.core.config import Config
 from musicvault.core.models import Track
+from musicvault.core.preset import Preset
 from musicvault.services.sync_service import SyncService
 
 
@@ -97,16 +98,44 @@ class TestSaveSyncedState:
 
 
 def _make_config(tmp_path: Path) -> Config:
+    from musicvault.core.preset import Preset
+
     cfg = MagicMock(spec=Config)
     cfg.workspace_path = tmp_path
     cfg.synced_state_file = tmp_path / "state" / "synced_tracks.json"
     cfg.processed_state_file = tmp_path / "state" / "processed_files.json"
     cfg.state_dir = tmp_path / "state"
-    cfg.lossless_dir = tmp_path / "library" / "lossless"
-    cfg.lossy_dir = tmp_path / "library" / "lossy"
     cfg.downloads_dir = tmp_path / "downloads"
-    cfg.filename_lossless = "{artist} - {name}"
-    cfg.filename_lossy = "{alias} {name} - {artist}"
+    cfg.library_dir = tmp_path / "library"
+    cfg.preset_dir = lambda name: tmp_path / "library" / name
+    cfg.presets = [
+        Preset(
+            name="archive",
+            quality="hires",
+            format="flac",
+            filename_template="{artist} - {name}",
+            embed_cover=True,
+            embed_lyrics=True,
+            use_karaoke=True,
+            include_translation=True,
+            translation_format="separate",
+            write_lrc_file=False,
+        ),
+        Preset(
+            name="portable",
+            quality="hires",
+            format="mp3",
+            bitrate="192k",
+            filename_template="{alias} {name} - {artist}",
+            embed_cover=False,
+            embed_lyrics=False,
+            use_karaoke=False,
+            include_translation=True,
+            translation_format="inline",
+            write_lrc_file=True,
+            lrc_encodings=("utf-8", "gb18030"),
+        ),
+    ]
     return cfg
 
 
@@ -181,7 +210,7 @@ class TestReconcilePlaylistChanged:
         # 创建 canonical 源文件
         flac_src = cfg.downloads_dir / "123.flac"
         mp3_src = cfg.downloads_dir / "123.mp3"
-        lrc_src = cfg.downloads_dir / "123.lrc"
+        lrc_src = cfg.downloads_dir / "123.portable.lrc"
         flac_src.write_text("flac")
         mp3_src.write_text("mp3")
         lrc_src.write_text("lrc")
@@ -190,9 +219,9 @@ class TestReconcilePlaylistChanged:
         svc._reconcile_playlist_assignments({123: [10, 20]}, _make_playlist_index(), {123: track})
 
         # B 目录中应有链接
-        assert (cfg.lossless_dir / "歌单B" / "Test Artist - Test Song.flac").exists()
-        assert (cfg.lossy_dir / "歌单B" / "Test Song - Test Artist.mp3").exists()
-        assert (cfg.lossy_dir / "歌单B" / "Test Song - Test Artist.lrc").exists()
+        assert (cfg.preset_dir("archive") / "歌单B" / "Test Artist - Test Song.flac").exists()
+        assert (cfg.preset_dir("portable") / "歌单B" / "Test Song - Test Artist.mp3").exists()
+        assert (cfg.preset_dir("portable") / "歌单B" / "Test Song - Test Artist.lrc").exists()
 
         # 状态已更新
         result = SyncService._load_synced_state(cfg)
@@ -211,19 +240,19 @@ class TestReconcilePlaylistChanged:
         (cfg.downloads_dir / "123.mp3").write_text("mp3")
 
         # 在 B 目录创建现有链接
-        b_ll = cfg.lossless_dir / "歌单B" / "Test Artist - Test Song.flac"
-        b_ly = cfg.lossy_dir / "歌单B" / "Test Song - Test Artist.mp3"
-        b_ll.parent.mkdir(parents=True)
-        b_ly.parent.mkdir(parents=True)
-        b_ll.write_text("flac")
-        b_ly.write_text("mp3")
+        b_arc = cfg.preset_dir("archive") / "歌单B" / "Test Artist - Test Song.flac"
+        b_port = cfg.preset_dir("portable") / "歌单B" / "Test Song - Test Artist.mp3"
+        b_arc.parent.mkdir(parents=True)
+        b_port.parent.mkdir(parents=True)
+        b_arc.write_text("flac")
+        b_port.write_text("mp3")
 
         svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
         svc._reconcile_playlist_assignments({123: [10]}, _make_playlist_index(), {123: track})
 
         # B 目录中的链接应被删除
-        assert not b_ll.exists()
-        assert not b_ly.exists()
+        assert not b_arc.exists()
+        assert not b_port.exists()
 
         # A 目录不受影响（没有创建因为 canonical 文件不在 A）
         result = SyncService._load_synced_state(cfg)
@@ -243,7 +272,7 @@ class TestReconcilePlaylistChanged:
         svc._reconcile_playlist_assignments({123: [10, 20]}, _make_playlist_index(), {123: track})
 
         # 不应创建任何链接（canonical 缺失）
-        b_dir = cfg.lossless_dir / "歌单B"
+        b_dir = cfg.preset_dir("archive") / "歌单B"
         assert not b_dir.exists() or not any(b_dir.iterdir())
 
 
@@ -253,34 +282,47 @@ class TestReconcilePlaylistChanged:
 
 
 class TestLinkNames:
-    def test_lossless_link_name(self) -> None:
+    def test_link_name_archive(self) -> None:
         cfg = MagicMock(spec=Config)
-        cfg.filename_lossless = "{artist} - {name}"
+        cfg.presets = []
         svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
         track = Track(id=1, name="Song", artists=["Artist"], album="A", cover_url=None, raw={})
-        name = svc._lossless_link_name(track)
+        preset = Preset(name="archive", format="flac", filename_template="{artist} - {name}")
+        name = svc._link_name(track, preset, ".flac")
         assert name == "Artist - Song.flac"
 
-    def test_lossy_link_name(self) -> None:
+    def test_link_name_portable_no_alias(self) -> None:
         cfg = MagicMock(spec=Config)
-        cfg.filename_lossy = "{alias} {name} - {artist}"
+        cfg.presets = []
         svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
         track = Track(id=1, name="Song", artists=["Artist"], album="A", cover_url=None, raw={})
-        name = svc._lossy_link_name(track)
+        preset = Preset(
+            name="portable", format="mp3", bitrate="192k",
+            filename_template="{alias} {name} - {artist}",
+        )
+        name = svc._link_name(track, preset, ".mp3")
         assert name == "Song - Artist.mp3"
 
-    def test_lossy_link_name_with_alias(self) -> None:
+    def test_link_name_portable_with_alias(self) -> None:
         cfg = MagicMock(spec=Config)
-        cfg.filename_lossy = "{alias} {name} - {artist}"
+        cfg.presets = []
         svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
         track = Track(id=1, name="Song", artists=["Artist"], album="A", aliases=["Alias"], cover_url=None, raw={})
-        name = svc._lossy_link_name(track)
+        preset = Preset(
+            name="portable", format="mp3", bitrate="192k",
+            filename_template="{alias} {name} - {artist}",
+        )
+        name = svc._link_name(track, preset, ".mp3")
         assert name == "Alias Song - Artist.mp3"
 
-    def test_lossy_link_name_no_alias(self) -> None:
+    def test_link_name_portable_no_alias_again(self) -> None:
         cfg = MagicMock(spec=Config)
-        cfg.filename_lossy = "{alias} {name} - {artist}"
+        cfg.presets = []
         svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
         track = Track(id=1, name="Song", artists=["Artist"], album="A", cover_url=None, raw={})
-        name = svc._lossy_link_name(track)
+        preset = Preset(
+            name="portable", format="mp3", bitrate="192k",
+            filename_template="{alias} {name} - {artist}",
+        )
+        name = svc._link_name(track, preset, ".mp3")
         assert name == "Song - Artist.mp3"
