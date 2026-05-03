@@ -268,7 +268,7 @@ class Config:
                     "bitrate": p.bitrate,
                     "filename_template": p.filename_template,
                     "embed_cover": p.embed_cover,
-                    "cover_max_size": p.cover_max_size if p.cover_max_size else None,
+                    "cover_max_size": p.cover_max_size,
                     "embed_lyrics": p.embed_lyrics,
                     "metadata_fields": list(p.metadata_fields) if p.metadata_fields else None,
                     "use_karaoke": p.use_karaoke,
@@ -344,6 +344,8 @@ def _normalize_preset_dict(d: dict[str, Any]) -> dict[str, Any]:
             result["lrc_encodings"] = tuple(str(e).strip() for e in enc if str(e).strip())
             if not result["lrc_encodings"]:
                 result["lrc_encodings"] = ("utf-8",)
+        elif enc is None:
+            result["lrc_encodings"] = ("utf-8",)
 
     if "metadata_fields" in result:
         mf = result["metadata_fields"]
