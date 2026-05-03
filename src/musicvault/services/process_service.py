@@ -397,11 +397,13 @@ class ProcessService:
             return
 
         playlist_index = load_json(self.cfg.state_dir / "playlists.json", {})
+        logger.info("正在获取曲目详情与歌单数据...")
         detail_map = self.api.get_tracks_detail([track_id for _, track_id in pending])
+        track_playlist_map = self._build_track_playlist_map()
         tasks: list[tuple[Path, Track, list[str]]] = []
         for raw_file, track_id in pending:
             track_info = detail_map.get(track_id) or self._fallback_track(track_id, raw_file.stem)
-            pids = self._build_track_playlist_map().get(track_id, [])
+            pids = track_playlist_map.get(track_id, [])
             names = self._resolve_playlist_names(pids, playlist_index)
             tasks.append((raw_file, track_info, names))
 
@@ -409,7 +411,10 @@ class ProcessService:
 
     def _build_track_playlist_map(self) -> dict[int, list[int]]:
         mapping: dict[int, list[int]] = {}
-        for pid in self.cfg.get_playlist_ids():
+        playlist_ids = self.cfg.get_playlist_ids()
+        if playlist_ids:
+            logger.info("正在获取 %s 个歌单的曲目列表...", len(playlist_ids))
+        for pid in playlist_ids:
             try:
                 tracks = self.api.get_playlist_tracks(pid)
             except Exception:
