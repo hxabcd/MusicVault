@@ -33,25 +33,8 @@ from mutagen.mp3 import MP3
 from musicvault.core.models import Track
 
 
-_COVER_FETCH_TIMEOUT = 15
-
-
 class MetadataWriter:
-    """音频标签写入器"""
-
-    def __init__(
-        self,
-        embed_cover: bool = True,
-        embed_lyrics: bool = True,
-        cover_timeout: int = 15,
-        cover_max_size: int = 0,
-        metadata_fields: tuple[str, ...] = (),
-    ) -> None:
-        self.embed_cover = embed_cover
-        self.embed_lyrics = embed_lyrics
-        self.cover_timeout = cover_timeout
-        self.cover_max_size = cover_max_size
-        self.metadata_fields = set(metadata_fields) if metadata_fields else set()
+    def __init__(self) -> None:
         self._cover_cache: dict[str, bytes] = {}
         self._cover_cache_lock = threading.Lock()
 
@@ -59,17 +42,103 @@ class MetadataWriter:
         self,
         audio_file: Path,
         track: Track,
+        *,
         lyric_text: str | None = None,
-        is_lossless: bool = False,
+        embed_cover: bool = True,
+        embed_lyrics: bool = True,
+        cover_timeout: int = 15,
+        cover_max_size: int = 0,
+        metadata_fields: frozenset[str] = frozenset(),
     ) -> None:
-        """根据文件格式写入元数据与歌词"""
-        if audio_file.suffix.lower() == ".mp3":
-            self._write_mp3(audio_file, track, lyric_text, is_lossless=is_lossless)
-        elif audio_file.suffix.lower() == ".flac":
-            self._write_flac(audio_file, track, lyric_text, is_lossless)
+        """写入元数据到音频文件。policy 由 caller 决定。"""
+        cover_data: bytes | None = None
+        if embed_cover:
+            cover_data = self._download_cover(track.cover_url, cover_timeout, cover_max_size)
 
-    def _download_cover(self, url: str | None) -> bytes | None:
-        # 封面下载失败不阻断主流程；同一 URL 成功后命中缓存。
+        if audio_file.suffix.lower() == ".mp3":
+            self._write_mp3(audio_file, track, lyric_text, cover_data, embed_lyrics, metadata_fields)
+        elif audio_file.suffix.lower() == ".flac":
+            self._write_flac(audio_file, track, lyric_text, cover_data, embed_lyrics, metadata_fields)
+
+    # ------------------------------------------------------------------
+    # MP3
+    # ------------------------------------------------------------------
+
+    def _write_mp3(
+        self, path: Path, track: Track, lyric_text: str | None,
+        cover_data: bytes | None, embed_lyrics: bool, metadata_fields: frozenset[str],
+    ) -> None:
+        audio = MP3(str(path))
+        tags = audio.tags or ID3()
+        tags.clear()
+
+        self._set_id3_text(tags, "TIT2", TIT2, track.name)
+        self._set_id3_text(tags, "TPE1", TPE1, track.artist_text)
+        self._set_id3_text(tags, "TALB", TALB, track.album)
+
+        extras = self._build_extra_metadata(track, metadata_fields)
+        self._set_id3_text(tags, "TDRC", TDRC, extras.get("year"))
+        self._set_id3_text(tags, "TRCK", TRCK, extras.get("track_number"))
+        self._set_id3_text(tags, "TPOS", TPOS, extras.get("disc_number"))
+        self._set_id3_text(tags, "TCON", TCON, extras.get("genre"))
+        self._set_id3_text(tags, "TPE2", TPE2, extras.get("album_artist"))
+        self._set_id3_text(tags, "TCOM", TCOM, extras.get("composer"))
+        self._set_id3_text(tags, "TEXT", TEXT, extras.get("lyricist"))
+        self._set_id3_comment(tags, extras.get("comment"))
+
+        if embed_lyrics and lyric_text:
+            tags.delall("USLT")
+            tags.add(USLT(encoding=3, lang="eng", desc="", text=lyric_text))
+
+        if cover_data:
+            tags.delall("APIC")
+            tags.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover", data=cover_data))
+
+        audio.tags = tags
+        audio.save(v2_version=3)
+
+    # ------------------------------------------------------------------
+    # FLAC
+    # ------------------------------------------------------------------
+
+    def _write_flac(
+        self, path: Path, track: Track, lyric_text: str | None,
+        cover_data: bytes | None, embed_lyrics: bool, metadata_fields: frozenset[str],
+    ) -> None:
+        audio = FLAC(str(path))
+        audio["title"] = track.name
+        audio["artist"] = track.artist_text
+        audio["album"] = track.album
+
+        extras = self._build_extra_metadata(track, metadata_fields)
+        self._set_vorbis_text(audio, "date", extras.get("year"))
+        self._set_vorbis_text(audio, "tracknumber", extras.get("track_number"))
+        self._set_vorbis_text(audio, "discnumber", extras.get("disc_number"))
+        self._set_vorbis_text(audio, "genre", extras.get("genre"))
+        self._set_vorbis_text(audio, "albumartist", extras.get("album_artist"))
+        self._set_vorbis_text(audio, "composer", extras.get("composer"))
+        self._set_vorbis_text(audio, "lyricist", extras.get("lyricist"))
+        self._set_vorbis_text(audio, "comment", extras.get("comment"))
+
+        if embed_lyrics and lyric_text:
+            audio["lyrics"] = lyric_text
+            audio["description"] = "Synced by MusicVault"
+
+        if cover_data:
+            pic = Picture()
+            pic.type = 3
+            pic.mime = "image/jpeg"
+            pic.data = cover_data
+            audio.clear_pictures()
+            audio.add_picture(pic)
+
+        audio.save()
+
+    # ------------------------------------------------------------------
+    # Cover download (internal, cached)
+    # ------------------------------------------------------------------
+
+    def _download_cover(self, url: str | None, timeout: int, max_size: int) -> bytes | None:
         if not url:
             return None
         with self._cover_cache_lock:
@@ -77,18 +146,18 @@ class MetadataWriter:
         if cached:
             return cached
 
-        data = self._fetch_cover(url)
+        data = self._fetch_cover(url, timeout)
         if not data:
             return None
 
-        if self.cover_max_size > 0:
-            data = self._resize_cover(data)
+        if max_size > 0:
+            data = self._resize_cover(data, max_size)
 
         with self._cover_cache_lock:
             self._cover_cache[url] = data
         return data
 
-    def _resize_cover(self, data: bytes) -> bytes:
+    def _resize_cover(self, data: bytes, max_size: int) -> bytes:
         try:
             img = Image.open(BytesIO(data))
         except Exception:
@@ -96,10 +165,10 @@ class MetadataWriter:
 
         width, height = img.size
         max_dim = max(width, height)
-        if max_dim <= self.cover_max_size:
+        if max_dim <= max_size:
             return data
 
-        ratio = self.cover_max_size / max_dim
+        ratio = max_size / max_dim
         new_size = (int(width * ratio), int(height * ratio))
         img = img.resize(new_size, Image.LANCZOS)
 
@@ -110,20 +179,19 @@ class MetadataWriter:
         img.save(buf, format="JPEG", quality=85)
         return buf.getvalue()
 
-    def _fetch_cover(self, url: str) -> bytes | None:
+    def _fetch_cover(self, url: str, timeout: int) -> bytes | None:
         headers = {
             "User-Agent": "MusicVault/1.0",
             "Accept": "image/*,*/*;q=0.8",
             "Connection": "close",
         }
-        # 网络抖动或偶发 5xx 时重试，4xx 直接失败。
         backoff_seconds = (0.0, 0.5, 1.5)
         for sleep_seconds in backoff_seconds:
             if sleep_seconds > 0:
                 time.sleep(sleep_seconds)
             req = Request(url, headers=headers, method="GET")
             try:
-                with urlopen(req, timeout=self.cover_timeout) as resp:  # nosec B310
+                with urlopen(req, timeout=timeout) as resp:  # nosec B310
                     return resp.read()
             except HTTPError as exc:
                 if 400 <= exc.code < 500 and exc.code not in {408, 429}:
@@ -132,116 +200,11 @@ class MetadataWriter:
                 pass
         return None
 
-    def _write_mp3(self, path: Path, track: Track, lyric_text: str | None, is_lossless: bool) -> None:
-        # 1. 所有 mp3 均写标题/艺术家/专辑；lossy 仅保留这三项。
-        audio = MP3(str(path))
-        tags = audio.tags or ID3()
-        if not is_lossless:
-            tags.clear()
-        self._set_id3_text(tags, "TIT2", TIT2, track.name)
-        self._set_id3_text(tags, "TPE1", TPE1, track.artist_text)
-        self._set_id3_text(tags, "TALB", TALB, track.album)
+    # ------------------------------------------------------------------
+    # Extra metadata builders
+    # ------------------------------------------------------------------
 
-        if is_lossless:
-            # 2. lossless 额外补充扩展字段（年份、轨道号、作曲等）。
-            extras = self._build_extra_metadata(track)
-            self._set_id3_text(tags, "TDRC", TDRC, extras.get("year"))
-            self._set_id3_text(tags, "TRCK", TRCK, extras.get("track_number"))
-            self._set_id3_text(tags, "TPOS", TPOS, extras.get("disc_number"))
-            self._set_id3_text(tags, "TCON", TCON, extras.get("genre"))
-            self._set_id3_text(tags, "TPE2", TPE2, extras.get("album_artist"))
-            self._set_id3_text(tags, "TCOM", TCOM, extras.get("composer"))
-            self._set_id3_text(tags, "TEXT", TEXT, extras.get("lyricist"))
-            self._set_id3_comment(tags, extras.get("comment"))
-
-            # 3. 仅在 lossless 写嵌入歌词和封面（受配置控制）。
-            tags.delall("USLT")
-            if self.embed_lyrics and lyric_text:
-                tags.add(USLT(encoding=3, lang="eng", desc="", text=lyric_text))
-
-            if self.embed_cover:
-                cover = self._download_cover(track.cover_url)
-                if cover:
-                    tags.delall("APIC")
-                    tags.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover", data=cover))
-
-        # 4. 回写 ID3 标签。
-        audio.tags = tags
-        audio.save(v2_version=3)
-
-    def _write_flac(self, path: Path, track: Track, lyric_text: str | None, is_lossless: bool) -> None:
-        # 1. 基础字段始终写入。
-        audio = FLAC(str(path))
-        audio["title"] = track.name
-        audio["artist"] = track.artist_text
-        audio["album"] = track.album
-
-        if is_lossless:
-            # 2. lossless 写扩展字段。
-            extras = self._build_extra_metadata(track)
-            self._set_vorbis_text(audio, "date", extras.get("year"))
-            self._set_vorbis_text(audio, "tracknumber", extras.get("track_number"))
-            self._set_vorbis_text(audio, "discnumber", extras.get("disc_number"))
-            self._set_vorbis_text(audio, "genre", extras.get("genre"))
-            self._set_vorbis_text(audio, "albumartist", extras.get("album_artist"))
-            self._set_vorbis_text(audio, "composer", extras.get("composer"))
-            self._set_vorbis_text(audio, "lyricist", extras.get("lyricist"))
-            self._set_vorbis_text(audio, "comment", extras.get("comment"))
-        else:
-            # 2. lossy 模式下清理扩展字段，避免历史脏标签残留。
-            for key in (
-                "date",
-                "tracknumber",
-                "discnumber",
-                "genre",
-                "albumartist",
-                "composer",
-                "lyricist",
-                "comment",
-                "description",
-                "lyrics",
-            ):
-                if key in audio:
-                    del audio[key]
-
-        # 3. 仅在有歌词且配置启用时写歌词。
-        if self.embed_lyrics and lyric_text:
-            audio["lyrics"] = lyric_text
-            if is_lossless:
-                audio["description"] = "Synced by MusicVault"
-
-        # 4. 按需覆盖封面并保存（受配置控制）。
-        if self.embed_cover:
-            cover = self._download_cover(track.cover_url)
-            if cover:
-                pic = Picture()
-                pic.type = 3
-                pic.mime = "image/jpeg"
-                pic.data = cover
-                audio.clear_pictures()
-                audio.add_picture(pic)
-        audio.save()
-
-    @staticmethod
-    def _set_id3_text(tags: ID3, frame_id: str, frame_cls: type, value: str | None) -> None:
-        tags.delall(frame_id)
-        if value:
-            tags.add(frame_cls(encoding=3, text=str(value)))
-
-    @staticmethod
-    def _set_id3_comment(tags: ID3, comment: str | None) -> None:
-        tags.delall("COMM")
-        if comment:
-            tags.add(COMM(encoding=3, lang="eng", desc="", text=comment))
-
-    @staticmethod
-    def _set_vorbis_text(audio: FLAC, key: str, value: str | None) -> None:
-        if value:
-            audio[key] = str(value)
-        elif key in audio:
-            del audio[key]
-
-    def _build_extra_metadata(self, track: Track) -> dict[str, str | None]:
+    def _build_extra_metadata(self, track: Track, fields: frozenset[str]) -> dict[str, str | None]:
         raw = track.raw or {}
         extras = {
             "year": self._extract_year(raw),
@@ -253,8 +216,8 @@ class MetadataWriter:
             "lyricist": self._extract_named_people(raw.get("lyricist")),
             "comment": self._extract_comment(raw, track),
         }
-        if self.metadata_fields:
-            return {k: v for k, v in extras.items() if k in self.metadata_fields}
+        if fields:
+            return {k: v for k, v in extras.items() if k in fields}
         return extras
 
     def _extract_year(self, raw: dict[str, object]) -> str | None:
@@ -349,7 +312,6 @@ class MetadataWriter:
 
     @staticmethod
     def _extract_comment(raw: dict[str, object], track: Track) -> str | None:
-        # 网易云优先取 tns（翻译名），再回退 alia（别名）与 Track aliases。
         tns = raw.get("tns")
         if isinstance(tns, list):
             names = [str(item).strip() for item in tns if str(item).strip()]
@@ -365,3 +327,26 @@ class MetadataWriter:
         if track.aliases:
             return "/".join(alias for alias in track.aliases if alias)
         return None
+
+    # ------------------------------------------------------------------
+    # Tag helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _set_id3_text(tags: ID3, frame_id: str, frame_cls: type, value: str | None) -> None:
+        tags.delall(frame_id)
+        if value:
+            tags.add(frame_cls(encoding=3, text=str(value)))
+
+    @staticmethod
+    def _set_id3_comment(tags: ID3, comment: str | None) -> None:
+        tags.delall("COMM")
+        if comment:
+            tags.add(COMM(encoding=3, lang="eng", desc="", text=comment))
+
+    @staticmethod
+    def _set_vorbis_text(audio: FLAC, key: str, value: str | None) -> None:
+        if value:
+            audio[key] = str(value)
+        elif key in audio:
+            del audio[key]
