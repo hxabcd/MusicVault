@@ -9,6 +9,7 @@ from musicvault.adapters.processors.downloader import Downloader
 from musicvault.adapters.providers.pyncm_client import PyncmClient
 from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
+from musicvault.core.preset import Preset, audio_spec_key
 from musicvault.shared.output import warn as output_warn
 from musicvault.shared.tui_progress import BatchProgress, console
 from musicvault.shared.utils import (
@@ -138,7 +139,7 @@ class SyncService:
     def _cleanup_stale_state(self) -> None:
         """清理 canonical 文件已不存在的过期索引条目，避免阻止重新下载。
 
-        processed_files.json 格式：key 为 track_id 字符串，value 含 flac/mp3/lrc 路径。
+        processed_files.json 格式：key 为 track_id 字符串，value 含 audios 字典或旧版 flac/mp3/source 等字段。
         检查对应文件是否存在，不存在则从索引中移除。
         """
         processed = load_json(self.cfg.processed_state_file, {})
@@ -150,15 +151,24 @@ class SyncService:
             if not isinstance(value, dict):
                 continue
 
-            flac_rel = value.get("flac") or value.get("lossless")
-            mp3_rel = value.get("mp3")
-            source_rel = value.get("source")
+            has_any = False
+            # 新版格式：{"audios": {"FLAC": "relative/path", ...}}
+            audios = value.get("audios")
+            if isinstance(audios, dict):
+                for _spec_key, rel in audios.items():
+                    if isinstance(rel, str) and (self.cfg.workspace_path / rel).exists():
+                        has_any = True
+                        break
 
-            flac_exists = isinstance(flac_rel, str) and (self.cfg.workspace_path / flac_rel).exists()
-            mp3_exists = isinstance(mp3_rel, str) and (self.cfg.workspace_path / mp3_rel).exists()
-            source_exists = isinstance(source_rel, str) and (self.cfg.workspace_path / source_rel).exists()
+            # 旧版格式兼容（flac / mp3 / lossless / source / lrc）
+            if not has_any:
+                for field in ("flac", "mp3", "lossless", "source", "lrc"):
+                    rel = value.get(field)
+                    if isinstance(rel, str) and (self.cfg.workspace_path / rel).exists():
+                        has_any = True
+                        break
 
-            if flac_exists or mp3_exists or source_exists:
+            if has_any:
                 continue
 
             try:
@@ -185,8 +195,8 @@ class SyncService:
             return
 
         # 删除旧 library 目录（仅含硬链接，直接 rmtree）
-        for parent in (self.cfg.lossless_dir, self.cfg.lossy_dir):
-            old_dir = parent / old_safe
+        for preset in self.cfg.presets:
+            old_dir = self.cfg.preset_dir(preset.name) / old_safe
             if old_dir.is_dir():
                 shutil.rmtree(old_dir)
 
@@ -198,17 +208,19 @@ class SyncService:
             track = all_tracks.get(track_id)
             if track is None:
                 continue
-            flac_src = self._find_lossless_canonical(track_id)
-            mp3_src = self.cfg.downloads_dir / f"{track_id}.mp3"
-            if not flac_src or not mp3_src.exists():
-                continue
-            ll_dst = self.cfg.lossless_dir / new_safe / self._lossless_link_name(track, flac_src.suffix)
-            ly_dst = self.cfg.lossy_dir / new_safe / self._lossy_link_name(track)
-            create_link(flac_src, ll_dst)
-            create_link(mp3_src, ly_dst)
-            lrc_src = mp3_src.with_suffix(".lrc")
-            if lrc_src.exists():
-                create_link(lrc_src, ly_dst.with_suffix(".lrc"))
+
+            for preset in self.cfg.presets:
+                spec_key = audio_spec_key(preset.format, preset.bitrate)
+                audio_src = self._find_canonical_for_spec(track_id, spec_key)
+                if not audio_src:
+                    continue
+                dst = self.cfg.preset_dir(preset.name) / new_safe / self._link_name(track, preset, audio_src.suffix)
+                create_link(audio_src, dst)
+
+                if preset.write_lrc_file:
+                    lrc_src = audio_src.with_name(f"{track_id}.{preset.name}.lrc")
+                    if lrc_src.exists():
+                        create_link(lrc_src, dst.with_suffix(".lrc"))
 
         logger.info("歌单 '%s' 已重命名为 '%s'，已迁移本地目录", old_name, new_name)
 
@@ -241,9 +253,16 @@ class SyncService:
             if track is None:
                 continue
 
-            flac_src = self._find_lossless_canonical(track_id)
-            mp3_src = self.cfg.downloads_dir / f"{track_id}.mp3"
-            if not flac_src or not mp3_src.exists():
+            # 从 download 目录中的 canonical 文件构建 audio_map
+            audio_map: dict[str, Path] = {}
+            for preset in self.cfg.presets:
+                spec_key = audio_spec_key(preset.format, preset.bitrate)
+                if spec_key not in audio_map:
+                    src = self._find_canonical_for_spec(track_id, spec_key)
+                    if src:
+                        audio_map[spec_key] = src
+
+            if not audio_map:
                 continue
 
             # 删除已移除歌单的链接
@@ -252,7 +271,7 @@ class SyncService:
 
             # 创建新增歌单的链接
             for name in new_names - old_names:
-                self._create_track_links(flac_src, mp3_src, track, name)
+                self._create_track_links(audio_map, track, name)
 
         # 写回更新后的歌单分配
         new_map = dict(old_map)
@@ -261,28 +280,59 @@ class SyncService:
                 new_map[track_id] = sorted(new_pids)
         self._save_synced_state(self.cfg, new_map)
 
-    def _create_track_links(self, flac_src: Path, mp3_src: Path, track: Track, dirname: str) -> None:
-        """在 library 中为一个歌单目录创建硬链接（人类可读文件名）。"""
-        ll_dir = self.cfg.lossless_dir / dirname
-        ly_dir = self.cfg.lossy_dir / dirname
-        create_link(flac_src, ll_dir / self._lossless_link_name(track, flac_src.suffix))
-        create_link(mp3_src, ly_dir / self._lossy_link_name(track))
-        lrc_src = mp3_src.with_suffix(".lrc")
-        if lrc_src.exists():
-            create_link(lrc_src, ly_dir / self._lossy_link_name(track, suffix=".lrc"))
+    def _create_track_links(self, audio_map: dict[str, Path], track: Track, dirname: str) -> None:
+        """在 library 中各 preset 目录下创建硬链接（人类可读文件名）。"""
+        for preset in self.cfg.presets:
+            spec_key = audio_spec_key(preset.format, preset.bitrate)
+            audio_src = audio_map.get(spec_key)
+            if not audio_src:
+                continue
+            dst_dir = self.cfg.preset_dir(preset.name) / dirname
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            create_link(audio_src, dst_dir / self._link_name(track, preset, audio_src.suffix))
+            if preset.write_lrc_file:
+                lrc_src = audio_src.with_name(f"{track.id}.{preset.name}.lrc")
+                if lrc_src.exists():
+                    create_link(lrc_src, dst_dir / self._link_name(track, preset, ".lrc"))
 
     def _remove_track_links(self, track: Track, dirname: str) -> None:
-        """删除 library 中一个歌单目录下的硬链接（尝试 .flac / .mp3 两种扩展名）。"""
-        for suffix in (".flac", ".mp3"):
-            remove_link(self.cfg.lossless_dir / dirname / self._lossless_link_name(track, suffix))
-        ly_name = self._lossy_link_name(track)
-        remove_link(self.cfg.lossy_dir / dirname / ly_name)
-        remove_link(self.cfg.lossy_dir / dirname / ly_name.replace(".mp3", ".lrc"))
+        """删除 library 中各 preset 目录下的硬链接。"""
+        for preset in self.cfg.presets:
+            p_dir = self.cfg.preset_dir(preset.name)
+            if preset.format:
+                ext_map = {"flac": ".flac", "mp3": ".mp3", "aac": ".m4a", "ogg": ".ogg", "opus": ".opus"}
+                ext = ext_map.get(preset.format, f".{preset.format}")
+                remove_link(p_dir / dirname / self._link_name(track, preset, ext))
+            else:
+                # ORIGINAL spec：不确定扩展名，尝试常见格式
+                for ext in (".flac", ".mp3", ".m4a", ".ogg", ".opus"):
+                    remove_link(p_dir / dirname / self._link_name(track, preset, ext))
+            if preset.write_lrc_file:
+                remove_link(p_dir / dirname / self._link_name(track, preset, ".lrc"))
 
-    def _find_lossless_canonical(self, track_id: int) -> Path | None:
-        """查找 lossless canonical 文件（.flac 或 .mp3）。"""
-        for ext in (".flac", ".mp3"):
-            p = self.cfg.downloads_dir / f"{track_id}{ext}"
+    def _find_canonical_for_spec(self, track_id: int, spec_key: str) -> Path | None:
+        """查找符合指定 spec_key 的 canonical 文件（downloads 目录中）。"""
+        if spec_key == "ORIGINAL":
+            for ext in (".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav"):
+                p = self.cfg.downloads_dir / f"{track_id}{ext}"
+                if p.exists():
+                    return p
+            return None
+
+        parts = spec_key.split("-", 1)
+        fmt = parts[0].lower()
+        bitrate = parts[1] if len(parts) > 1 else None
+        ext_map = {"flac": ".flac", "mp3": ".mp3", "aac": ".m4a", "ogg": ".ogg", "opus": ".opus"}
+        ext = ext_map.get(fmt, f".{fmt}")
+
+        # 先尝试带 bitrate 后缀，再尝试无 bitrate
+        candidates: list[str] = []
+        if bitrate:
+            candidates.append(f"{track_id}_{bitrate}{ext}")
+        candidates.append(f"{track_id}{ext}")
+
+        for name in candidates:
+            p = self.cfg.downloads_dir / name
             if p.exists():
                 return p
         return None
@@ -291,12 +341,8 @@ class SyncService:
     # 链接文件名（与 ProcessService 保持一致）
     # ------------------------------------------------------------------
 
-    def _lossless_link_name(self, track: Track, suffix: str = ".flac") -> str:
-        stem = format_track_name(self.cfg.filename_lossless, track)
-        return stem + suffix
-
-    def _lossy_link_name(self, track: Track, suffix: str = ".mp3") -> str:
-        stem = format_track_name(self.cfg.filename_lossy, track)
+    def _link_name(self, track: Track, preset: Preset, suffix: str = "") -> str:
+        stem = format_track_name(preset.filename_template, track)
         return stem + suffix
 
     def _pid_to_dirname(self, pid: int, playlist_index: dict[str, dict[str, object]]) -> str:
@@ -322,20 +368,45 @@ class SyncService:
 
         removed_count = 0
         for track_id in stale_ids:
+            # 收集 canonical 文件 inode（删除前）
+            canonical_inodes: set[tuple[int, int]] = set()
+            for ext in (".flac", ".mp3", ".m4a", ".ogg", ".opus"):
+                p = self.cfg.downloads_dir / f"{track_id}{ext}"
+                if p.exists():
+                    try:
+                        st = p.stat()
+                        canonical_inodes.add((st.st_dev, st.st_ino))
+                    except OSError:
+                        pass
+
             # 删除 canonical 文件
-            for ext in (".flac", ".mp3", ".lrc"):
+            for ext in (".flac", ".mp3", ".m4a", ".ogg", ".opus", ".lrc"):
                 (self.cfg.downloads_dir / f"{track_id}{ext}").unlink(missing_ok=True)
-            # 删除所有 library 链接（遍历歌单目录）
-            for parent in (self.cfg.lossless_dir, self.cfg.lossy_dir):
-                if not parent.is_dir():
-                    continue
-                for pl_dir in parent.iterdir():
-                    if not pl_dir.is_dir():
+            # 删除带 bitrate 后缀的 canonical 文件（如 12345_192k.mp3）
+            if self.cfg.downloads_dir.is_dir():
+                for f in list(self.cfg.downloads_dir.iterdir()):
+                    if f.is_file() and f.stem.startswith(f"{track_id}_"):
+                        f.unlink(missing_ok=True)
+
+            # 通过 inode 匹配删除所有 preset 目录下的 library 链接
+            if canonical_inodes:
+                for preset in self.cfg.presets:
+                    parent = self.cfg.preset_dir(preset.name)
+                    if not parent.is_dir():
                         continue
-                    for ext in (".flac", ".mp3", ".lrc"):
-                        link = pl_dir / f"{track_id}{ext}"
-                        if link.exists():
-                            link.unlink(missing_ok=True)
+                    for pl_dir in parent.iterdir():
+                        if not pl_dir.is_dir():
+                            continue
+                        for f in list(pl_dir.iterdir()):
+                            if not f.is_file():
+                                continue
+                            try:
+                                st = f.stat()
+                                if (st.st_dev, st.st_ino) in canonical_inodes:
+                                    f.unlink()
+                            except OSError:
+                                continue
+
             state_map.pop(track_id, None)
             removed_count += 1
 

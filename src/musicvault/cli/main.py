@@ -71,7 +71,6 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--cookie", default=None, help="网易云 Cookie 字符串")
     parser.add_argument("--workspace", default=None, help="工作目录")
     parser.add_argument("--force", action="store_true", help="强制重处理已处理文件（覆盖 processed 索引）")
-    parser.add_argument("--no-translation", action="store_true", help="关闭网易云歌词翻译合并（默认开启）")
     parser.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
 
 
@@ -253,8 +252,6 @@ def main(argv: list[str] | None = None) -> int:
         cfg.workspace = workspace
     if getattr(args, "force", False):
         cfg.force = True
-    if getattr(args, "no_translation", False):
-        cfg.include_translation = False
 
     # add / remove 成功后自动执行 sync；其余子命令照原样传递
     pipeline_cmd = args.command if args.command in ("sync", "pull", "process") else "sync"
