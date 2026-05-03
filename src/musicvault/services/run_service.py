@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from pathlib import Path
 
 from musicvault.adapters.processors.decryptor import Decryptor
 from musicvault.adapters.processors.downloader import Downloader
