@@ -118,6 +118,7 @@ class BatchProgress:
 
         pct = Text(f"{self._bar.percentage_completed:>3.0f}%", style=Style(color="cyan", dim=True))
         elapsed_text = Text(str(elapsed_delta), style="dim")
+        eta_text = self._render_eta(elapsed)
 
         grid = Table.grid(padding=(0, 1))
         grid.add_column()  # spinner
@@ -125,12 +126,28 @@ class BatchProgress:
         grid.add_column(ratio=1)  # bar — fills remaining width
         grid.add_column()  # percentage
         grid.add_column()  # elapsed
-        grid.add_row(self._spinner, phase_text, self._bar, pct, elapsed_text)
+        grid.add_column()  # eta
+        grid.add_row(self._spinner, phase_text, self._bar, pct, elapsed_text, eta_text)
 
         # Line 2: current item name
         bottom = Text(f"  └─ {self._filename}")
 
         return Group(grid, bottom)
+
+    def _render_eta(self, elapsed: float) -> Text:
+        """Render estimated time remaining, or a placeholder if too early."""
+        if self._completed < 2:
+            return Text("~--", style="dim")
+        rate = elapsed / self._completed
+        remaining = rate * (self.total - self._completed)
+        if remaining < 60:
+            return Text(f"~{int(remaining)}s", style="dim")
+        if remaining < 3600:
+            m, s = divmod(int(remaining), 60)
+            return Text(f"~{m}m{s:02d}s", style="dim")
+        h, rem = divmod(int(remaining), 3600)
+        m, s = divmod(rem, 60)
+        return Text(f"~{h}h{m:02d}m", style="dim")
 
 
 # ── Single-operation spinner ──────────────────────────────────────────────────

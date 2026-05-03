@@ -148,9 +148,7 @@ class ProcessService:
             album_id = al.get("id")
             if album_id:
                 try:
-                    import pyncm.apis.album as album_api
-                    from musicvault.adapters.providers.pyncm_client import _retry_api
-                    alb_resp = _retry_api(album_api.GetAlbumInfo, int(album_id))
+                    alb_resp = self.api.get_album_info(int(album_id))
                     alb_pt = (alb_resp.get("album") or {}).get("publishTime")
                     if alb_pt:
                         track_info.raw["publishTime"] = alb_pt

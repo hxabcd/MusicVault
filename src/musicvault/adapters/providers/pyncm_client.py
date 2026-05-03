@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pyncm
+import pyncm.apis.album as album_api
 import pyncm.apis.login as login_api
 import pyncm.apis.playlist as playlist_api
 import pyncm.apis.track as track_api
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 _API_RETRIES = 3
 _API_RETRY_BACKOFF = (0.0, 1.0, 3.0)
+_API_CALL_GAP = 0.3
 _DOWNLOAD_URL_CHUNK_SIZE = 200
 _TRACK_DETAIL_CHUNK_SIZE = 500
 
@@ -59,6 +61,7 @@ class PyncmClient:
         self.user_api = user_api
         self.playlist_api = playlist_api
         self.track_api = track_api
+        self.album_api = album_api
         self.text_cleaning_enabled = text_cleaning_enabled
         self.download_quality = download_quality
         self.api_download_url_chunk_size = api_download_url_chunk_size
@@ -242,8 +245,13 @@ class PyncmClient:
                 result[track.id] = track
         return result
 
+    def get_album_info(self, album_id: int) -> dict[str, Any]:
+        """获取专辑信息"""
+        return _retry_api(self.album_api.GetAlbumInfo, album_id)
+
     def get_track_lyrics(self, track_id: int) -> dict[str, str]:
         """获取歌词数据（原文/翻译/罗马音/逐字）"""
+        time.sleep(_API_CALL_GAP)
         resp = _retry_api(self.track_api.GetTrackLyricsNew, str(track_id))
 
         def _lyric(key: str) -> str:
