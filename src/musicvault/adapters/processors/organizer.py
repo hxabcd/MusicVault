@@ -41,7 +41,7 @@ class Organizer:
 
         for fmt, bitrate in audio_specs:
             ext = _format_to_ext(fmt, suffix)
-            filename = _spec_to_filename(track.id, fmt, bitrate, same_format_counts.get(fmt, 0))
+            filename = _spec_to_filename(track.id, fmt, bitrate, same_format_counts.get(fmt, 0), source_suffix=suffix)
             target = output_dir / filename
 
             if target.exists():
@@ -98,9 +98,9 @@ def _format_to_ext(fmt: str | None, source_suffix: str) -> str:
     return _LOSSY_SUFFIX_MAP.get(fmt, f".{fmt}")
 
 
-def _spec_to_filename(track_id: int, fmt: str | None, bitrate: str | None, same_format_count: int) -> str:
+def _spec_to_filename(track_id: int, fmt: str | None, bitrate: str | None, same_format_count: int, source_suffix: str = ".mp3") -> str:
     if fmt is None:
-        return f"{track_id}{_LOSSY_SUFFIX_MAP.get('mp3', '.mp3')}"
+        return f"{track_id}{source_suffix}"
     ext = _LOSSY_SUFFIX_MAP.get(fmt, f".{fmt}")
     if same_format_count > 1 and bitrate:
         return f"{track_id}_{bitrate}{ext}"
