@@ -19,3 +19,4 @@ coverage.xml
 # Workspace data (runtime downloads / state / library)
 workspace*
 dev_config.json
+.worktrees/
