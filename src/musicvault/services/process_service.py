@@ -342,7 +342,9 @@ class ProcessService:
         pending: list[tuple[Path, Track, list[str]]] = []
         skipped = 0
         for raw_file, track, playlist_names in tasks:
-            if str(track.id) in processed_index:
+            idx_entry = processed_index.get(str(track.id))
+            # 只有包含 audios 字段的条目才视为已处理（{"source": ...} 占位不跳过）
+            if idx_entry and isinstance(idx_entry, dict) and idx_entry.get("audios"):
                 skipped += 1
                 logger.info("跳过已处理文件：track_id=%s", track.id)
                 continue
