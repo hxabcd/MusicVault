@@ -101,6 +101,6 @@ def default_presets() -> list[Preset]:
             include_translation=True,
             translation_format="inline",
             write_lrc_file=True,
-            lrc_encodings=("utf-8",),
+            lrc_encodings=("utf-8", "gb18030"),
         ),
     ]

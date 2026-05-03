@@ -111,3 +111,4 @@ class TestDefaultPresets:
         assert portable.use_karaoke is False
         assert portable.translation_format == "inline"
         assert portable.write_lrc_file is True
+        assert portable.lrc_encodings == ("utf-8", "gb18030")
