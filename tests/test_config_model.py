@@ -27,10 +27,13 @@ def test_load_and_save_roundtrip() -> None:
                     "playlist_ids": [123, 456],
                     "force": True,
                     "include_translation": False,
-                    "translation_format": "inline",
                     "text_cleaning": {"enabled": False},
                     "workers": {"download": 3, "process": 2, "ffmpeg_threads": 5},
-                    "lyrics": {"lossy_lrc_encodings": ["utf-8-sig", "gb18030"]},
+                    "lyrics": {
+                        "lossy_lrc_encodings": ["utf-8-sig", "gb18030"],
+                        "lossless_translation_format": "notimestamp",
+                        "lossy_translation_format": "inline",
+                    },
                     "lossy": {"bitrate": "256k"},
                 }
             ),
@@ -40,7 +43,8 @@ def test_load_and_save_roundtrip() -> None:
         assert cfg.cookie == "abc"
         assert cfg.workspace == "./workspace2"
         assert not cfg.include_translation
-        assert cfg.translation_format == "inline"
+        assert cfg.lossless_translation_format == "notimestamp"
+        assert cfg.lossy_translation_format == "inline"
         assert cfg.lossy_bitrate == "256k"
         assert not cfg.text_cleaning_enabled
         assert cfg.download_workers == 3
@@ -55,7 +59,8 @@ def test_load_and_save_roundtrip() -> None:
         assert loaded["cookie"] == "xyz"
         # 保存后 config 中不应再有 playlist_ids
         assert "playlist_ids" not in loaded
-        assert loaded["lyrics"]["translation_format"] == "inline"
+        assert loaded["lyrics"]["lossless_translation_format"] == "notimestamp"
+        assert loaded["lyrics"]["lossy_translation_format"] == "inline"
         assert loaded["lossy"]["bitrate"] == "256k"
 
 
@@ -64,7 +69,8 @@ def test_new_fields_have_defaults() -> None:
         path = Path(tmp) / "config.json"
         cfg = Config.load(path)
         assert cfg.lossy_bitrate == "192k"
-        assert cfg.translation_format == "separate"
+        assert cfg.lossless_translation_format == "separate"
+        assert cfg.lossy_translation_format == "inline"
 
 
 def test_translation_format_validation() -> None:
@@ -73,13 +79,35 @@ def test_translation_format_validation() -> None:
     with TemporaryDirectory() as tmp:
         path = Path(tmp) / "config.json"
         path.write_text(
-            json.dumps({"translation_format": "invalid"}),
+            json.dumps({"lyrics": {"lossless_translation_format": "invalid"}}),
             encoding="utf-8",
         )
         import pytest
 
-        with pytest.raises(RuntimeError, match="translation_format"):
+        with pytest.raises(RuntimeError, match="lossless_translation_format"):
             Cfg.load(path)
+
+    # notimestamp is valid
+    with TemporaryDirectory() as tmp:
+        path = Path(tmp) / "config.json"
+        path.write_text(
+            json.dumps({"lyrics": {"lossless_translation_format": "notimestamp", "lossy_translation_format": "notimestamp"}}),
+            encoding="utf-8",
+        )
+        cfg = Cfg.load(path)
+        assert cfg.lossless_translation_format == "notimestamp"
+        assert cfg.lossy_translation_format == "notimestamp"
+
+    # legacy translation_format fallback
+    with TemporaryDirectory() as tmp:
+        path = Path(tmp) / "config.json"
+        path.write_text(
+            json.dumps({"translation_format": "inline"}),
+            encoding="utf-8",
+        )
+        cfg = Cfg.load(path)
+        assert cfg.lossless_translation_format == "inline"
+        assert cfg.lossy_translation_format == "inline"
 
 
 def test_download_quality_validation() -> None:

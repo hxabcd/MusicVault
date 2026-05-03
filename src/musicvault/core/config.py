@@ -29,7 +29,8 @@ class Config:
     lossy_lrc_encodings: tuple[str, ...] = DEFAULT_LOSSY_LRC_ENCODINGS
     lossy_bitrate: str = "192k"
     lossy_format: str = "mp3"
-    translation_format: str = "separate"
+    lossless_translation_format: str = "separate"
+    lossy_translation_format: str = "inline"
     download_quality: str = "hires"
     embed_cover: bool = True
     cover_max_size: int = 0
@@ -188,12 +189,27 @@ class Config:
         if lossy_format not in _LOSSY_FORMAT_VALUES:
             raise RuntimeError(f"lossy.format 格式错误：需为 {sorted(_LOSSY_FORMAT_VALUES)}，当前={lossy_format}")
 
-        # -- translation_format (lyrics group, fallback to top-level) --
-        translation_format = str(
-            lyrics.get("translation_format") or raw.get("translation_format") or "separate"
+        # -- translation_format (lossless/lossy 各自配置，均可回退到旧 key) --
+        _VALID_TRANSLATION_FORMATS = ("separate", "inline", "notimestamp")
+        legacy_fmt = lyrics.get("translation_format") or raw.get("translation_format")
+
+        lossless_translation_format = str(
+            lyrics.get("lossless_translation_format") or legacy_fmt or "separate"
         ).strip()
-        if translation_format not in ("separate", "inline"):
-            raise RuntimeError(f"translation_format 格式错误：需为 separate 或 inline，当前={translation_format}")
+        if lossless_translation_format not in _VALID_TRANSLATION_FORMATS:
+            raise RuntimeError(
+                f"lossless_translation_format 格式错误：需为 {sorted(_VALID_TRANSLATION_FORMATS)}，"
+                f"当前={lossless_translation_format}"
+            )
+
+        lossy_translation_format = str(
+            lyrics.get("lossy_translation_format") or legacy_fmt or "inline"
+        ).strip()
+        if lossy_translation_format not in _VALID_TRANSLATION_FORMATS:
+            raise RuntimeError(
+                f"lossy_translation_format 格式错误：需为 {sorted(_VALID_TRANSLATION_FORMATS)}，"
+                f"当前={lossy_translation_format}"
+            )
 
         # -- download section --
         download = raw.get("download") or {}
@@ -301,7 +317,8 @@ class Config:
             lossy_lrc_encodings=encodings,
             lossy_bitrate=lossy_bitrate,
             lossy_format=lossy_format,
-            translation_format=translation_format,
+            lossless_translation_format=lossless_translation_format,
+            lossy_translation_format=lossy_translation_format,
             download_quality=download_quality,
             embed_cover=embed_cover,
             cover_max_size=cover_max_size,
@@ -375,7 +392,8 @@ class Config:
                 "lossy_use_karaoke": self.karaoke_lossy,
                 "include_romaji": self.include_romaji,
                 "include_translation": self.include_translation,
-                "translation_format": self.translation_format,
+                "lossless_translation_format": self.lossless_translation_format,
+                "lossy_translation_format": self.lossy_translation_format,
             },
             "lossy": {
                 "bitrate": self.lossy_bitrate,

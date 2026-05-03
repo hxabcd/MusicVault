@@ -46,11 +46,24 @@ class TestStandardLyrics:
         assert len(lines) == 6
         assert "First line" in lines[0]
         assert "第一行" in lines[1]
+        assert "[00:01.000]第一行" in result
 
     def test_merge_lrc_translation_inline(self) -> None:
         s = StandardLyrics({"lrc": SAMPLE_LRC, "tlyric": SAMPLE_TLYRIC})
         result = s.merge_translation(format="inline")
         assert "第一行 First line" in result
+
+    def test_merge_lrc_translation_notimestamp(self) -> None:
+        s = StandardLyrics({"lrc": SAMPLE_LRC, "tlyric": SAMPLE_TLYRIC})
+        result = s.merge_translation(format="notimestamp")
+        lines = result.splitlines()
+        assert len(lines) == 6
+        assert "First line" in lines[0]
+        # 翻译行无时间戳，纯文本紧随原文行
+        assert lines[1] == "第一行"
+        assert not lines[1].startswith("[")
+        assert lines[3] == "第二行"
+        assert lines[5] == "第三行"
 
     def test_merge_romaji(self) -> None:
         s = StandardLyrics({"lrc": SAMPLE_LRC, "romalrc": SAMPLE_TLYRIC})
@@ -145,25 +158,28 @@ class TestBuildTranslationMap:
 
 class TestMergeTranslation:
     def test_inline(self) -> None:
-        result = _merge_lrc_translation("[00:01.000]Hello", "[00:01.000]你好", inline=True)
+        result = _merge_lrc_translation("[00:01.000]Hello", "[00:01.000]你好", format="inline")
         assert result == "[00:01.000]你好 Hello"
 
-    def test_append_next_line(self) -> None:
-        result = _merge_lrc_translation("[00:01.000]Hello", "[00:01.000]你好", inline=False)
+    def test_separate(self) -> None:
+        result = _merge_lrc_translation("[00:01.000]Hello", "[00:01.000]你好", format="separate")
         assert "[00:01.000]Hello\n[00:01.000]你好" == result
 
+    def test_notimestamp(self) -> None:
+        result = _merge_lrc_translation("[00:01.000]Hello", "[00:01.000]你好", format="notimestamp")
+        assert result == "[00:01.000]Hello\n你好"
+
     def test_skip_same_text(self) -> None:
-        result = _merge_lrc_translation("[00:01.000]Hello", "[00:01.000]Hello", inline=True)
+        result = _merge_lrc_translation("[00:01.000]Hello", "[00:01.000]Hello", format="inline")
         assert "[00:01.000]你好" not in result
         assert result == "[00:01.000]Hello"
 
     def test_empty_translation_map(self) -> None:
-        result = _merge_lrc_translation("[00:01.000]X", "", inline=True)
+        result = _merge_lrc_translation("[00:01.000]X", "", format="inline")
         assert result == "[00:01.000]X"
 
     def test_metadata_lines_preserved(self) -> None:
-        # 无时间戳的元数据行应原样透传（覆盖 line 59-60）
-        result = _merge_lrc_translation("[ti:Title]\n[00:01.000]Hello", "[00:01.000]你好", inline=False)
+        result = _merge_lrc_translation("[ti:Title]\n[00:01.000]Hello", "[00:01.000]你好", format="separate")
         lines = result.splitlines()
         assert "[ti:Title]" in lines[0]
         assert "Hello" in lines[1]

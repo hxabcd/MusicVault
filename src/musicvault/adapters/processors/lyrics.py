@@ -28,20 +28,20 @@ class StandardLyrics:
         self.romaji = _normalize_lrc_timestamps(_sanitize_lyrics_text(payload.get("romalrc") or ""))
 
     def merge_translation(self, format: str = "separate") -> str:
-        """合并原文与翻译。format: 'separate'（独立行）| 'inline'（同行前置）。"""
-        return _merge_lrc_translation(self.original, self.translation, inline=(format == "inline"))
+        """合并原文与翻译。format: 'separate' | 'inline' | 'notimestamp'。"""
+        return _merge_lrc_translation(self.original, self.translation, format=format)
 
     def merge_romaji(self, format: str = "separate") -> str:
-        """合并原文与罗马音。format: 'separate'（独立行）| 'inline'（同行前置）。"""
-        return _merge_lrc_translation(self.original, self.romaji, inline=(format == "inline"))
+        """合并原文与罗马音。format: 'separate' | 'inline' | 'notimestamp'。"""
+        return _merge_lrc_translation(self.original, self.romaji, format=format)
 
-    def merge_all(self) -> str:
+    def merge_all(self, format: str = "separate") -> str:
         """合并原文 + 翻译 + 罗马音（三行独立）。"""
         result = self.original
         if self.translation:
-            result = _merge_lrc_translation(result, self.translation, inline=False)
+            result = _merge_lrc_translation(result, self.translation, format=format)
         if self.romaji:
-            result = _merge_lrc_translation(result, self.romaji, inline=False)
+            result = _merge_lrc_translation(result, self.romaji, format=format)
         return result
 
 
@@ -63,19 +63,17 @@ class KaraokeLyrics:
         """逐字原文 + 罗马音，输出 enhanced LRC。format: 'separate' | 'inline'。"""
         return _render_karaoke_merged(self.original, self.romaji, translation_format=format)
 
-    def merge_all(self) -> str:
+    def merge_all(self, format: str = "separate") -> str:
         """逐字原文 + 翻译 + 罗马音（三行独立）。"""
-        return _render_karaoke_all(self.original, self.translation, self.romaji)
+        return _render_karaoke_all(self.original, self.translation, self.romaji, format=format)
 
 
-def _merge_lrc_translation(base_lrc: str, translated_lrc: str, inline: bool) -> str:
-    # 1. 把翻译歌词预处理成"时间戳 -> 译文"映射。
+def _merge_lrc_translation(base_lrc: str, translated_lrc: str, format: str = "separate") -> str:
     translation_map = _build_translation_map(translated_lrc)
     if not translation_map:
         return base_lrc
 
     merged: list[str] = []
-    # 2. 逐行扫描原歌词，仅对带时间戳的行尝试拼接翻译。
     for line in base_lrc.splitlines():
         timestamps, lyric = _parse_line(line)
         if not timestamps:
@@ -87,11 +85,12 @@ def _merge_lrc_translation(base_lrc: str, translated_lrc: str, inline: bool) -> 
             merged.append(line)
             continue
 
-        # 3. 按目标格式输出（lossless 追加下一行 / lossy 同行前置翻译）。
         merged.append(line)
-        if inline:
+        if format == "inline":
             prefix = "".join(f"[{ts}]" for ts in timestamps)
             merged[-1] = f"{prefix}{translated} {lyric}".rstrip()
+        elif format == "notimestamp":
+            merged.append(translated)
         else:
             prefix = "".join(f"[{ts}]" for ts in timestamps)
             merged.append(f"{prefix}{translated}")
@@ -123,6 +122,9 @@ def _render_karaoke_merged(
             if translation_format == "inline":
                 rendered = _render_yrc_enhanced_line(words, end_ms, translated)
                 lines.append(rendered)
+            elif translation_format == "notimestamp":
+                lines.append(_render_yrc_enhanced_line(words, end_ms))
+                lines.append(translated)
             else:
                 lines.append(_render_yrc_enhanced_line(words, end_ms))
                 lines.append(f"[{start_tag}]{translated}[{end_tag}]")
@@ -131,7 +133,9 @@ def _render_karaoke_merged(
     return "\n".join(lines)
 
 
-def _render_karaoke_all(yrc_text: str, translation_text: str, romaji_text: str) -> str:
+def _render_karaoke_all(
+    yrc_text: str, translation_text: str, romaji_text: str, format: str = "separate"
+) -> str:
     trans_map = _build_translation_map(translation_text) if translation_text else {}
     romaji_map = _build_translation_map(romaji_text) if romaji_text else {}
     lines: list[str] = []
@@ -155,7 +159,10 @@ def _render_karaoke_all(yrc_text: str, translation_text: str, romaji_text: str) 
             if not sec_text:
                 sec_text = _find_translation_fuzzy(start_ms, sec_map)
             if sec_text and not _is_same_text(plain_lyric, sec_text):
-                lines.append(f"[{start_tag}]{sec_text}[{end_tag}]")
+                if format == "notimestamp":
+                    lines.append(sec_text)
+                else:
+                    lines.append(f"[{start_tag}]{sec_text}[{end_tag}]")
     return "\n".join(lines)
 
 

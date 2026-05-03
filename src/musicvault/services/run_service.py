@@ -253,7 +253,8 @@ class RunService:
             self.process_service.run_process(
                 downloaded=downloaded,
                 include_translation=self.cfg.include_translation,
-                translation_format=self.cfg.translation_format,
+                lossless_translation_format=self.cfg.lossless_translation_format,
+                lossy_translation_format=self.cfg.lossy_translation_format,
                 force=self.cfg.force,
                 playlist_index=playlist_index,
             )

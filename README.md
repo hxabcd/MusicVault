@@ -152,7 +152,8 @@ msv sync          # 开始同步
     "lossy_use_karaoke": false,
     "include_romaji": false,
     "include_translation": true,
-    "translation_format": "separate"
+    "lossless_translation_format": "separate",
+    "lossy_translation_format": "inline"
   },
   "lossy": {
     "bitrate": "192k",
@@ -215,7 +216,8 @@ msv sync          # 开始同步
 | `lyrics` | `lossy_use_karaoke` | `false` | 有损是否启用逐字（Karaoke）歌词 |
 | `lyrics` | `include_romaji` | `false` | 是否在歌词中附加罗马音（三行输出） |
 | `lyrics` | `include_translation` | `true` | 是否合并翻译歌词 |
-| `lyrics` | `translation_format` | `"separate"` | 翻译格式：`separate`（独立行）/ `inline`（同行前置） |
+| `lyrics` | `lossless_translation_format` | `"separate"` | 无损翻译格式：`separate`（独立行带时间戳）/ `inline`（同行前置）/ `notimestamp`（独立行无时间戳） |
+| `lyrics` | `lossy_translation_format` | `"inline"` | 有损翻译格式：`separate` / `inline`（同行前置）/ `notimestamp`（独立行无时间戳） |
 | `lossy` | `bitrate` | `"192k"` | 有损编码码率 |
 | `lossy` | `format` | `"mp3"` | 有损输出格式：`mp3`/`aac`/`ogg`/`opus` |
 | `download` | `quality` | `"hires"` | 下载音质：`standard`/`higher`/`exhire`/`hires`/`lossless` |

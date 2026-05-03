@@ -59,7 +59,8 @@ class ProcessService:
         self,
         downloaded: list[DownloadedTrack],
         include_translation: bool,
-        translation_format: str,
+        lossless_translation_format: str,
+        lossy_translation_format: str,
         force: bool,
         playlist_index: dict[str, dict[str, object]] | None = None,
     ) -> None:
@@ -69,9 +70,11 @@ class ProcessService:
             for item in downloaded:
                 names = self._resolve_playlist_names(item.playlist_ids, playlist_index)
                 tasks.append((Path(item.source_file), item.track, names))
-            self._run_process_batch(tasks, "处理中", include_translation, translation_format, force)
+            self._run_process_batch(
+                tasks, "处理中", include_translation, lossless_translation_format, lossy_translation_format, force
+            )
             return
-        self._process_local(include_translation, translation_format, force)
+        self._process_local(include_translation, lossless_translation_format, lossy_translation_format, force)
 
     # ------------------------------------------------------------------
     # 处理管线
@@ -82,7 +85,8 @@ class ProcessService:
         tasks: list[tuple[Path, Track, list[str]]],
         stage_name: str,
         include_translation: bool,
-        translation_format: str,
+        lossless_translation_format: str,
+        lossy_translation_format: str,
         force: bool,
     ) -> None:
         if not tasks:
@@ -104,7 +108,10 @@ class ProcessService:
 
         with ThreadPoolExecutor(max_workers=workers) as pool, BatchProgress(total=total, phase=stage_name) as bp:
             future_map = {
-                pool.submit(self._process_file, raw_file, track_info, include_translation, translation_format): (
+                pool.submit(
+                    self._process_file, raw_file, track_info, include_translation,
+                    lossless_translation_format, lossy_translation_format,
+                ): (
                     idx,
                     raw_file,
                 )
@@ -148,7 +155,8 @@ class ProcessService:
         raw_file: Path,
         prefetched_track: Track | None = None,
         include_translation: bool = True,
-        translation_format: str = "separate",
+        lossless_translation_format: str = "separate",
+        lossy_translation_format: str = "inline",
     ) -> tuple[Path, Path]:
         """处理单个下载文件，输出 canonical 文件到 downloads/。返回 (lossless, lossy)。"""
         track_info = prefetched_track
@@ -205,15 +213,15 @@ class ProcessService:
 
         # Lossless：有 YRC 且启用时优先逐字，否则回退标准 LRC
         if self.cfg.karaoke_lossless and lyrics["yrc"]:
-            lossless_lyrics = self._build_lyrics(KaraokeLyrics(lyrics), include_translation, translation_format)
+            lossless_lyrics = self._build_lyrics(KaraokeLyrics(lyrics), include_translation, lossless_translation_format)
         else:
-            lossless_lyrics = self._build_lyrics(StandardLyrics(lyrics), include_translation, translation_format)
+            lossless_lyrics = self._build_lyrics(StandardLyrics(lyrics), include_translation, lossless_translation_format)
 
         # Lossy：同样可按配置启用逐字歌词
         if self.cfg.karaoke_lossy and lyrics["yrc"]:
-            lossy_lyrics = self._build_lyrics(KaraokeLyrics(lyrics), include_translation, translation_format)
+            lossy_lyrics = self._build_lyrics(KaraokeLyrics(lyrics), include_translation, lossy_translation_format)
         else:
-            lossy_lyrics = self._build_lyrics(StandardLyrics(lyrics), include_translation, translation_format)
+            lossy_lyrics = self._build_lyrics(StandardLyrics(lyrics), include_translation, lossy_translation_format)
 
         same_file = lossless_path.resolve() == lossy_path.resolve()
         self.metadata.write(lossless_path, track_info, lyric_text=lossless_lyrics, is_lossless=True)
@@ -239,7 +247,7 @@ class ProcessService:
         translation_format: str,
     ) -> str:
         if include_translation and self.cfg.include_romaji:
-            return lyrics_obj.merge_all()
+            return lyrics_obj.merge_all(format=translation_format)
         if include_translation:
             return lyrics_obj.merge_translation(format=translation_format)
         if self.cfg.include_romaji:
@@ -381,7 +389,9 @@ class ProcessService:
     # 本地处理（msv process 独立模式）
     # ------------------------------------------------------------------
 
-    def _process_local(self, include_translation: bool, translation_format: str, force: bool) -> None:
+    def _process_local(
+        self, include_translation: bool, lossless_translation_format: str, lossy_translation_format: str, force: bool
+    ) -> None:
         pending: list[tuple[Path, int]] = []
 
         # 1. 从 cache 解析待处理文件
@@ -419,7 +429,9 @@ class ProcessService:
             names = self._resolve_playlist_names(pids, playlist_index)
             tasks.append((raw_file, track_info, names))
 
-        self._run_process_batch(tasks, "处理中", include_translation, translation_format, force)
+        self._run_process_batch(
+            tasks, "处理中", include_translation, lossless_translation_format, lossy_translation_format, force
+        )
 
     def _build_track_playlists(self) -> dict[int, list[int]]:
         mapping: dict[int, list[int]] = {}
