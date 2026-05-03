@@ -13,9 +13,10 @@ from musicvault.shared.output import error as output_error
 from musicvault.shared.output import info as output_info
 from musicvault.shared.output import success as output_success
 from musicvault.shared.output import warn as output_warn
-from musicvault.shared.tui_progress import console
+from musicvault.shared.tui_progress import console, transient_section
 
 logger = logging.getLogger(__name__)
+
 
 def handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
     if args.command == "add":
@@ -239,34 +240,36 @@ def _add_playlist_interactive(cfg: Config, cookie: str | None) -> int:
             console.print(table, highlight=False)
         return 1
 
-    console.print()
-    console.print(f"[bold]{user.nickname}[/bold] 的歌单列表：")
-    console.print()
-    max_show = min(len(available), 50)
-
-    table = Table(show_header=False, box=None, padding=(0, 1), collapse_padding=True)
-
-    table.add_column(justify="right", style="cyan")
-    table.add_column(justify="left", max_width=40, no_wrap=True)
-    table.add_column(justify="right", style="dim")
-
-    for i, pl in enumerate(available[:max_show], 1):
-        track_count = pl.get("trackCount", pl.get("track_count", "?"))
-        table.add_row(f"{i}.", pl["name"], f" {track_count} 首")
-
-    console.print(table, highlight=False)
-
-    if len(available) > max_show:
-        console.print(f"  [dim]... 还有 {len(available) - max_show} 个歌单未显示[/dim]")
-
-    if already_added:
+    with transient_section():
         console.print()
-        console.print(f"  隐藏了 {len(already_added)} 个已添加歌单")
+        console.print(f"[bold]{user.nickname}[/bold] 的歌单列表：")
+        console.print()
+        max_show = min(len(available), 50)
 
-    console.print()
-    console.print("  输入编号选择歌单（如: 1,3,5 或 1-5 或 all），输入 q 取消")
+        table = Table(show_header=False, box=None, padding=(0, 1), collapse_padding=True)
 
-    choice = input("  > ").strip()
+        table.add_column(justify="right", style="cyan")
+        table.add_column(justify="left", max_width=40, no_wrap=True)
+        table.add_column(justify="right", style="dim")
+
+        for i, pl in enumerate(available[:max_show], 1):
+            track_count = pl.get("trackCount", pl.get("track_count", "?"))
+            table.add_row(f"{i}.", pl["name"], f" {track_count} 首")
+
+        console.print(table, highlight=False)
+
+        if len(available) > max_show:
+            console.print(f"  [dim]... 还有 {len(available) - max_show} 个歌单未显示[/dim]")
+
+        if already_added:
+            console.print()
+            console.print(f"  隐藏了 {len(already_added)} 个已添加歌单")
+
+        console.print()
+        console.print("  输入编号选择歌单（如: 1,3,5 或 1-5 或 all），输入 q 取消")
+
+        choice = input("  > ").strip()
+
     if choice.lower() == "q":
         output_info("已取消")
         return 1
@@ -302,30 +305,32 @@ def _remove_playlist_interactive(cfg: Config) -> int:
     cached = _load_playlist_index(cfg)
     max_show = min(len(playlist_ids), 50)
 
-    console.print()
-    console.print("[bold]当前管理的歌单：[/bold]")
-    console.print()
+    with transient_section():
+        console.print()
+        console.print("[bold]当前管理的歌单：[/bold]")
+        console.print()
 
-    table = Table(show_header=False, box=None, padding=(0, 1), collapse_padding=True)
-    table.add_column(justify="right", style="cyan")
-    table.add_column(justify="left", max_width=40, no_wrap=True)
-    table.add_column(justify="right", style="dim")
+        table = Table(show_header=False, box=None, padding=(0, 1), collapse_padding=True)
+        table.add_column(justify="right", style="cyan")
+        table.add_column(justify="left", max_width=40, no_wrap=True)
+        table.add_column(justify="right", style="dim")
 
-    for i, pid in enumerate(playlist_ids[:max_show], 1):
-        entry = cached.get(str(pid), {})
-        name = entry.get("name", "")
-        track_count = entry.get("track_count", "?")
-        table.add_row(f"{i}.", name or str(pid), f" {track_count} 首")
+        for i, pid in enumerate(playlist_ids[:max_show], 1):
+            entry = cached.get(str(pid), {})
+            name = entry.get("name", "")
+            track_count = entry.get("track_count", "?")
+            table.add_row(f"{i}.", name or str(pid), f" {track_count} 首")
 
-    console.print(table, highlight=False)
+        console.print(table, highlight=False)
 
-    if len(playlist_ids) > max_show:
-        console.print(f"  [dim]... 还有 {len(playlist_ids) - max_show} 个歌单未显示[/dim]")
+        if len(playlist_ids) > max_show:
+            console.print(f"  [dim]... 还有 {len(playlist_ids) - max_show} 个歌单未显示[/dim]")
 
-    console.print()
-    console.print("  输入编号选择要移除的歌单（如: 1,3,5 或 1-5 或 all），输入 q 取消")
+        console.print()
+        console.print("  输入编号选择要移除的歌单（如: 1,3,5 或 1-5 或 all），输入 q 取消")
 
-    choice = input("  > ").strip()
+        choice = input("  > ").strip()
+
     if choice.lower() == "q":
         output_info("已取消")
         return 1

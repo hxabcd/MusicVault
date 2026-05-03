@@ -15,7 +15,7 @@ from musicvault.shared.output import error as output_error
 from musicvault.shared.output import info as output_info
 from musicvault.shared.output import success as output_success
 from musicvault.shared.output import warn as output_warn
-from musicvault.shared.tui_progress import console
+from musicvault.shared.tui_progress import console, transient_section
 
 _DEFAULT_CONFIG = os.environ.get("MUSIC_VAULT_CONFIG", "./config.json")
 _force_exit = False
@@ -114,9 +114,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="歌单 ID 或链接，不提供则从账号歌单中选择",
     )
-    add_pl.add_argument(
-        "--song", type=int, nargs="+", default=None, help="直接添加单曲 ID（可多个）"
-    )
+    add_pl.add_argument("--song", type=int, nargs="+", default=None, help="直接添加单曲 ID（可多个）")
     add_pl.add_argument("--cookie", default=None, help="网易云 Cookie")
     add_pl.add_argument(
         "--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）"
@@ -131,9 +129,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="歌单 ID，不提供则从已添加歌单中选择",
     )
-    rm_pl.add_argument(
-        "--song", type=int, nargs="+", default=None, help="移除单曲 ID（可多个）"
-    )
+    rm_pl.add_argument("--song", type=int, nargs="+", default=None, help="移除单曲 ID（可多个）")
     rm_pl.add_argument("--cookie", default=None, help="网易云 Cookie（用于同步）")
     rm_pl.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）")
     rm_pl.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
@@ -325,15 +321,15 @@ def _interactive_login() -> str | None:
     max_attempts = 3
 
     for attempt in range(max_attempts):
-        console.print()
-        console.print("  选择登录方式：")
-        console.print("    [1] 二维码登录（推荐）")
-        console.print("    [2] 密码登录")
-        console.print("    [3] 验证码登录")
-        console.print("    [q] 退出")
-        console.print()
-
-        choice = input("  请输入选项 [1/2/3/q]：").strip()
+        with transient_section():
+            console.print()
+            console.print("  选择登录方式：")
+            console.print("    [1] 二维码登录（推荐）")
+            console.print("    [2] 密码登录")
+            console.print("    [3] 验证码登录")
+            console.print("    [q] 退出")
+            console.print()
+            choice = input("  请输入选项 [1/2/3/q]：").strip()
 
         if choice.lower() == "q":
             return None
@@ -343,36 +339,39 @@ def _interactive_login() -> str | None:
             if choice == "1":
                 unikey = api.get_qrcode_unikey()
                 url = api.get_qrcode_url(unikey)
-                console.print()
                 qr_art = _render_qrcode(url)
-                console.print(qr_art, end="", highlight=False)
-                console.print(f"  [dim]{url}[/dim]")
-                console.print()
-                console.print("  [bold]请打开网易云音乐 App，扫描上方二维码[/bold]")
 
-                with console.status("[dim]等待扫码...[/dim]", spinner="dots") as status:
-                    deadline = time.monotonic() + 120
-                    while time.monotonic() < deadline:
-                        code = api.check_qrcode(unikey)
-                        if code == 802:
-                            status.update("[dim]已扫码，请在手机上确认登录...[/dim]")
-                        elif code == 803:
-                            break
-                        elif code == 800:
-                            raise RuntimeError("二维码已过期，请重新获取")
-                        time.sleep(2)
-                    else:
-                        raise TimeoutError("二维码登录超时，请重试")
+                with transient_section():
+                    console.print()
+                    console.print(qr_art, end="", highlight=False)
+                    console.print(f"  [dim]{url}[/dim]")
+                    console.print()
+                    console.print("  [bold]请打开网易云音乐 App，扫描上方二维码[/bold]")
+
+                    with console.status("[dim]等待扫码...[/dim]", spinner="dots") as status:
+                        deadline = time.monotonic() + 120
+                        while time.monotonic() < deadline:
+                            code = api.check_qrcode(unikey)
+                            if code == 802:
+                                status.update("[dim]已扫码，请在手机上确认登录...[/dim]")
+                            elif code == 803:
+                                break
+                            elif code == 800:
+                                raise RuntimeError("二维码已过期，请重新获取")
+                            time.sleep(2)
+                        else:
+                            raise TimeoutError("二维码登录超时，请重试")
 
                 result = api.get_login_status()
 
             # -- 手机号 + 密码 ----------------------------------------------
             elif choice == "2":
-                phone = input("  手机号：").strip()
+                with transient_section():
+                    phone = input("  手机号：").strip()
+                    password = getpass.getpass("  密码：")
                 if not phone:
                     output_warn("手机号不能为空")
                     continue
-                password = getpass.getpass("  密码：")
                 if not password:
                     output_warn("密码不能为空")
                     continue
@@ -380,7 +379,8 @@ def _interactive_login() -> str | None:
 
             # -- 手机号 + 验证码 --------------------------------------------
             elif choice == "3":
-                phone = input("  手机号：").strip()
+                with transient_section():
+                    phone = input("  手机号：").strip()
                 if not phone:
                     output_warn("手机号不能为空")
                     continue
@@ -388,7 +388,9 @@ def _interactive_login() -> str | None:
                     output_warn("验证码发送失败，请检查手机号或稍后重试")
                     continue
                 output_info("验证码已发送，请注意查收短信")
-                captcha = input("  验证码：").strip()
+
+                with transient_section():
+                    captcha = input("  验证码：").strip()
                 if not captcha:
                     output_warn("验证码不能为空")
                     continue
@@ -413,7 +415,6 @@ def _interactive_login() -> str | None:
         except Exception as exc:
             remaining = max_attempts - attempt - 1
             msg = str(exc)
-            # 常见安全拦截错误码提示
             if "502" in msg:
                 output_warn("账号或密码错误")
             elif "8821" in msg:

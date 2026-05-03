@@ -6,6 +6,7 @@ that are clean, minimal, and aesthetically pleasing.
 
 from __future__ import annotations
 
+import sys as _sys
 import time
 from contextlib import contextmanager
 from datetime import timedelta
@@ -200,6 +201,31 @@ def fail(message: str) -> None:
 def info(message: str) -> None:
     """Print a dim info line (no prefix)."""
     console.print(f"  [dim]{message}[/dim]")
+
+
+# ── Transient output (ANSI cursor save/restore) ────────────────────────────────
+@contextmanager
+def transient_section():
+    """上下文管理器：退出时自动清除包裹区域内的终端输出。
+
+    用于登录菜单、歌单选择等交互内容，交互完成或异常退出后自动隐藏。
+
+    Usage::
+
+        with transient_section():
+            console.print(table)
+            choice = input("> ")
+        # 此处表格和提示已被清除
+    """
+    try:
+        if _sys.stderr.isatty():
+            _sys.stderr.write("\033[s")
+            _sys.stderr.flush()
+        yield
+    finally:
+        if _sys.stderr.isatty():
+            _sys.stderr.write("\033[u\033[J")
+            _sys.stderr.flush()
 
 
 # ── Internals ─────────────────────────────────────────────────────────────────
