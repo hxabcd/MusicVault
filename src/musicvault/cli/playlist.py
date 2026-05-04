@@ -163,10 +163,62 @@ def _cleanup_playlist_files(pid: int, cfg: Config) -> None:
                     del ids[tid_str]
             save_json(cfg.synced_state_file, {"ids": ids})
 
-    # 删除无歌单归属的 canonical 文件
+    # 记录 canonical 文件的 inode（删除前），用于后续匹配 未分类 中的硬链接
+    canonical_inodes: set[tuple[int, int]] = set()
     for track_id in ids_to_remove:
-        for ext in (".flac", ".mp3", ".lrc"):
+        for ext in (".flac", ".mp3", ".m4a", ".ogg", ".opus"):
+            p = cfg.downloads_dir / f"{track_id}{ext}"
+            if p.exists():
+                try:
+                    st = p.stat()
+                    canonical_inodes.add((st.st_dev, st.st_ino))
+                except OSError:
+                    pass
+
+    # 删除无歌单归属的 canonical 文件（覆盖所有格式及 bitrate 后缀变体）
+    for track_id in ids_to_remove:
+        for ext in (".flac", ".mp3", ".m4a", ".ogg", ".opus", ".wav", ".lrc"):
             (cfg.downloads_dir / f"{track_id}{ext}").unlink(missing_ok=True)
+        if cfg.downloads_dir.is_dir():
+            for f in list(cfg.downloads_dir.iterdir()):
+                if f.is_file() and f.stem.startswith(f"{track_id}_"):
+                    f.unlink(missing_ok=True)
+
+    # 删除 未分类 中对应的硬链接（它们指向同一 inode，unlink 不会自动消失）
+    if canonical_inodes:
+        for preset in cfg.presets:
+            uncat_dir = cfg.preset_dir(preset.name) / cfg.default_playlist_name
+            if not uncat_dir.is_dir():
+                continue
+            for f in list(uncat_dir.iterdir()):
+                if not f.is_file():
+                    continue
+                try:
+                    st = f.stat()
+                    if (st.st_dev, st.st_ino) in canonical_inodes:
+                        f.unlink()
+                except OSError:
+                    continue
+            # 删除空的 未分类 目录
+            try:
+                if not any(uncat_dir.iterdir()):
+                    uncat_dir.rmdir()
+            except OSError:
+                pass
+
+    # 同步清理 processed_files.json 中的对应条目，防止残留文件被下次 process 捡起
+    processed = load_json(cfg.processed_state_file, {})
+    if isinstance(processed, dict):
+        changed = False
+        for tid_str in list(processed.keys()):
+            try:
+                if int(tid_str) in ids_to_remove:
+                    del processed[tid_str]
+                    changed = True
+            except (TypeError, ValueError):
+                continue
+        if changed:
+            save_json(cfg.processed_state_file, processed)
 
     if deleted_dirs:
         logger.info("已删除 [bold]%s[/bold] 的音乐文件（%s 个目录）", dir_name, deleted_dirs)

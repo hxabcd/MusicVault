@@ -277,7 +277,63 @@ class RunService:
                 playlist_index=playlist_index,
             )
 
+        # 清理未分类 中无索引归属的孤立文件（上一版 bug 的残留，以及后续边界情况）
+        self._cleanup_uncategorized_orphans()
+
         ok("完成")
+
+    def _cleanup_uncategorized_orphans(self) -> None:
+        """清理 library/*/未分类 下无索引归属的硬链接。"""
+        synced = SyncService._load_synced_state(self.cfg)
+        valid_ids = set(synced.keys())
+        if not valid_ids:
+            return
+
+        # 构建 canonical 文件的 inode → track_id 映射
+        inode_to_tid: dict[tuple[int, int], int] = {}
+        audio_exts = (".flac", ".mp3", ".m4a", ".ogg", ".opus")
+        for ext in audio_exts:
+            for f in self.cfg.downloads_dir.glob(f"*{ext}"):
+                if not f.is_file():
+                    continue
+                stem = f.stem.split("_")[0]
+                if not stem.isdigit():
+                    continue
+                try:
+                    st = f.stat()
+                    inode_to_tid[(st.st_dev, st.st_ino)] = int(stem)
+                except OSError:
+                    continue
+
+        if not inode_to_tid:
+            return
+
+        removed = 0
+        for preset in self.cfg.presets:
+            uncat = self.cfg.preset_dir(preset.name) / self.cfg.default_playlist_name
+            if not uncat.is_dir():
+                continue
+            for f in list(uncat.iterdir()):
+                if not f.is_file():
+                    continue
+                try:
+                    st = f.stat()
+                    tid = inode_to_tid.get((st.st_dev, st.st_ino))
+                except OSError:
+                    continue
+                if tid is not None and tid not in valid_ids:
+                    f.unlink()
+                    removed += 1
+                    logger.info("清理无归属的未分类文件：%s", f.name)
+            # 清空后删除目录
+            try:
+                if not any(uncat.iterdir()):
+                    uncat.rmdir()
+            except OSError:
+                pass
+
+        if removed:
+            logger.info("未分类清理完成：已删除 %s 个孤立文件", removed)
 
 
 def _guess_spec_from_filename(filename: str) -> str | None:
