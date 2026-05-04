@@ -121,7 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_pl.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
 
-    rm_pl = sub.add_parser("remove", help="移除歌单（支持 ID 或无参数交互选择）")
+    rm_pl = sub.add_parser("remove", aliases=["rm"], help="移除歌单（支持 ID 或无参数交互选择）")
     rm_pl.add_argument(
         "playlist_id",
         type=int,
@@ -237,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         return 0
 
-    if args.command in ("add", "remove", "list", "ls"):
+    if args.command in ("add", "remove", "rm", "list", "ls"):
         result = handle_playlist_mgmt(args, cfg)
         if args.command in ("list", "ls") or result != 0:
             return result

@@ -43,7 +43,7 @@ def handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
 
         return 0 if result == 0 and not (has_songs and not inputs) else result
 
-    elif args.command == "remove":
+    elif args.command == "remove" or args.command == "rm":
         has_songs = bool(getattr(args, "song", None))
 
         if has_songs:
