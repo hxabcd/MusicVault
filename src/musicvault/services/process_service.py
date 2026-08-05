@@ -16,7 +16,7 @@ from musicvault.adapters.processors.organizer import Organizer
 from musicvault.adapters.providers.pyncm_client import PyncmClient
 from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
-from musicvault.core.preset import Preset, audio_spec_key, build_audio_specs
+from musicvault.core.preset import Preset, audio_spec_key, build_audio_specs, compute_preset_hash
 from musicvault.shared.tui_progress import BatchProgress
 from musicvault.shared.utils import (
     create_link,
@@ -92,7 +92,7 @@ class ProcessService:
 
         with ThreadPoolExecutor(max_workers=workers) as pool, BatchProgress(total=total, phase=stage_name) as bp:
             future_map = {
-                pool.submit(self._process_file, raw_file, track_info): (idx, raw_file)
+                pool.submit(self._process_file, raw_file, track_info, force): (idx, raw_file)
                 for idx, (raw_file, track_info, _names) in enumerate(pending, start=1)
             }
 
@@ -129,6 +129,7 @@ class ProcessService:
         self,
         raw_file: Path,
         prefetched_track: Track | None = None,
+        force: bool = False,
     ) -> dict[str, Path]:
         """处理单个文件，返回 {spec_key: canonical_path}。"""
         track_info = prefetched_track
@@ -170,7 +171,7 @@ class ProcessService:
             for spec in audio_specs:
                 key = audio_spec_key(*spec)
                 if key not in audio_map:
-                    result = self.organizer.route_audio(raw_file, track_info, self.cfg.downloads_dir, {spec})
+                    result = self.organizer.route_audio(raw_file, track_info, self.cfg.downloads_dir, {spec}, force=force)
                     if spec in result:
                         audio_map[key] = result[spec]
         else:
@@ -179,7 +180,7 @@ class ProcessService:
                 is_ncm=raw_file.suffix.lower() == ".ncm",
             )
             decoded = self.decryptor.decrypt_if_needed(downloaded, self.cfg.workspace_path / "decoded")
-            raw_result = self.organizer.route_audio(decoded, track_info, self.cfg.downloads_dir, audio_specs)
+            raw_result = self.organizer.route_audio(decoded, track_info, self.cfg.downloads_dir, audio_specs, force=force)
             audio_map = {audio_spec_key(fmt, br): p for (fmt, br), p in raw_result.items()}
 
         # 获取歌词（一次 API 调用）
@@ -339,15 +340,19 @@ class ProcessService:
     ) -> tuple[list[tuple[Path, Track, list[str]]], int]:
         if force:
             return tasks, 0
+
+        current_hash = compute_preset_hash(self.cfg.presets)
         pending: list[tuple[Path, Track, list[str]]] = []
         skipped = 0
         for raw_file, track, playlist_names in tasks:
             idx_entry = processed_index.get(str(track.id))
-            # 只有包含 audios 字段的条目才视为已处理（{"source": ...} 占位不跳过）
             if idx_entry and isinstance(idx_entry, dict) and idx_entry.get("audios"):
-                skipped += 1
-                logger.info("跳过已处理文件：track_id=%s", track.id)
-                continue
+                stored_hash = idx_entry.get("preset_hash")
+                if stored_hash and stored_hash == current_hash:
+                    skipped += 1
+                    logger.info("跳过已处理文件（preset 未变）：track_id=%s", track.id)
+                    continue
+                logger.info("Preset 配置已变更，将重新处理：track_id=%s", track.id)
             pending.append((raw_file, track, playlist_names))
         return pending, skipped
 
@@ -364,6 +369,7 @@ class ProcessService:
             audios[spec_key] = rel
         processed_index[track_id] = {
             "audios": audios,
+            "preset_hash": compute_preset_hash(self.cfg.presets),
             "updated_at": int(time.time()),
         }
 

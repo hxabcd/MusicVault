@@ -28,6 +28,7 @@ class Organizer:
         track: Track,
         output_dir: Path,
         audio_specs: set[tuple[str | None, str | None]],
+        force: bool = False,
     ) -> dict[tuple[str | None, str | None], Path]:
         """路由音频源文件到 N 个 canonical 文件（按规格去重）。
 
@@ -45,8 +46,11 @@ class Organizer:
             target = output_dir / filename
 
             if target.exists():
-                result[(fmt, bitrate)] = target
-                continue
+                if force:
+                    target.unlink()
+                else:
+                    result[(fmt, bitrate)] = target
+                    continue
 
             if fmt is None or ext == suffix:
                 _copy(src, target)
@@ -102,7 +106,7 @@ def _spec_to_filename(track_id: int, fmt: str | None, bitrate: str | None, same_
     if fmt is None:
         return f"{track_id}{source_suffix}"
     ext = _LOSSY_SUFFIX_MAP.get(fmt, f".{fmt}")
-    if same_format_count > 1 and bitrate:
+    if bitrate:
         return f"{track_id}_{bitrate}{ext}"
     return f"{track_id}{ext}"
 

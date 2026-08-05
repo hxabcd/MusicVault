@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass
 
@@ -104,3 +106,24 @@ def default_presets() -> list[Preset]:
             lrc_encodings=("utf-8", "gb18030"),
         ),
     ]
+
+
+def compute_preset_hash(presets: list[Preset]) -> str:
+    spec: list[dict] = []
+    for p in presets:
+        spec.append({
+            "name": p.name,
+            "quality": p.quality,
+            "format": p.format,
+            "bitrate": p.bitrate,
+            "embed_cover": p.embed_cover,
+            "embed_lyrics": p.embed_lyrics,
+            "metadata_fields": p.metadata_fields,
+            "use_karaoke": p.use_karaoke,
+            "include_translation": p.include_translation,
+            "include_romaji": p.include_romaji,
+            "write_lrc_file": p.write_lrc_file,
+        })
+    spec.sort(key=lambda x: x["name"])
+    canonical = json.dumps(spec, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]

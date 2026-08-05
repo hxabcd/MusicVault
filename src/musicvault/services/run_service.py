@@ -11,7 +11,7 @@ from musicvault.adapters.processors.metadata_writer import MetadataWriter
 from musicvault.adapters.processors.organizer import Organizer
 from musicvault.adapters.providers.pyncm_client import PyncmClient
 from musicvault.core.config import Config
-from musicvault.core.preset import audio_spec_key
+from musicvault.core.preset import audio_spec_key, compute_preset_hash
 from musicvault.services.process_service import ProcessService
 from musicvault.services.sync_service import SyncService
 from musicvault.shared.tui_progress import console, ok
@@ -151,6 +151,7 @@ class RunService:
             if audios:
                 processed[str(tid)] = {
                     "audios": audios,
+                    "preset_hash": compute_preset_hash(self.cfg.presets),
                     "updated_at": int(time.time()),
                 }
         save_json(self.cfg.processed_state_file, processed)
