@@ -26,11 +26,21 @@ logger = logging.getLogger(__name__)
 
 
 class SyncService:
-    def __init__(self, cfg: Config, api: NeteaseClient, downloader: Downloader, workers: int) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        api: NeteaseClient,
+        downloader: Downloader,
+        workers: int,
+        dry_run: bool = False,
+    ) -> None:
         self.cfg = cfg
         self.api = api
         self.downloader = downloader
         self.workers = max(1, workers)
+        self.dry_run = dry_run
+        # dry-run 计划（仅 dry_run 模式下填充）：with_url / no_url / pruned / moves / renames / stale_index
+        self.plan: dict = {}
 
     # ------------------------------------------------------------------
     # 同步状态持久化（synced_tracks.json）
@@ -64,7 +74,7 @@ class SyncService:
     # ------------------------------------------------------------------
 
     def run_sync(self, cookie: str, playlist_ids: list[int]) -> list[DownloadedTrack]:
-        self._cleanup_stale_state()
+        stale_index = self._cleanup_stale_state()
         song_ids = self.cfg.get_song_ids()
         if not playlist_ids and not song_ids:
             output_warn("未配置任何歌单或单曲，请先执行 msv add 添加歌单或 msv add --song <ID> 添加单曲")
@@ -91,8 +101,9 @@ class SyncService:
                     all_tracks[track.id] = track
                     track_playlists.setdefault(track.id, []).append(pid)
 
-        for pid, old_name, new_name in pending_renames:
-            self._handle_playlist_rename(pid, old_name, new_name, all_tracks)
+        if pending_renames and not self.dry_run:
+            for pid, old_name, new_name in pending_renames:
+                self._handle_playlist_rename(pid, old_name, new_name, all_tracks)
 
         # 获取单独管理的单曲
         if song_ids:
@@ -109,17 +120,32 @@ class SyncService:
                         self.cfg.remove_song(mid)
                     logger.info("清理无效单曲 ID：%s", missing)
 
-        save_json(self.cfg.state_dir / "playlists.json", playlist_index)
+        if not self.dry_run:
+            save_json(self.cfg.state_dir / "playlists.json", playlist_index)
         self.playlist_index = playlist_index
 
         unique = list(all_tracks.values())
         logger.info("歌单曲目合计：%s 首（去重后）", len(unique))
 
-        # 协调已有曲目的歌单分配变化（移动/链接文件）
-        self._reconcile_playlist_assignments(track_playlists, playlist_index, all_tracks)
+        # 协调已有曲目的歌单分配变化（移动/链接文件），dry-run 下仅计算不执行
+        moves = self._reconcile_playlist_assignments(track_playlists, playlist_index, all_tracks)
 
-        pruned = self._prune_stale_tracks(all_tracks)
+        pruned_count, pruned_ids = self._prune_stale_tracks(all_tracks)
         new_tracks, synced_ids = self._diff_tracks(unique)
+
+        if self.dry_run:
+            with_url, no_url = self._resolve_dry_urls(new_tracks)
+            self.plan = {
+                "with_url": with_url,
+                "no_url": no_url,
+                "pruned": pruned_ids,
+                "moves": moves,
+                "renames": pending_renames,
+                "stale_index": stale_index,
+            }
+            self._print_dry_run_plan(unique_count=len(unique), n_playlists=len(playlist_ids) + (1 if song_ids else 0))
+            return []
+
         downloaded = self._sync_tracks(new_tracks, track_playlists)
         self._mark_synced(downloaded, synced_ids, track_playlists)
 
@@ -130,21 +156,22 @@ class SyncService:
         stats: list[str] = []
         if added:
             stats.append(f"[green]+{added} 首[/green]")
-        if pruned:
-            stats.append(f"[red]-{pruned} 首[/red]")
+        if pruned_count:
+            stats.append(f"[red]-{pruned_count} 首[/red]")
         console.print("    " + " | ".join(stats) if stats else "    [dim]无变化[/dim]")
 
         return downloaded
 
-    def _cleanup_stale_state(self) -> None:
+    def _cleanup_stale_state(self) -> int:
         """清理 canonical 文件已不存在的过期索引条目，避免阻止重新下载。
 
         processed_files.json 格式：key 为 track_id 字符串，value 含 audios 字典或旧版 flac/mp3/source 等字段。
-        检查对应文件是否存在，不存在则从索引中移除。
+        检查对应文件是否存在，不存在则从索引中移除。返回过期条目的数量；
+        dry-run 模式下只计算并上报，不写入任何文件。
         """
         processed = load_json(self.cfg.processed_state_file, {})
         if not isinstance(processed, dict) or not processed:
-            return
+            return 0
 
         stale_ids: set[int] = set()
         for key, value in list(processed.items()):
@@ -177,16 +204,23 @@ class SyncService:
                 pass
             del processed[key]
 
-        if stale_ids:
-            save_json(self.cfg.processed_state_file, processed)
-            state_map = self._load_synced_state(self.cfg)
-            existing = set(state_map.keys())
-            cleaned = existing - stale_ids
-            if cleaned != existing:
-                for sid in stale_ids:
-                    state_map.pop(sid, None)
-                self._save_synced_state(self.cfg, state_map)
-                logger.info("清理过期状态：%s 个文件已不存在，已从索引中移除", len(stale_ids))
+        if not stale_ids:
+            return 0
+
+        if self.dry_run:
+            logger.info("dry-run：将清理 %s 条过期索引条目", len(stale_ids))
+            return len(stale_ids)
+
+        save_json(self.cfg.processed_state_file, processed)
+        state_map = self._load_synced_state(self.cfg)
+        existing = set(state_map.keys())
+        cleaned = existing - stale_ids
+        if cleaned != existing:
+            for sid in stale_ids:
+                state_map.pop(sid, None)
+            self._save_synced_state(self.cfg, state_map)
+            logger.info("清理过期状态：%s 个文件已不存在，已从索引中移除", len(stale_ids))
+        return len(stale_ids)
 
     def _handle_playlist_rename(self, pid: int, old_name: str, new_name: str, all_tracks: dict[int, Track]) -> None:
         old_safe = safe_filename(old_name)
@@ -233,11 +267,18 @@ class SyncService:
         track_playlists: dict[int, list[int]],
         playlist_index: dict[str, dict[str, object]],
         all_tracks: dict[int, Track],
-    ) -> None:
-        """对比 API 返回的歌单分配与本地存储，删旧链接 + 建新链接。"""
+    ) -> list[tuple[Track, set[str], set[str]]]:
+        """对比 API 返回的歌单分配与本地存储，删旧链接 + 建新链接。
+
+        返回需要调整的曲目列表 [(track, 需删除的目录, 需新增的目录)]；
+        dry-run 模式下只计算并返回，不执行任何文件操作、不写状态。
+        """
         old_map = self._load_synced_state(self.cfg)
         if not old_map:
-            return
+            return []
+
+        moves: list[tuple[Track, set[str], set[str]]] = []
+        audio_maps: dict[int, dict[str, Path]] = {}
 
         for track_id, old_pids in old_map.items():
             new_pids = track_playlists.get(track_id, [])
@@ -253,32 +294,41 @@ class SyncService:
             if track is None:
                 continue
 
-            # 从 download 目录中的 canonical 文件构建 audio_map
-            audio_map: dict[str, Path] = {}
-            for preset in self.cfg.presets:
-                spec_key = audio_spec_key(preset.format, preset.bitrate)
-                if spec_key not in audio_map:
-                    src = self._find_canonical_for_spec(track_id, spec_key)
-                    if src:
-                        audio_map[spec_key] = src
+            rm_names, add_names = old_names - new_names, new_names - old_names
 
-            if not audio_map:
-                continue
+            # 需要新建链接时必须存在 canonical 源文件，否则整条跳过（与旧行为一致）
+            if add_names:
+                audio_map: dict[str, Path] = {}
+                for preset in self.cfg.presets:
+                    spec_key = audio_spec_key(preset.format, preset.bitrate)
+                    if spec_key not in audio_map:
+                        src = self._find_canonical_for_spec(track_id, spec_key)
+                        if src:
+                            audio_map[spec_key] = src
+                if not audio_map:
+                    continue
+                audio_maps[track_id] = audio_map
 
-            # 删除已移除歌单的链接
-            for name in old_names - new_names:
-                self._remove_track_links(track, name)
+            moves.append((track, rm_names, add_names))
 
-            # 创建新增歌单的链接
-            for name in new_names - old_names:
-                self._create_track_links(audio_map, track, name)
+        if not self.dry_run:
+            for track, rm_names, add_names in moves:
+                # 删除已移除歌单的链接
+                for name in rm_names:
+                    self._remove_track_links(track, name)
+                # 创建新增歌单的链接
+                if add_names:
+                    for name in add_names:
+                        self._create_track_links(audio_maps[track.id], track, name)
 
-        # 写回更新后的歌单分配
-        new_map = dict(old_map)
-        for track_id, new_pids in track_playlists.items():
-            if track_id in old_map:
-                new_map[track_id] = sorted(new_pids)
-        self._save_synced_state(self.cfg, new_map)
+            # 写回更新后的歌单分配
+            new_map = dict(old_map)
+            for track_id, new_pids in track_playlists.items():
+                if track_id in old_map:
+                    new_map[track_id] = sorted(new_pids)
+            self._save_synced_state(self.cfg, new_map)
+
+        return moves
 
     def _create_track_links(self, audio_map: dict[str, Path], track: Track, dirname: str) -> None:
         """在 library 中各 preset 目录下创建硬链接（人类可读文件名）。"""
@@ -358,13 +408,71 @@ class SyncService:
         new_tracks = [track for track in tracks if track.id not in synced_ids]
         return new_tracks, synced_ids
 
-    def _prune_stale_tracks(self, remote_tracks: dict[int, Track]) -> int:
-        """删除远端已不存在的本地曲目（canonical 文件 + library 链接），返回清理数量。"""
+    def _resolve_dry_urls(self, tracks: list[Track]) -> tuple[list[Track], list[Track]]:
+        """dry-run：批量查询直链，返回 (可下载, 无直链) 两组曲目。"""
+        if not tracks:
+            return [], []
+        url_map = self.api.get_tracks_download_urls([track.id for track in tracks])
+        with_url = [t for t in tracks if url_map.get(t.id)]
+        no_url = [t for t in tracks if not url_map.get(t.id)]
+        return with_url, no_url
+
+    def _print_dry_run_plan(self, unique_count: int, n_playlists: int) -> None:
+        """输出 dry-run 计划预览（仅查询，未执行任何写操作）。"""
+        plan = self.plan
+        console.print(
+            f"  从 [cyan]{n_playlists}[/cyan] 个歌单同步 [cyan]{unique_count}[/cyan] 首（[bold yellow]dry-run 预览[/bold yellow]）"
+        )
+
+        with_url: list[Track] = plan.get("with_url") or []
+        no_url: list[Track] = plan.get("no_url") or []
+        pruned: list[int] = plan.get("pruned") or []
+        moves: list = plan.get("moves") or []
+        renames: list = plan.get("renames") or []
+        stale_index: int = plan.get("stale_index") or 0
+
+        if with_url:
+            console.print(f"  [green]将下载[/green] [cyan]{len(with_url)}[/cyan] 首：")
+            for i, t in enumerate(with_url, 1):
+                console.print(f"    [dim]{i:>3}.[/dim] {t.artist_text} - {t.name}")
+        else:
+            console.print("  [dim]将下载 0 首（无新增曲目）[/dim]")
+
+        if no_url:
+            console.print(f"  [yellow]无可用直链将跳过[/yellow] [cyan]{len(no_url)}[/cyan] 首：")
+            for i, t in enumerate(no_url, 1):
+                console.print(f"    [dim]{i:>3}.[/dim] {t.artist_text} - {t.name}")
+
+        if pruned:
+            console.print(
+                f"  [red]将清理远端已删除曲目[/red] [cyan]{len(pruned)}[/cyan] 首：{', '.join(map(str, pruned))}"
+            )
+
+        if renames:
+            console.print("  [cyan]歌单目录将重命名：[/cyan]")
+            for _pid, old, new in renames:
+                console.print(f"    [dim]-[/dim] {old} → {new}")
+
+        if moves:
+            console.print(f"  [cyan]歌单归属调整：[/cyan][cyan]{len(moves)}[/cyan] 首曲目的 library 链接将移动")
+
+        if stale_index:
+            console.print(f"  [yellow]将清理 {stale_index} 条本地文件缺失的过期索引[/yellow]")
+
+    def _prune_stale_tracks(self, remote_tracks: dict[int, Track]) -> tuple[int, list[int]]:
+        """删除远端已不存在的本地曲目（canonical 文件 + library 链接）。
+
+        返回 (清理数量, stale_ids)；dry-run 模式下只计算并上报，不删除文件、不写状态。
+        """
         state_map = self._load_synced_state(self.cfg)
         synced_ids = set(state_map.keys())
-        stale_ids = synced_ids - set(remote_tracks.keys())
+        stale_ids = sorted(synced_ids - set(remote_tracks.keys()))
         if not stale_ids:
-            return 0
+            return 0, []
+
+        if self.dry_run:
+            logger.info("dry-run：将清理远端已删除曲目 %s 首", len(stale_ids))
+            return len(stale_ids), stale_ids
 
         removed_count = 0
         for track_id in stale_ids:
@@ -413,7 +521,7 @@ class SyncService:
         if removed_count:
             self._save_synced_state(self.cfg, state_map)
             logger.info("清理远端已删除曲目：%s 首", removed_count)
-        return removed_count
+        return removed_count, stale_ids
 
     def _sync_tracks(self, tracks: list[Track], track_playlists: dict[int, list[int]]) -> list[DownloadedTrack]:
         if not tracks:

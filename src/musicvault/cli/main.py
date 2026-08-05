@@ -64,13 +64,15 @@ def _configure_logs(verbose: bool = False) -> None:
     logger = logging.getLogger(__name__)
 
 
-def _add_common_args(parser: argparse.ArgumentParser) -> None:
+def _add_common_args(parser: argparse.ArgumentParser, include_dry_run: bool = True) -> None:
     parser.add_argument(
         "--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）"
     )
     parser.add_argument("--cookie", default=None, help="网易云 Cookie 字符串")
     parser.add_argument("--workspace", default=None, help="工作目录")
     parser.add_argument("--force", action="store_true", help="强制重处理已处理文件（覆盖 processed 索引）")
+    if include_dry_run:
+        parser.add_argument("--dry-run", action="store_true", help="预览模式：执行全部查询，但不下载、不写入任何文件")
     parser.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
 
 
@@ -140,7 +142,7 @@ def build_parser() -> argparse.ArgumentParser:
     ls_pl.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
 
     reindex = sub.add_parser("reindex", help="重建索引", description="通过 downloads 目录中的文件重建已下载索引")
-    _add_common_args(reindex)
+    _add_common_args(reindex, include_dry_run=False)
 
     return parser
 
@@ -201,6 +203,7 @@ def main(argv: list[str] | None = None) -> int:
 
         service = RunService(
             cfg=cfg,
+            dry_run=getattr(args, "dry_run", False),
             api=NeteaseClient(
                 text_cleaning_enabled=cfg.text_cleaning_enabled,
                 download_quality=cfg.download_quality,

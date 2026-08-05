@@ -15,15 +15,23 @@ from musicvault.core.preset import audio_spec_key, compute_preset_hash
 from musicvault.services.process_service import ProcessService
 from musicvault.services.sync_service import SyncService
 from musicvault.shared.tui_progress import console, ok
-from musicvault.shared.utils import create_link, format_track_name, load_json, safe_filename, save_json, workspace_rel_path
+from musicvault.shared.utils import (
+    create_link,
+    format_track_name,
+    load_json,
+    safe_filename,
+    save_json,
+    workspace_rel_path,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class RunService:
-    def __init__(self, cfg: Config, api: NeteaseClient) -> None:
+    def __init__(self, cfg: Config, api: NeteaseClient, dry_run: bool = False) -> None:
         self.cfg = cfg
         self.api = api
+        self.dry_run = dry_run
 
         cpu = os.cpu_count() or 4
         auto_download = max(1, min(6, cpu))
@@ -40,6 +48,7 @@ class RunService:
             api=api,
             downloader=Downloader(filename_template=first_template),
             workers=max(1, download_workers),
+            dry_run=dry_run,
         )
         self.process_service = ProcessService(
             cfg=cfg,
@@ -51,6 +60,7 @@ class RunService:
             ),
             metadata=MetadataWriter(),
             workers=max(1, process_workers),
+            dry_run=dry_run,
         )
 
     def rebuild_index(self) -> tuple[int, int]:
@@ -176,11 +186,12 @@ class RunService:
         从 synced_tracks.json 读取 track_id → playlist_ids 映射，
         通过 API 批量获取曲目详情生成文件名，在各 preset 目录中重建硬链接。
 
-        返回 (linked_tracks, playlist_count)。
+        返回 (linked_tracks, playlist_count)。dry-run 模式下只统计将创建的链接，不落盘。
         """
         from musicvault.core.models import Track
 
-        self.cfg.ensure_dirs()
+        if not self.dry_run:
+            self.cfg.ensure_dirs()
 
         # 1. 加载同步状态
         state_map = SyncService._load_synced_state(self.cfg)
@@ -232,24 +243,37 @@ class RunService:
                         continue
                     link_stem = format_track_name(preset.filename_template, track)
                     dst_dir = self.cfg.preset_dir(preset.name) / dirname
-                    dst_dir.mkdir(parents=True, exist_ok=True)
+                    if not self.dry_run:
+                        dst_dir.mkdir(parents=True, exist_ok=True)
                     audio_dst = dst_dir / f"{link_stem}{audio_src.suffix}"
                     if not audio_dst.exists():
-                        create_link(audio_src, audio_dst)
+                        if self.dry_run:
+                            total_links += 1
+                        else:
+                            create_link(audio_src, audio_dst)
                         has_linked = True
                     if preset.write_lrc_file:
                         lrc_src = audio_src.with_name(f"{track_id}.{preset.name}.lrc")
                         if lrc_src.exists():
                             lrc_dst = dst_dir / f"{link_stem}.lrc"
                             if not lrc_dst.exists():
-                                create_link(lrc_src, lrc_dst)
+                                if self.dry_run:
+                                    total_links += 1
+                                else:
+                                    create_link(lrc_src, lrc_dst)
                                 has_linked = True
 
             if has_linked:
                 linked_tracks += 1
-                total_links += 1
 
         playlist_count = len({pid for pids in state_map.values() for pid in pids})
+
+        if self.dry_run:
+            console.print(
+                f"  [bold yellow]dry-run 预览[/bold yellow]：将创建 [cyan]{total_links}[/cyan] 个硬链接（涉及 [cyan]{linked_tracks}[/cyan] 首曲目，[cyan]{playlist_count}[/cyan] 个歌单）"
+            )
+            logger.info("dry-run 链接预览：%s 个链接，%s 首曲目", total_links, linked_tracks)
+            return linked_tracks, playlist_count
 
         if linked_tracks:
             console.print(f"  链接完成：[cyan]{linked_tracks}[/cyan] 首曲目，[cyan]{playlist_count}[/cyan] 个歌单")
@@ -260,7 +284,8 @@ class RunService:
         return linked_tracks, playlist_count
 
     def run_pipeline(self, cookie: str, command: str) -> None:
-        self.cfg.ensure_dirs()
+        if not self.dry_run:
+            self.cfg.ensure_dirs()
 
         only_pull = command == "pull"
         only_process = command == "process"
@@ -270,18 +295,24 @@ class RunService:
         if not only_process:
             downloaded = self.sync_service.run_sync(cookie=cookie, playlist_ids=self.cfg.get_playlist_ids())
             playlist_index = self.sync_service.playlist_index
+            if self.dry_run and not only_pull:
+                n_new = len(self.sync_service.plan.get("with_url") or [])
+                console.print(f"  [dim]随后将进入后处理：新下载的 {n_new} 首曲目（转码/元数据/歌词/硬链接）[/dim]")
 
-        if not only_pull:
+        # sync 的 dry-run 不跑 process 阶段（新下载文件尚未落地），process --dry-run 仍执行本地扫描预览
+        if not only_pull and (not self.dry_run or only_process):
             self.process_service.run_process(
                 downloaded=downloaded,
                 force=self.cfg.force,
                 playlist_index=playlist_index,
             )
 
-        # 清理未分类 中无索引归属的孤立文件（上一版 bug 的残留，以及后续边界情况）
-        self._cleanup_uncategorized_orphans()
-
-        ok("完成")
+        if not self.dry_run:
+            # 清理未分类 中无索引归属的孤立文件（上一版 bug 的残留，以及后续边界情况）
+            self._cleanup_uncategorized_orphans()
+            ok("完成")
+        else:
+            console.print("  [bold yellow]dry-run 结束：未下载、未修改任何文件[/bold yellow]")
 
     def _cleanup_uncategorized_orphans(self) -> None:
         """清理 library/*/未分类 下无索引归属的硬链接。"""

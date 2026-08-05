@@ -30,6 +30,7 @@ msv help [子命令]
 
 # 常用参数
 msv sync --force          # 强制重新处理所有文件
+msv sync --dry-run        # 预览：执行全部查询，但不下载、不写入任何文件（sync/pull/process 均支持）
 msv sync -v               # 详细日志
 
 # 运行测试

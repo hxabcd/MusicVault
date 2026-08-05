@@ -17,7 +17,7 @@ from musicvault.adapters.providers.netease_client import NeteaseClient
 from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
 from musicvault.core.preset import Preset, audio_spec_key, build_audio_specs, compute_preset_hash
-from musicvault.shared.tui_progress import BatchProgress
+from musicvault.shared.tui_progress import BatchProgress, console
 from musicvault.shared.utils import (
     create_link,
     format_track_name,
@@ -39,6 +39,7 @@ class ProcessService:
         organizer: Organizer,
         metadata: MetadataWriter,
         workers: int,
+        dry_run: bool = False,
     ) -> None:
         self.cfg = cfg
         self.api = api
@@ -46,6 +47,7 @@ class ProcessService:
         self.organizer = organizer
         self.metadata = metadata
         self.workers = max(1, workers)
+        self.dry_run = dry_run
 
     # ------------------------------------------------------------------
     # 公开入口
@@ -86,6 +88,10 @@ class ProcessService:
         if not pending:
             return
 
+        if self.dry_run:
+            self._print_dry_run_plan(pending)
+            return
+
         total = len(pending)
         workers = min(self.workers, total)
         results: list[tuple[dict[str, Path], Track, list[str]]] = []
@@ -113,7 +119,9 @@ class ProcessService:
                         bp.advance(success=True, idx=idx, item_name=raw_file.name)
                     except Exception as exc:
                         bp.advance(success=False, idx=idx, item_name=raw_file.name)
-                        logger.error("处理失败：阶段=%s #%s %s，原因：%s", stage_name, idx, raw_file.name, exc, exc_info=True)
+                        logger.error(
+                            "处理失败：阶段=%s #%s %s，原因：%s", stage_name, idx, raw_file.name, exc, exc_info=True
+                        )
             except KeyboardInterrupt:
                 pool.shutdown(wait=False, cancel_futures=True)
                 if processed_index:
@@ -124,6 +132,12 @@ class ProcessService:
 
         for audio_map, track_info, playlist_names in results:
             self._link_track(audio_map, track_info, playlist_names)
+
+    def _print_dry_run_plan(self, pending: list[tuple[Path, Track, list[str]]]) -> None:
+        """dry-run：仅报告将处理的文件清单，不执行解密/转码/元数据/歌词/硬链接。"""
+        console.print(f"  [bold yellow]dry-run 预览[/bold yellow]：将处理 [cyan]{len(pending)}[/cyan] 个文件")
+        for i, (raw_file, track, _names) in enumerate(pending, 1):
+            console.print(f"    [dim]{i:>3}.[/dim] {raw_file.name} → {track.artist_text} - {track.name}")
 
     def _process_file(
         self,
@@ -157,10 +171,7 @@ class ProcessService:
                     pass
 
         # 判断是否已是 canonical 文件
-        is_canonical = (
-            raw_file.parent.resolve() == self.cfg.downloads_dir.resolve()
-            and raw_file.stem.isdigit()
-        )
+        is_canonical = raw_file.parent.resolve() == self.cfg.downloads_dir.resolve() and raw_file.stem.isdigit()
 
         audio_specs = build_audio_specs(self.cfg.presets)
         if is_canonical:
@@ -171,16 +182,21 @@ class ProcessService:
             for spec in audio_specs:
                 key = audio_spec_key(*spec)
                 if key not in audio_map:
-                    result = self.organizer.route_audio(raw_file, track_info, self.cfg.downloads_dir, {spec}, force=force)
+                    result = self.organizer.route_audio(
+                        raw_file, track_info, self.cfg.downloads_dir, {spec}, force=force
+                    )
                     if spec in result:
                         audio_map[key] = result[spec]
         else:
             downloaded = DownloadedTrack(
-                track=track_info, source_file=str(raw_file),
+                track=track_info,
+                source_file=str(raw_file),
                 is_ncm=raw_file.suffix.lower() == ".ncm",
             )
             decoded = self.decryptor.decrypt_if_needed(downloaded, self.cfg.workspace_path / "decoded")
-            raw_result = self.organizer.route_audio(decoded, track_info, self.cfg.downloads_dir, audio_specs, force=force)
+            raw_result = self.organizer.route_audio(
+                decoded, track_info, self.cfg.downloads_dir, audio_specs, force=force
+            )
             audio_map = {audio_spec_key(fmt, br): p for (fmt, br), p in raw_result.items()}
 
         # 获取歌词（一次 API 调用）
@@ -205,7 +221,8 @@ class ProcessService:
             best_lyric = self._pick_best_lyric(lyrics, presets_for_spec)
 
             self.metadata.write(
-                canon_path, track_info,
+                canon_path,
+                track_info,
                 lyric_text=best_lyric if embed_lyrics else None,
                 embed_cover=embed_cover,
                 embed_lyrics=embed_lyrics,
@@ -296,7 +313,10 @@ class ProcessService:
     # ------------------------------------------------------------------
 
     def _link_track(
-        self, audio_map: dict[str, Path], track: Track, playlist_names: list[str],
+        self,
+        audio_map: dict[str, Path],
+        track: Track,
+        playlist_names: list[str],
     ) -> None:
         names = playlist_names or [self.cfg.default_playlist_name]
         for preset in self.cfg.presets:
@@ -357,7 +377,9 @@ class ProcessService:
         return pending, skipped
 
     def _mark_processed(
-        self, audio_map: dict[str, Path], processed_index: dict[str, dict[str, object]],
+        self,
+        audio_map: dict[str, Path],
+        processed_index: dict[str, dict[str, object]],
     ) -> None:
         if not audio_map:
             return
@@ -458,7 +480,9 @@ class ProcessService:
         return result
 
     def _resolve_playlist_names(
-        self, playlist_ids: list[int], playlist_index: Mapping[str, Mapping[str, object]],
+        self,
+        playlist_ids: list[int],
+        playlist_index: Mapping[str, Mapping[str, object]],
     ) -> list[str]:
         names: list[str] = []
         for pid in playlist_ids:
