@@ -61,7 +61,7 @@ def test_engine_shares_snapshot_and_isolates_item_failures(tmp_path: Path) -> No
     assert any(operation.name == "custom-check" for operation in preset_result.operations)
 
 
-def test_engine_prepare_failure_does_not_run_items_or_other_presets(tmp_path: Path) -> None:
+def test_engine_prepare_failure_does_not_run_items_but_other_presets_continue(tmp_path: Path) -> None:
     registrations = [
         PresetRegistration("broken", PrepareFailureSynchronizer, source="broken"),
         PresetRegistration("writer", WritingSynchronizer, source="writer"),

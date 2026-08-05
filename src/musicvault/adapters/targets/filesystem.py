@@ -4,6 +4,8 @@ import os
 import shutil
 from pathlib import Path
 
+from musicvault.shared.utils import same_file_content
+
 
 class FilesystemTarget:
     """本地目录目标适配器；冲突和 dry-run 由上层操作执行器统一处理。"""
@@ -18,7 +20,7 @@ class FilesystemTarget:
         if not source.is_file():
             raise FileNotFoundError(f"链接源文件不存在：{source}")
         if destination.exists():
-            if destination.is_file() and _same_file_content(source, destination):
+            if destination.is_file() and same_file_content(source, destination):
                 return
             raise FileExistsError(f"目标文件已存在且内容不同：{destination}")
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -34,7 +36,7 @@ class FilesystemTarget:
             raise FileNotFoundError(f"复制源文件不存在：{source}")
         destination.parent.mkdir(parents=True, exist_ok=True)
         if destination.exists():
-            if _same_file_content(source, destination):
+            if same_file_content(source, destination):
                 return
             raise FileExistsError(f"目标文件已存在且内容不同：{destination}")
         shutil.copy2(source, destination)
@@ -56,16 +58,3 @@ class FilesystemTarget:
         except ValueError as error:
             raise ValueError(f"目标路径超出目标根目录：{destination}") from error
         return resolved
-
-
-def _same_file_content(first: Path, second: Path) -> bool:
-    if first.stat().st_size != second.stat().st_size:
-        return False
-    with first.open("rb") as left, second.open("rb") as right:
-        while True:
-            left_chunk = left.read(1024 * 1024)
-            right_chunk = right.read(1024 * 1024)
-            if left_chunk != right_chunk:
-                return False
-            if not left_chunk:
-                return True

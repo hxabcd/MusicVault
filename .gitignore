@@ -17,6 +17,6 @@ htmlcov/
 coverage.xml
 
 # Workspace data (runtime downloads / state / library)
-workspace*
+workspace/
 dev_config.json
 .worktrees/

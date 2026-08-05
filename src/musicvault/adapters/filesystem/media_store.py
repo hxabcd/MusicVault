@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import hashlib
 import shutil
 import time
 from pathlib import Path
 
-from musicvault.domain.models import MediaAsset
 from musicvault.adapters.filesystem.workspace import WorkspacePaths
+from musicvault.domain.models import MediaAsset
+from musicvault.shared.utils import same_file_content, sha256_file
 
 
 class FileMediaStore:
@@ -33,7 +33,7 @@ class FileMediaStore:
         destination.parent.mkdir(parents=True, exist_ok=True)
         if not destination.exists():
             shutil.copy2(source_path, destination)
-        elif not _same_file_content(source_path, destination):
+        elif not same_file_content(source_path, destination):
             raise FileExistsError(f"媒体资产目标已存在且内容不同：{destination}")
         return MediaAsset(
             track_id=track_id,
@@ -41,25 +41,7 @@ class FileMediaStore:
             spec=spec,
             path=destination,
             size=destination.stat().st_size,
-            sha256=_sha256(destination),
+            sha256=sha256_file(destination),
             source=source_name or str(source_path),
             updated_at=time.time(),
-        )
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _same_file_content(first: Path, second: Path) -> bool:
-    if first.stat().st_size != second.stat().st_size:
-        return False
-    with first.open("rb") as left, second.open("rb") as right:
-        return all(
-            a == b
-            for a, b in zip(iter(lambda: left.read(1024 * 1024), b""), iter(lambda: right.read(1024 * 1024), b""))
         )

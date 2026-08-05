@@ -2,7 +2,7 @@
 
 ### Requirements to follow
 
-Always answer user, write comment and log in Chinese unless user specified.
+Always answer user, write comment and log **in Chinese** unless user specified.
 
 ### Issue tracker
 

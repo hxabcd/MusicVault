@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import hashlib
 import time
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from musicvault.core.models import Track
 from musicvault.domain.models import MediaAsset, Playlist
 from musicvault.ports.state import StateRepository
+from musicvault.shared.utils import sha256_file
 
 
 class SourceStateRecorder:
@@ -56,15 +56,7 @@ def build_audio_asset_from_file(
         spec=spec,
         path=Path(path),
         size=path.stat().st_size,
-        sha256=_sha256(path),
+        sha256=sha256_file(path),
         source=source,
         updated_at=time.time(),
     )
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()

@@ -231,8 +231,8 @@ def main(argv: list[str] | None = None) -> int:
         if getattr(args, "workspace", None) is not None:
             cfg.workspace = args.workspace
         try:
-            from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
             from musicvault.adapters.filesystem.workspace import WorkspaceMigration, WorkspacePaths
+            from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
 
             paths = WorkspacePaths(cfg.workspace_path)
             state = SQLiteStateRepository(SQLiteState(paths.state_db))
@@ -254,6 +254,7 @@ def main(argv: list[str] | None = None) -> int:
             from musicvault.adapters.targets.filesystem import FilesystemTarget
             from musicvault.application.bootstrap import build_runtime
             from musicvault.application.sync_engine import SyncEngine
+            from musicvault.domain.operations import OperationStatus
 
             runtime = build_runtime(cfg)
             selected = set(args.preset) if args.preset else None
@@ -278,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"成功 {preset_result.success_count}，失败 {preset_result.failed_count}，"
                 f"操作 {len(preset_result.operations)}"
             )
-        if result.status == "failed":
+        if result.status == OperationStatus.FAILED:
             return 1
         output_success(f"目标同步完成，snapshot={result.snapshot_hash[:16]}")
         return 0

@@ -1,18 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from musicvault.domain.models import SourceSnapshot
-from musicvault.domain.operations import OperationResult
-from musicvault.preset_api.v1 import PresetContext, PresetRegistration
+from musicvault.domain.operations import OperationResult, OperationStatus
 from musicvault.ports.target import TargetOperations
+from musicvault.preset_api.v1 import PresetContext, PresetRegistration
 
 
 @dataclass(frozen=True, slots=True)
 class ItemSyncResult:
     track_id: int
-    status: str
+    status: OperationStatus
     error: str | None = None
 
 
@@ -20,33 +20,33 @@ class ItemSyncResult:
 class PresetRunResult:
     name: str
     source: str
-    status: str
+    status: OperationStatus
     item_results: tuple[ItemSyncResult, ...] = ()
     operations: tuple[OperationResult, ...] = ()
     error: str | None = None
 
     @property
     def success_count(self) -> int:
-        return sum(item.status == "succeeded" for item in self.item_results)
+        return sum(item.status == OperationStatus.SUCCEEDED for item in self.item_results)
 
     @property
     def failed_count(self) -> int:
-        return sum(item.status == "failed" for item in self.item_results)
+        return sum(item.status == OperationStatus.FAILED for item in self.item_results)
 
     @property
     def skipped_count(self) -> int:
-        return sum(item.status == "skipped" for item in self.item_results)
+        return sum(item.status == OperationStatus.SKIPPED for item in self.item_results)
 
 
 @dataclass(frozen=True, slots=True)
 class SyncRunResult:
     snapshot_hash: str
     presets: tuple[PresetRunResult, ...]
-    status: str
+    status: OperationStatus
 
     @property
     def failed_presets(self) -> tuple[PresetRunResult, ...]:
-        return tuple(preset for preset in self.presets if preset.status == "failed")
+        return tuple(preset for preset in self.presets if preset.status == OperationStatus.FAILED)
 
 
 class SyncEngine:
@@ -72,13 +72,17 @@ class SyncEngine:
                     PresetRunResult(
                         name=registration.name,
                         source=registration.source,
-                        status="skipped",
+                        status=OperationStatus.SKIPPED,
                         error="preset 已禁用",
                     )
                 )
                 continue
             results.append(self._run_preset(snapshot, registration))
-        status = "succeeded" if all(result.status != "failed" for result in results) else "failed"
+        status = (
+            OperationStatus.SUCCEEDED
+            if all(result.status != OperationStatus.FAILED for result in results)
+            else OperationStatus.FAILED
+        )
         return SyncRunResult(snapshot_hash=snapshot.snapshot_hash, presets=tuple(results), status=status)
 
     def _run_preset(self, snapshot: SourceSnapshot, registration: PresetRegistration) -> PresetRunResult:
@@ -97,7 +101,7 @@ class SyncEngine:
                 return PresetRunResult(
                     name=registration.name,
                     source=registration.source,
-                    status="failed",
+                    status=OperationStatus.FAILED,
                     operations=context.operations,
                     error=(prepare_result.error if isinstance(prepare_result, OperationResult) else None)
                     or prepare_error
@@ -107,7 +111,7 @@ class SyncEngine:
             return PresetRunResult(
                 name=registration.name,
                 source=registration.source,
-                status="failed",
+                status=OperationStatus.FAILED,
                 error=str(error),
             )
 
@@ -118,13 +122,13 @@ class SyncEngine:
                 item_result = synchronizer.sync_item(track, context)
                 operation_error = _operation_error(context.operations[item_operation_start:])
                 if isinstance(item_result, OperationResult) and not item_result.ok:
-                    item_results.append(ItemSyncResult(track.id, "failed", item_result.error))
+                    item_results.append(ItemSyncResult(track.id, OperationStatus.FAILED, item_result.error))
                 elif operation_error:
-                    item_results.append(ItemSyncResult(track.id, "failed", operation_error))
+                    item_results.append(ItemSyncResult(track.id, OperationStatus.FAILED, operation_error))
                 else:
-                    item_results.append(ItemSyncResult(track.id, "succeeded"))
+                    item_results.append(ItemSyncResult(track.id, OperationStatus.SUCCEEDED))
             except Exception as error:  # noqa: BLE001 - 单项失败不阻塞后续曲目
-                item_results.append(ItemSyncResult(track.id, "failed", str(error)))
+                item_results.append(ItemSyncResult(track.id, OperationStatus.FAILED, str(error)))
 
         finalize_error: str | None = None
         finalize_operation_start = len(context.operations)
@@ -136,31 +140,19 @@ class SyncEngine:
         except Exception as error:  # noqa: BLE001 - 记录整理失败并保留其他结果
             finalize_error = str(error)
 
-        failed = any(item.status == "failed" for item in item_results) or finalize_error is not None
+        failed = any(item.status == OperationStatus.FAILED for item in item_results) or finalize_error is not None
         return PresetRunResult(
             name=registration.name,
             source=registration.source,
-            status="failed" if failed else "succeeded",
+            status=OperationStatus.FAILED if failed else OperationStatus.SUCCEEDED,
             item_results=tuple(item_results),
             operations=context.operations,
             error=finalize_error,
         )
 
 
-def run_snapshot(
-    snapshot: SourceSnapshot,
-    registrations: Iterable[PresetRegistration],
-    target: TargetOperations,
-    *,
-    dry_run: bool = False,
-    selected: set[str] | None = None,
-) -> SyncRunResult:
-    """便于 composition root 使用的薄封装。"""
-    return SyncEngine(target, dry_run=dry_run).run(snapshot, registrations, selected=selected)
-
-
 def _operation_error(operations: tuple[OperationResult, ...]) -> str | None:
     for operation in operations:
-        if operation.status == "failed":
+        if operation.status == OperationStatus.FAILED:
             return operation.error or f"操作失败：{operation.name}"
     return None

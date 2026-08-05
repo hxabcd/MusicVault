@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import re
 import shutil
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from musicvault.core.models import Track
@@ -17,6 +18,29 @@ _FILENAME_TEMPLATE_RE = re.compile(r"\{(\w+)\}")
 logger = logging.getLogger(__name__)
 
 _hardlink_fallback_warned = False
+
+
+def sha256_file(path: Path) -> str:
+    """计算文件 SHA-256 摘要。"""
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def same_file_content(first: Path, second: Path) -> bool:
+    """按内容比较两个文件是否相同。"""
+    if first.stat().st_size != second.stat().st_size:
+        return False
+    with first.open("rb") as left, second.open("rb") as right:
+        while True:
+            left_chunk = left.read(1024 * 1024)
+            right_chunk = right.read(1024 * 1024)
+            if left_chunk != right_chunk:
+                return False
+            if not left_chunk:
+                return True
 
 
 def _warn_hardlink_fallback_once() -> None:
@@ -34,7 +58,7 @@ def safe_filename(name: str, fallback: str = "untitled") -> str:
     return clean or fallback
 
 
-def format_track_name(template: str, track: "Track") -> str:
+def format_track_name(template: str, track: Track) -> str:
     """用模板格式化曲目文件名。
 
     支持的占位符：

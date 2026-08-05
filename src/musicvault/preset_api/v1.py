@@ -4,17 +4,18 @@ import importlib.util
 import inspect
 import re
 import sys
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Iterable, Protocol
+from typing import Any, Protocol
 
-from musicvault.application.media_resolver import SnapshotMediaResolver
-from musicvault.application.operation_executor import OperationExecutor
 from musicvault.core.models import Track
 from musicvault.domain.models import MediaAsset, Playlist, SourceSnapshot, TargetDescriptor
 from musicvault.domain.operations import Operation, OperationResult
 from musicvault.ports.media import MediaRequest, MediaResolver
 from musicvault.ports.target import TargetOperations
+from musicvault.preset_api._executor import OperationExecutor
+from musicvault.preset_api._media import SnapshotMediaResolver
 
 API_VERSION = "v1"
 _NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
@@ -23,8 +24,8 @@ __all__ = [
     "Operation",
     "PresetContext",
     "PresetLoadError",
-    "PresetRegistry",
     "PresetRegistration",
+    "PresetRegistry",
     "TargetSynchronizer",
 ]
 
@@ -36,11 +37,11 @@ class PresetLoadError(RuntimeError):
 class TargetSynchronizer(Protocol):
     """preset 的公开最小生命周期契约。"""
 
-    def prepare(self, context: "PresetContext") -> Any: ...
+    def prepare(self, context: PresetContext) -> Any: ...
 
-    def sync_item(self, track: Track, context: "PresetContext") -> Any: ...
+    def sync_item(self, track: Track, context: PresetContext) -> Any: ...
 
-    def finalize(self, context: "PresetContext") -> Any: ...
+    def finalize(self, context: PresetContext) -> Any: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,10 +135,6 @@ class PresetContext:
             supports_dry_run=supports_dry_run,
         )
 
-    def register_custom_operation(self, *args: Any, **kwargs: Any) -> OperationResult:
-        """公开别名，兼容把“登记并执行”称为 register 的 preset 写法。"""
-        return self.custom_operation(*args, **kwargs)
-
 
 class PresetRegistry:
     """内置和外部 Python preset 的确定性注册表。"""
@@ -220,7 +217,7 @@ class PresetRegistry:
             raise
         except ImportError as error:
             raise PresetLoadError(f"preset 脚本依赖缺失：{script}；请在当前 Python 环境安装 {error.name}") from error
-        except Exception as error:  # noqa: BLE001 - 脚本错误必须阻止不完整同步
+        except Exception as error:
             raise PresetLoadError(f"preset 脚本加载失败：{script}：{error}") from error
         finally:
             self._loading_source = None
