@@ -13,7 +13,7 @@ from musicvault.adapters.processors.lyrics import (
 )
 from musicvault.adapters.processors.metadata_writer import MetadataWriter
 from musicvault.adapters.processors.organizer import Organizer
-from musicvault.adapters.providers.pyncm_client import PyncmClient
+from musicvault.adapters.providers.netease_client import NeteaseClient
 from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
 from musicvault.core.preset import Preset, audio_spec_key, build_audio_specs, compute_preset_hash
@@ -34,7 +34,7 @@ class ProcessService:
     def __init__(
         self,
         cfg: Config,
-        api: PyncmClient,
+        api: NeteaseClient,
         decryptor: Decryptor,
         organizer: Organizer,
         metadata: MetadataWriter,

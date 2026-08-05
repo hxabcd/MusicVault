@@ -38,7 +38,7 @@ def _handle_double_sigint(signum: int, frame: object) -> None:
 
 
 def _silence_libs() -> None:
-    for name in ("pyncm", "urllib3.connectionpool", "App"):
+    for name in ("urllib3.connectionpool", "App"):
         muted = logging.getLogger(name)
         muted.setLevel(logging.WARNING)
         muted.propagate = False
@@ -196,12 +196,12 @@ def main(argv: list[str] | None = None) -> int:
         workspace = getattr(args, "workspace", None)
         if workspace is not None:
             cfg.workspace = workspace
-        from musicvault.adapters.providers.pyncm_client import PyncmClient
+        from musicvault.adapters.providers.netease_client import NeteaseClient
         from musicvault.services.run_service import RunService
 
         service = RunService(
             cfg=cfg,
-            api=PyncmClient(
+            api=NeteaseClient(
                 text_cleaning_enabled=cfg.text_cleaning_enabled,
                 download_quality=cfg.download_quality,
                 api_download_url_chunk_size=cfg.api_download_url_chunk_size,
@@ -252,12 +252,12 @@ def main(argv: list[str] | None = None) -> int:
     # add / remove 成功后自动执行 sync；其余子命令照原样传递
     pipeline_cmd = args.command if args.command in ("sync", "pull", "process") else "sync"
 
-    from musicvault.adapters.providers.pyncm_client import PyncmClient
+    from musicvault.adapters.providers.netease_client import NeteaseClient
     from musicvault.services.run_service import RunService
 
     service = RunService(
         cfg=cfg,
-        api=PyncmClient(
+        api=NeteaseClient(
             text_cleaning_enabled=cfg.text_cleaning_enabled,
             download_quality=cfg.download_quality,
             api_download_url_chunk_size=cfg.api_download_url_chunk_size,
@@ -315,9 +315,9 @@ def _render_qrcode(url: str) -> str:
 
 def _interactive_login() -> str | None:
     """交互式登录，返回 cookie 字符串；用户取消则返回 None"""
-    from musicvault.adapters.providers.pyncm_client import PyncmClient
+    from musicvault.adapters.providers.netease_client import NeteaseClient
 
-    api = PyncmClient()
+    api = NeteaseClient()
     max_attempts = 3
 
     for attempt in range(max_attempts):

@@ -31,7 +31,7 @@ pip install -e .
 
 依赖项（由 `pyproject.toml` 声明）：
 
-- `pyncm` — 网易云 API 封装
+- `pymusiclibrary` — 网易云 API 封装（NeteaseCloudMusicApi Python 绑定）
 - `mutagen` — 音频元数据写入
 - `ncmdump-py` — NCM 文件解密
 - `rich` — 终端 UI 美化

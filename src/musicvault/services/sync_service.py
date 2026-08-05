@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from musicvault.adapters.processors.downloader import Downloader
-from musicvault.adapters.providers.pyncm_client import PyncmClient
+from musicvault.adapters.providers.netease_client import NeteaseClient
 from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
 from musicvault.core.preset import Preset, audio_spec_key
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 class SyncService:
-    def __init__(self, cfg: Config, api: PyncmClient, downloader: Downloader, workers: int) -> None:
+    def __init__(self, cfg: Config, api: NeteaseClient, downloader: Downloader, workers: int) -> None:
         self.cfg = cfg
         self.api = api
         self.downloader = downloader

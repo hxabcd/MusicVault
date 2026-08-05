@@ -111,9 +111,9 @@ def _fetch_playlist_info(pid: int, cookie: str | None) -> dict[str, object] | No
     if not cookie:
         return None
     try:
-        from musicvault.adapters.providers.pyncm_client import PyncmClient
+        from musicvault.adapters.providers.netease_client import NeteaseClient
 
-        api = PyncmClient()
+        api = NeteaseClient()
         api.login_with_cookie(cookie)
         return dict(api.get_playlist_info(pid))
     except Exception:
@@ -260,9 +260,9 @@ def _add_playlist_interactive(cfg: Config, cookie: str | None) -> int:
         output_info('请先执行 msv sync 登录，或通过 msv add <ID> --cookie "..." 添加')
         return 1
 
-    from musicvault.adapters.providers.pyncm_client import PyncmClient
+    from musicvault.adapters.providers.netease_client import NeteaseClient
 
-    api = PyncmClient()
+    api = NeteaseClient()
     try:
         user = api.login_with_cookie(cookie)
         playlists = api.list_user_playlists(user.user_id)

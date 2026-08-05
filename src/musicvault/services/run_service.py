@@ -9,7 +9,7 @@ from musicvault.adapters.processors.decryptor import Decryptor
 from musicvault.adapters.processors.downloader import Downloader
 from musicvault.adapters.processors.metadata_writer import MetadataWriter
 from musicvault.adapters.processors.organizer import Organizer
-from musicvault.adapters.providers.pyncm_client import PyncmClient
+from musicvault.adapters.providers.netease_client import NeteaseClient
 from musicvault.core.config import Config
 from musicvault.core.preset import audio_spec_key, compute_preset_hash
 from musicvault.services.process_service import ProcessService
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class RunService:
-    def __init__(self, cfg: Config, api: PyncmClient) -> None:
+    def __init__(self, cfg: Config, api: NeteaseClient) -> None:
         self.cfg = cfg
         self.api = api
 

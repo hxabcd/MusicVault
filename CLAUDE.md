@@ -54,7 +54,7 @@ cli/playlist.py       → 交互式歌单管理（添加/移除/列出）
 services/run_service.py   → 顶层流水线：sync → pull / process，组装各服务并注入配置
 services/sync_service.py  → 歌单 diff 与本地状态，并行下载新曲目
 services/process_service.py → 解密、路由（按 preset 规格去重）、写入元数据与歌词、LRC 侧车
-adapters/providers/pyncm_client.py → pyncm 封装：登录、歌单、URL、歌词（接受下载质量、批次大小等配置）
+adapters/providers/netease_client.py → pymusiclibrary（NeteaseCloudMusicApi 原生绑定）封装：登录、歌单、URL、歌词（接受下载质量、批次大小等配置）
 adapters/processors/downloader.py   → HTTP 下载，基于 Content-Type 检测扩展名，可配置文件名模板
 adapters/processors/decryptor.py    → .ncm 解密（ncmdump-py）
 adapters/processors/organizer.py    → ffmpeg 路由：多规格输出（按 format+bitrate 去重），返回 {spec: Path}
