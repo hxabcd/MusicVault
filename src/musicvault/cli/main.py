@@ -289,6 +289,7 @@ def main(argv: list[str] | None = None) -> int:
         if workspace is not None:
             cfg.workspace = workspace
         from musicvault.adapters.providers.netease_client import NeteaseClient
+        from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
         from musicvault.services.run_service import RunService
 
         service = RunService(
@@ -301,6 +302,7 @@ def main(argv: list[str] | None = None) -> int:
                 api_track_detail_chunk_size=cfg.api_track_detail_chunk_size,
                 alias_split_separators=cfg.alias_split_separators,
             ),
+            state=SQLiteStateRepository(SQLiteState(cfg.state_db_file)),
         )
         try:
             service.rebuild_index()

@@ -10,8 +10,11 @@ from musicvault.adapters.processors.downloader import Downloader
 from musicvault.adapters.processors.metadata_writer import MetadataWriter
 from musicvault.adapters.processors.organizer import Organizer
 from musicvault.adapters.providers.netease_client import NeteaseClient
+from musicvault.application.source_state import SourceStateRecorder, build_audio_asset_from_file
 from musicvault.core.config import Config
+from musicvault.core.models import Track
 from musicvault.core.preset import audio_spec_key, compute_preset_hash
+from musicvault.domain.models import Playlist
 from musicvault.ports.state import StateRepository
 from musicvault.services.process_service import ProcessService
 from musicvault.services.sync_service import SyncService
@@ -39,6 +42,8 @@ class RunService:
         self.cfg = cfg
         self.api = api
         self.dry_run = dry_run
+        # 可选：把重建/处理的源侧状态写入新 SQLite，供 target-sync 消费
+        self.recorder = SourceStateRecorder(state) if state is not None else None
 
         cpu = os.cpu_count() or 4
         auto_download = max(1, min(6, cpu))
@@ -175,6 +180,9 @@ class RunService:
                 }
         save_json(self.cfg.processed_state_file, processed)
 
+        if self.recorder is not None:
+            self._record_rebuilt_state(track_ids, track_playlists, playlist_index, processed)
+
         orphaned = sum(1 for tid in track_ids if not track_playlists.get(tid))
         playlist_count = len({pid for pids in track_playlists.values() for pid in pids})
 
@@ -188,6 +196,42 @@ class RunService:
             playlist_count,
         )
         return len(track_ids), playlist_count
+
+    def _record_rebuilt_state(
+        self,
+        track_ids: set[int],
+        track_playlists: dict[int, set[int]],
+        playlist_index: dict[str, dict[str, object]],
+        processed: dict[str, dict[str, object]],
+    ) -> None:
+        """把磁盘重建的源侧状态写入 SQLite，供 target-sync 消费。"""
+        assert self.recorder is not None
+        # 已存在的曲目保留真实元数据，占位记录只补缺失项，避免覆盖 sync 写入的信息。
+        known_ids = {track.id for track in self.recorder.state.create_snapshot().tracks}
+        tracks = [
+            Track(id=tid, name=str(tid), artists=[], album="Unknown Album", raw={})
+            for tid in sorted(track_ids)
+            if tid not in known_ids
+        ]
+        playlists: list[Playlist] = []
+        for pid_str, entry in playlist_index.items():
+            if not pid_str.lstrip("-").isdigit() or not isinstance(entry, dict):
+                continue
+            pid = int(pid_str)
+            name = str(entry.get("name") or pid)
+            member_ids = tuple(sorted(tid for tid, pids in track_playlists.items() if pid in pids))
+            # 跳过空歌单，避免清空 sync 已录的 playlist_tracks 关系。
+            if member_ids:
+                playlists.append(Playlist(pid, name, member_ids))
+        assets = [
+            build_audio_asset_from_file(
+                int(tid_str), spec_key, _abs_path(self.cfg.workspace_path, rel), source="pipeline:reindex"
+            )
+            for tid_str, entry in processed.items()
+            for spec_key, rel in (entry.get("audios") or {}).items()
+        ]
+        managed = [song_id for song_id in self.cfg.get_song_ids() if song_id in track_ids]
+        self.recorder.record_source_state(tracks, playlists, managed, assets)
 
     def link_only(self, cookie: str) -> tuple[int, int]:
         """仅创建 library 硬链接，跳过下载、解码、转码、元数据和歌词处理。
@@ -396,3 +440,12 @@ def _guess_spec_from_filename(filename: str) -> str | None:
         if parts[1].rstrip("k").isdigit():
             return audio_spec_key(fmt, parts[1])
     return audio_spec_key(fmt, None)
+
+
+def _abs_path(workspace: Path, stored: str) -> Path:
+    """把 processed_files.json 中保存的路径还原为绝对路径。
+
+    保存的是 workspace 相对路径；跨盘符时保存的就是绝对路径。
+    """
+    path = Path(stored)
+    return path if path.is_absolute() else (workspace / path).resolve()
