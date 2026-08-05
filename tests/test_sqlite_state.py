@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
+from musicvault.adapters.state.sqlite import SCHEMA_VERSION, SQLiteState, SQLiteStateRepository
 from musicvault.core.models import Track
 from musicvault.domain.models import MediaAsset, Playlist
 
@@ -65,10 +65,9 @@ def test_repository_round_trip_and_snapshot_are_atomic(tmp_path: Path) -> None:
     assert snapshot.media_assets[0].sha256 == "abc"
     assert snapshot.snapshot_hash
 
-    with pytest.raises(RuntimeError):
-        with repo.transaction() as connection:
-            repo.upsert_track(_track(2), connection=connection)
-            raise RuntimeError("模拟事务回滚")
+    with pytest.raises(RuntimeError), repo.transaction() as connection:
+        repo.upsert_track(_track(2), connection=connection)
+        raise RuntimeError("模拟事务回滚")
     assert repo.get_track(2) is None
 
 
@@ -84,3 +83,39 @@ def test_unique_media_asset_is_replaced_not_duplicated(tmp_path: Path) -> None:
     assets = repo.list_media_assets(track_id=1)
     assert len(assets) == 1
     assert assets[0].path == tmp_path / "b.mp3"
+
+
+def test_initialize_rejects_newer_database_version(tmp_path: Path) -> None:
+    path = tmp_path / "state.db"
+    SQLiteState(path).initialize()
+    with SQLiteState(path).connect() as connection:
+        connection.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION + 1,))
+
+    with pytest.raises(RuntimeError, match="高于"):
+        SQLiteState(path).initialize()
+
+
+def test_transaction_rollback_keeps_prior_committed_state(tmp_path: Path) -> None:
+    repo = SQLiteStateRepository(SQLiteState(tmp_path / "state.db"))
+    repo.upsert_track(_track(1))
+
+    with pytest.raises(RuntimeError), repo.transaction() as connection:
+        repo.upsert_track(_track(2), connection=connection)
+        raise RuntimeError("模拟回滚")
+
+    assert repo.get_track(1) is not None
+    assert repo.get_track(2) is None
+
+
+def test_deleting_playlist_cascades_playlist_tracks(tmp_path: Path) -> None:
+    repo = SQLiteStateRepository(SQLiteState(tmp_path / "state.db"))
+    repo.save_source_state([_track()], [Playlist(id=10, name="歌单", track_ids=(1,))], [])
+
+    with repo.database.connect() as connection:
+        connection.execute("DELETE FROM playlists WHERE id = 10")
+
+    with repo.database.connect() as connection:
+        remaining = connection.execute(
+            "SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = 10"
+        ).fetchone()[0]
+    assert remaining == 0

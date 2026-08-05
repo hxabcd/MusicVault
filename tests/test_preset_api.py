@@ -7,8 +7,8 @@ import pytest
 from musicvault.preset_api.v1 import (
     API_VERSION,
     PresetLoadError,
-    PresetRegistry,
     PresetRegistration,
+    PresetRegistry,
 )
 
 
@@ -64,3 +64,80 @@ def test_registry_rejects_incompatible_api_version() -> None:
                 source="old.py",
             )
         )
+
+
+def test_registry_script_registers_multiple_presets(tmp_path: Path) -> None:
+    script = tmp_path / "multi.py"
+    script.write_text(
+        "from musicvault.preset_api.v1 import API_VERSION\n"
+        "class SyncA:\n"
+        "    def prepare(self, context): pass\n"
+        "    def sync_item(self, track, context): pass\n"
+        "    def finalize(self, context): pass\n"
+        "class SyncB:\n"
+        "    def prepare(self, context): pass\n"
+        "    def sync_item(self, track, context): pass\n"
+        "    def finalize(self, context): pass\n"
+        "def register(registry):\n"
+        "    registry.register('multi-a', SyncA, api_version=API_VERSION)\n"
+        "    registry.register('multi-b', SyncB, api_version=API_VERSION)\n",
+        encoding="utf-8",
+    )
+
+    registry = PresetRegistry()
+    registry.load_directories([tmp_path])
+
+    assert {item.name for item in registry.registrations()} == {"multi-a", "multi-b"}
+    assert registry.get("multi-a").create().__class__.__name__ == "SyncA"
+    assert registry.get("multi-b").create().__class__.__name__ == "SyncB"
+
+
+def test_registry_missing_register_function_reports_script_path(tmp_path: Path) -> None:
+    script = tmp_path / "broken.py"
+    script.write_text(
+        "class Sync:\n"
+        "    def prepare(self, context): pass\n"
+        "    def sync_item(self, track, context): pass\n"
+        "    def finalize(self, context): pass\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PresetLoadError) as error:
+        PresetRegistry().load_directories([tmp_path])
+
+    assert "register" in str(error.value)
+    assert str(script) in str(error.value)
+
+
+def test_registry_multiple_directories_load_order_is_deterministic(tmp_path: Path) -> None:
+    first_dir = tmp_path / "first"
+    second_dir = tmp_path / "second"
+    for directory, name in ((first_dir, "alpha"), (second_dir, "beta")):
+        directory.mkdir()
+        (directory / "sync.py").write_text(
+            "from musicvault.preset_api.v1 import API_VERSION\n"
+            "class Sync:\n"
+            "    def prepare(self, context): pass\n"
+            "    def sync_item(self, track, context): pass\n"
+            "    def finalize(self, context): pass\n"
+            f"def register(registry):\n"
+            f"    registry.register('{name}', Sync, api_version=API_VERSION)\n",
+            encoding="utf-8",
+        )
+
+    forward = PresetRegistry()
+    forward.load_directories([first_dir, second_dir])
+    reverse = PresetRegistry()
+    reverse.load_directories([second_dir, first_dir])
+
+    assert [item.name for item in forward.registrations()] == ["alpha", "beta"]
+    assert [item.name for item in reverse.registrations()] == ["alpha", "beta"]
+
+
+def test_registry_disabled_preset_is_filtered_when_requested() -> None:
+    registry = PresetRegistry()
+    registry.register(PresetRegistration("enabled", lambda: object(), source="a.py"))
+    registry.register(PresetRegistration("disabled", lambda: object(), source="b.py", enabled=False))
+
+    assert {item.name for item in registry.registrations()} == {"disabled", "enabled"}
+    assert {item.name for item in registry.registrations(enabled_only=True)} == {"enabled"}

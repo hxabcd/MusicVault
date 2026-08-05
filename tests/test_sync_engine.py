@@ -81,3 +81,94 @@ def test_dry_run_does_not_run_standard_or_custom_side_effects(tmp_path: Path) ->
 
     assert not (tmp_path / "output.txt").exists()
     assert all(operation.status == "planned" for operation in result.presets[0].operations)
+
+
+class SucceedingSynchronizer:
+    def prepare(self, context) -> None:
+        context.write_text(Path("output.txt"), "ok")
+
+    def sync_item(self, track, context) -> None:
+        pass
+
+    def finalize(self, context) -> None:
+        pass
+
+
+class FinalizeFailureSynchronizer:
+    def prepare(self, context) -> None:
+        context.write_text(Path("output.txt"), "ok")
+
+    def sync_item(self, track, context) -> None:
+        pass
+
+    def finalize(self, context) -> None:
+        raise RuntimeError("整理失败")
+
+
+class MarkerSynchronizer:
+    def __init__(self, marker: str) -> None:
+        self.marker = marker
+
+    def prepare(self, context) -> None:
+        context.write_text(Path(f"{self.marker}.txt"), "ok")
+
+    def sync_item(self, track, context) -> None:
+        pass
+
+    def finalize(self, context) -> None:
+        pass
+
+
+def test_engine_one_preset_failure_does_not_stop_others_and_overall_is_failed(tmp_path: Path) -> None:
+    registrations = [
+        PresetRegistration("broken", PrepareFailureSynchronizer, source="broken"),
+        PresetRegistration("good", SucceedingSynchronizer, source="good"),
+    ]
+
+    result = SyncEngine(target=FilesystemTarget(tmp_path)).run(_snapshot(), registrations)
+
+    assert result.status == "failed"
+    assert result.presets[0].status == "failed"
+    assert result.presets[0].item_results == ()
+    assert result.presets[1].status == "succeeded"
+    assert result.presets[1].success_count == 2
+    assert (tmp_path / "output.txt").read_text(encoding="utf-8") == "ok"
+
+
+def test_engine_finalize_failure_keeps_successful_items_and_marks_failed(tmp_path: Path) -> None:
+    result = SyncEngine(target=FilesystemTarget(tmp_path)).run(
+        _snapshot(), [PresetRegistration("finalize-broken", FinalizeFailureSynchronizer, source="test")]
+    )
+
+    preset_result = result.presets[0]
+    assert preset_result.status == "failed"
+    assert preset_result.success_count == 2
+    assert preset_result.failed_count == 0
+    assert "整理失败" in (preset_result.error or "")
+    assert (tmp_path / "output.txt").exists()
+
+
+def test_engine_disabled_preset_is_skipped_without_running(tmp_path: Path) -> None:
+    result = SyncEngine(target=FilesystemTarget(tmp_path)).run(
+        _snapshot(),
+        [PresetRegistration("disabled", SucceedingSynchronizer, source="test", enabled=False)],
+    )
+
+    preset_result = result.presets[0]
+    assert preset_result.status == "skipped"
+    assert preset_result.error == "preset 已禁用"
+    assert not (tmp_path / "output.txt").exists()
+    assert result.status == "succeeded"
+
+
+def test_engine_selected_subset_runs_only_requested_presets(tmp_path: Path) -> None:
+    registrations = [
+        PresetRegistration("alpha", lambda: MarkerSynchronizer("alpha"), source="test"),
+        PresetRegistration("beta", lambda: MarkerSynchronizer("beta"), source="test"),
+    ]
+
+    result = SyncEngine(target=FilesystemTarget(tmp_path)).run(_snapshot(), registrations, selected={"alpha"})
+
+    assert [item.name for item in result.presets] == ["alpha"]
+    assert (tmp_path / "alpha.txt").exists()
+    assert not (tmp_path / "beta.txt").exists()
