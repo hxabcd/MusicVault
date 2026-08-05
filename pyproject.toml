@@ -5,7 +5,9 @@ description = "Sync and process NetEase Cloud Music library locally"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "pymusiclibrary>=0.0.4",
+    # 本地构建：修复大歌单 Access Violation 崩溃（上游 issue #3 未修）
+    # 构建源：D:\MyPC\Dev\Projects\ncm-python-sdk（分支 fix/playlist-large-response-crash）
+    "pymusiclibrary @ file:///D:/MyPC/Dev/Projects/ncm-python-sdk/src/python/dist/pymusiclibrary-0.0.4.post1-cp311-abi3-win_amd64.whl",
     "mutagen>=1.47.0",
     "ncmdump-py>=0.2.0",
     "rich>=13.7.0",
