@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from musicvault.core.models import Track
 from musicvault.domain.models import MediaAsset, Playlist, SourceSnapshot
@@ -70,6 +72,17 @@ CREATE TABLE IF NOT EXISTS export_targets (
 """
 
 _MIGRATIONS: dict[int, str] = {1: _SCHEMA_SQL}
+
+
+@dataclass(frozen=True, slots=True)
+class RegisteredPreset:
+    """preset_registry 表的只读查询结果。"""
+
+    name: str
+    source: str
+    api_version: str
+    enabled: bool
+    script_hash: str | None
 
 
 class SQLiteState:
@@ -276,6 +289,20 @@ class SQLiteStateRepository:
                 owned.execute(sql, values)
         else:
             connection.execute(sql, values)
+
+    def list_registered_presets(self) -> list[RegisteredPreset]:
+        with self.database.connect() as connection:
+            rows = connection.execute("SELECT * FROM preset_registry ORDER BY name").fetchall()
+        return [
+            RegisteredPreset(
+                name=str(row["name"]),
+                source=str(row["source"]),
+                api_version=str(row["api_version"]),
+                enabled=bool(row["enabled"]),
+                script_hash=row["script_hash"],
+            )
+            for row in rows
+        ]
 
     def register_target(
         self,

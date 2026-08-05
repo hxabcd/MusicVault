@@ -28,4 +28,13 @@ def build_runtime(config: Config) -> Runtime:
         register_builtin_presets(presets, paths.library / "playlist_links")
     directories = [Path(directory) for directory in config.preset_directories]
     presets.load_directories(directories)
+    for registration in presets.registrations():
+        state.register_preset(
+            name=registration.name,
+            source=registration.source,
+            api_version=registration.api_version,
+            enabled=registration.enabled,
+            # PresetRegistration 暂无 script_hash 字段，统一写 None。
+            script_hash=None,
+        )
     return Runtime(paths=paths, state=state, presets=presets)
