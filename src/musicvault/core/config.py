@@ -36,6 +36,8 @@ class Config:
     api_track_detail_chunk_size: int = 500
     alias_split_separators: str = "/、;；"
     presets: list[Preset] = field(default_factory=default_presets)
+    preset_directories: tuple[str, ...] = ()
+    builtin_playlist_links_enabled: bool = True
     _file: Path | None = field(default=None, init=False, repr=False)
 
     @property
@@ -51,8 +53,25 @@ class Config:
         return self.downloads_dir / "cache"
 
     @property
+    def cache_dir(self) -> Path:
+        """新架构的临时缓存目录；downloads/cache 作为旧布局保留。"""
+        return self.workspace_path / "cache"
+
+    @property
+    def media_store_dir(self) -> Path:
+        return self.workspace_path / "media_store"
+
+    @property
     def state_dir(self) -> Path:
         return self.workspace_path / "state"
+
+    @property
+    def state_db_file(self) -> Path:
+        return self.workspace_path / "state.db"
+
+    @property
+    def logs_dir(self) -> Path:
+        return self.workspace_path / "logs"
 
     @property
     def library_dir(self) -> Path:
@@ -74,7 +93,10 @@ class Config:
             self.workspace_path,
             self.downloads_dir,
             self.downloads_cache_dir,
+            self.cache_dir,
+            self.media_store_dir,
             self.state_dir,
+            self.logs_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
         for preset in self.presets:
@@ -175,6 +197,18 @@ class Config:
         if not isinstance(alias_cfg, dict):
             alias_cfg = {}
 
+        preset_system = raw.get("preset_system") or raw.get("preset") or {}
+        if not isinstance(preset_system, dict):
+            preset_system = {}
+        preset_dirs_raw = (
+            raw.get("preset_directories")
+            if raw.get("preset_directories") is not None
+            else preset_system.get("directories", [])
+        )
+        if not isinstance(preset_dirs_raw, list):
+            preset_dirs_raw = []
+        preset_directories = tuple(str(item).strip() for item in preset_dirs_raw if str(item).strip())
+
         # Parse presets
         presets_raw = raw.get("presets")
         if isinstance(presets_raw, list) and presets_raw:
@@ -226,6 +260,10 @@ class Config:
             api_track_detail_chunk_size=max(50, _parse_positive_int(api_cfg.get("track_detail_chunk_size"), 500)),
             alias_split_separators=str(alias_cfg.get("split_separators") or "/、;；"),
             presets=presets,
+            preset_directories=preset_directories,
+            builtin_playlist_links_enabled=bool(
+                raw.get("builtin_playlist_links", preset_system.get("playlist_links", True))
+            ),
         )
 
     @classmethod
@@ -313,6 +351,10 @@ class Config:
             },
             "alias": {
                 "split_separators": self.alias_split_separators,
+            },
+            "preset_system": {
+                "directories": list(self.preset_directories),
+                "playlist_links": self.builtin_playlist_links_enabled,
             },
         }
 

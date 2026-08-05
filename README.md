@@ -51,6 +51,9 @@ pip install -e .
 | `msv remove` | 移除已添加的歌单 |
 | `msv list` | 查看已添加的歌单 |
 | `msv ls` | `list` 的别名 |
+| `msv migrate` | 将旧 workspace 安全迁移到 `cache`、`media_store` 和 SQLite |
+| `msv presets` | 列出内置和外部 Python preset |
+| `msv target-sync` | 从 SQLite 源快照运行目标同步 preset |
 | `msv help` | 显示帮助信息 |
 
 ### msv sync — 同步音乐
@@ -76,6 +79,19 @@ msv pull [--config CONFIG] [--cookie COOKIE] [--workspace WORKSPACE] [-v]
 ```bash
 msv process [--config CONFIG] [--cookie COOKIE] [--workspace WORKSPACE] [--force] [--no-translation] [-v]
 ```
+
+### 模块化目标同步闭环
+
+已有 workspace 可先执行一次迁移。迁移默认保留旧文件作为备份，并把旧状态导入 `state.db`：
+
+```bash
+msv migrate --workspace ./workspace
+msv presets --workspace ./workspace
+msv target-sync --workspace ./workspace [--preset playlist_links] [--dry-run]
+```
+
+外部 preset 脚本通过配置中的 `preset_system.directories` 发现，并依赖版本化的
+`musicvault.preset_api.v1`。`target-sync` 在一次运行中为所有启用 preset 共享同一个 SQLite `SourceSnapshot`。
 
 ### msv add — 添加歌单
 

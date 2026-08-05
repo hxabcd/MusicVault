@@ -144,6 +144,25 @@ def build_parser() -> argparse.ArgumentParser:
     reindex = sub.add_parser("reindex", help="重建索引", description="通过 downloads 目录中的文件重建已下载索引")
     _add_common_args(reindex, include_dry_run=False)
 
+    presets = sub.add_parser("presets", help="列出可用 preset", description="发现并列出内置和外部 Python preset")
+    presets.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）")
+    presets.add_argument("--workspace", default=None, help="工作目录")
+    presets.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
+
+    migrate = sub.add_parser("migrate", help="迁移 workspace", description="将旧 downloads 音频安全复制到 media_store")
+    migrate.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）")
+    migrate.add_argument("--workspace", default=None, help="工作目录")
+    migrate.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
+
+    target_sync = sub.add_parser(
+        "target-sync", help="运行本地目标同步", description="从 SQLite 源快照执行已发现 preset 的目标同步"
+    )
+    target_sync.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）")
+    target_sync.add_argument("--workspace", default=None, help="工作目录")
+    target_sync.add_argument("--preset", action="append", default=None, help="只执行指定 preset，可重复指定")
+    target_sync.add_argument("--dry-run", action="store_true", help="只展示操作计划，不产生目标端副作用")
+    target_sync.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
+
     return parser
 
 
@@ -192,6 +211,77 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         cookie, _ = _ensure_cookie(args, cfg)
         return 0 if cookie else 2
+
+    if args.command == "presets":
+        if getattr(args, "workspace", None) is not None:
+            cfg.workspace = args.workspace
+        try:
+            from musicvault.application.bootstrap import build_runtime
+
+            runtime = build_runtime(cfg)
+            for registration in runtime.presets.registrations():
+                state = "启用" if registration.enabled else "禁用"
+                output_info(f"{registration.name}\t{state}\t{registration.api_version}\t{registration.source}")
+        except Exception as error:  # noqa: BLE001 - CLI 将加载失败转换为非零退出码
+            output_error(f"preset 加载失败：{error}")
+            return 2
+        return 0
+
+    if args.command == "migrate":
+        if getattr(args, "workspace", None) is not None:
+            cfg.workspace = args.workspace
+        try:
+            from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
+            from musicvault.adapters.filesystem.workspace import WorkspaceMigration, WorkspacePaths
+
+            paths = WorkspacePaths(cfg.workspace_path)
+            state = SQLiteStateRepository(SQLiteState(paths.state_db))
+            report = WorkspaceMigration(paths, state).migrate()
+        except Exception as error:  # noqa: BLE001 - CLI 将迁移失败转换为非零退出码
+            output_error(f"workspace 迁移失败：{error}")
+            return 2
+        output_success(
+            f"迁移完成：复制 {report.copied_assets} 个媒体资产，"
+            f"跳过 {report.skipped_assets} 个，缓存复制 {report.copied_cache_files} 个，"
+            f"忽略 {report.ignored_files} 个文件"
+        )
+        return 0
+
+    if args.command == "target-sync":
+        if getattr(args, "workspace", None) is not None:
+            cfg.workspace = args.workspace
+        try:
+            from musicvault.adapters.targets.filesystem import FilesystemTarget
+            from musicvault.application.bootstrap import build_runtime
+            from musicvault.application.sync_engine import SyncEngine
+
+            runtime = build_runtime(cfg)
+            selected = set(args.preset) if args.preset else None
+            if selected:
+                missing = sorted(selected - {item.name for item in runtime.presets.registrations()})
+                if missing:
+                    raise RuntimeError(f"未找到指定 preset：{', '.join(missing)}")
+            result = SyncEngine(
+                FilesystemTarget(runtime.paths.library),
+                dry_run=getattr(args, "dry_run", False),
+            ).run(
+                runtime.state.create_snapshot(),
+                runtime.presets.registrations(enabled_only=True),
+                selected=selected,
+            )
+        except Exception as error:  # noqa: BLE001 - CLI 将应用失败转换为非零退出码
+            output_error(f"目标同步失败：{error}")
+            return 2
+        for preset_result in result.presets:
+            output_info(
+                f"{preset_result.name}: {preset_result.status}，"
+                f"成功 {preset_result.success_count}，失败 {preset_result.failed_count}，"
+                f"操作 {len(preset_result.operations)}"
+            )
+        if result.status == "failed":
+            return 1
+        output_success(f"目标同步完成，snapshot={result.snapshot_hash[:16]}")
+        return 0
 
     # reindex 不需要 API，直接重建索引
     if args.command == "reindex":
