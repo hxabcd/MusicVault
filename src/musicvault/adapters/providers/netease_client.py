@@ -218,11 +218,28 @@ class NeteaseClient:
         }
 
     def get_playlist_tracks(self, playlist_id: int) -> list[Track]:
-        """获取歌单曲目并标准化为 Track 列表"""
+        """获取歌单全部曲目并标准化为 Track 列表。
+
+        服务器对 >~1000 首歌单的 detail 仅内联少量 tracks（实测约 20 首），
+        但 trackIds 始终完整：数量不足时按 trackIds 分块批量补全（保持歌单顺序）。
+        """
         resp = _retry_api(self._api().playlist_detail, id=playlist_id)
         body = self._check(resp)
         playlist = body.get("playlist") or (body.get("data") or {}).get("playlist") or {}
         tracks = playlist.get("tracks") or []
+        track_count = int(playlist.get("trackCount") or 0)
+
+        if track_count > len(tracks):
+            ids = [
+                t["id"]
+                for t in (playlist.get("trackIds") or [])
+                if isinstance(t, dict) and t.get("id")
+            ]
+            if ids:
+                # 补全路径直接返回 Track 列表（保持歌单顺序）
+                detail_map = self.get_tracks_detail(ids)
+                return [detail_map[tid] for tid in ids if tid in detail_map]
+
         if not tracks:
             all_resp = _retry_api(self._api().playlist_track_all, id=playlist_id)
             all_body = self._check(all_resp)
