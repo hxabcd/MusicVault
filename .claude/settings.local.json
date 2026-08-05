@@ -8,7 +8,7 @@
       "Bash(.venv/Scripts/python -m pytest *)",
       "Bash(.venv/Scripts/ruff *)",
       "Bash(git *)",
-      "Base(cd \"D:\\MyPC\\Advanced\\Code\\Python\\Projects\\MusicVault\" && uv run ruff)"
+      "WebFetch(domain:github.com)"
     ]
   }
 }
