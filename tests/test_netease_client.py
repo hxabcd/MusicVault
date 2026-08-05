@@ -1,4 +1,5 @@
 """NeteaseClient 单元测试：mock 掉真实 SDK（pymusiclibrary）"""
+
 from __future__ import annotations
 
 import threading
