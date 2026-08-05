@@ -12,11 +12,11 @@
 - 领域：本地音乐同步、媒体资产和目标端单向同步。
 - 文档语言：中文。
 - 初始规划阶段只解决决策，不执行代码重构；最小闭环现已进入实现阶段。
-- 每个票据只解决一个决策问题。
+- 每个ticket只解决一个决策问题。
 - 使用 codebase-design 术语：Module、Interface、Seam、Adapter、Depth、Leverage、Locality。
 - 优先设计深模块：用较小的 Interface 隐藏复杂实现；测试优先穿过最高层 Seam。
 - 外部 preset 是可信 Python 脚本，但只能依赖版本化公开 preset API。
-- GitHub Issues 是 issue tracker 的事实来源；本目录保存本次规划的 map、票据和依赖快照，正式跟踪以对应的 GitHub Issue 编号和链接为准。
+- GitHub Issues 是 issue tracker 的事实来源；本目录保存本次规划的 map、ticket和依赖快照，正式跟踪以对应的 GitHub Issue 编号和链接为准。
 
 ## Implementation status
 
@@ -66,7 +66,7 @@
 - 旧流水线迁移接缝：`sync`/`pull`/`process` 已完成 SQLite 状态写入（见 Implementation status）；`rebuild_index` 仍未接入，且旧 JSON 状态文件仍与 SQLite 双写，收敛依赖后续把流水线真正迁到 media_store 布局（当前媒体资产路径仍指向旧 downloads）。
 - 在 Manifest 决策完成后，为 `managed` 目标增加可预览、可记录且仅限已管理对象的清理。
 - 根据外部 preset 使用场景补充 MediaResolver 的按需生成、目标元数据/歌词表现和目标适配器端口。
-- 如需正式关闭 map，先完成上述兼容流水线迁移并在 GitHub Issues 中同步关闭对应票据。
+- 如需正式关闭 map，先完成上述兼容流水线迁移并在 GitHub Issues 中同步关闭对应ticket。
 
 ## Out of scope
 
@@ -79,4 +79,4 @@
 
 ## Open tickets
 
-开放票据快照位于 `tickets/`。其中 01–07 和 09 的核心决策已由实现和测试落地，但票据文件与 GitHub Issue 状态尚未自动关闭；08 仍对应旧流水线迁移接缝。票据通过 frontmatter 的 `depends_on` 表达前置决策，正式状态和执行跟踪以对应的 GitHub Issues 为准。
+开放ticket快照位于 `tickets/`。其中 01–07 和 09 的核心决策已由实现和测试落地，但ticket文件与 GitHub Issue 状态尚未自动关闭；08 仍对应旧流水线迁移接缝。ticket通过 frontmatter 的 `depends_on` 表达前置决策，正式状态和执行跟踪以对应的 GitHub Issues 为准。
