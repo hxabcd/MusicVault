@@ -14,9 +14,12 @@ from musicvault.adapters.processors.lyrics import (
 from musicvault.adapters.processors.metadata_writer import MetadataWriter
 from musicvault.adapters.processors.organizer import Organizer
 from musicvault.adapters.providers.netease_client import NeteaseClient
+from musicvault.application.source_state import SourceStateRecorder, build_audio_asset_from_file
 from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
 from musicvault.core.preset import Preset, audio_spec_key, build_audio_specs, compute_preset_hash
+from musicvault.domain.models import MediaAsset
+from musicvault.ports.state import StateRepository
 from musicvault.shared.tui_progress import BatchProgress, console
 from musicvault.shared.utils import (
     create_link,
@@ -40,6 +43,7 @@ class ProcessService:
         metadata: MetadataWriter,
         workers: int,
         dry_run: bool = False,
+        state: StateRepository | None = None,
     ) -> None:
         self.cfg = cfg
         self.api = api
@@ -48,6 +52,8 @@ class ProcessService:
         self.metadata = metadata
         self.workers = max(1, workers)
         self.dry_run = dry_run
+        # 可选：把本次处理产出的媒体资产登记到新 SQLite，供 target-sync 消费
+        self.recorder = SourceStateRecorder(state) if state is not None else None
 
     # ------------------------------------------------------------------
     # 公开入口
@@ -132,6 +138,26 @@ class ProcessService:
 
         for audio_map, track_info, playlist_names in results:
             self._link_track(audio_map, track_info, playlist_names)
+
+        if self.recorder is not None:
+            self._record_processed_results(results)
+
+    def _record_processed_results(
+        self,
+        results: list[tuple[dict[str, Path], Track, list[str]]],
+    ) -> None:
+        """把本次处理产出的曲目与 canonical 媒体资产写入 SQLite。"""
+        assert self.recorder is not None
+        tracks: list[Track] = []
+        seen: set[int] = set()
+        assets: list[MediaAsset] = []
+        for audio_map, track_info, _names in results:
+            if track_info.id not in seen:
+                tracks.append(track_info)
+                seen.add(track_info.id)
+            for spec_key, path in audio_map.items():
+                assets.append(build_audio_asset_from_file(track_info.id, spec_key, path))
+        self.recorder.record_source_state(tracks, media_assets=assets)
 
     def _print_dry_run_plan(self, pending: list[tuple[Path, Track, list[str]]]) -> None:
         """dry-run：仅报告将处理的文件清单，不执行解密/转码/元数据/歌词/硬链接。"""

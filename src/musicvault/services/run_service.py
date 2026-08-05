@@ -12,6 +12,7 @@ from musicvault.adapters.processors.organizer import Organizer
 from musicvault.adapters.providers.netease_client import NeteaseClient
 from musicvault.core.config import Config
 from musicvault.core.preset import audio_spec_key, compute_preset_hash
+from musicvault.ports.state import StateRepository
 from musicvault.services.process_service import ProcessService
 from musicvault.services.sync_service import SyncService
 from musicvault.shared.tui_progress import console, ok
@@ -28,7 +29,13 @@ logger = logging.getLogger(__name__)
 
 
 class RunService:
-    def __init__(self, cfg: Config, api: NeteaseClient, dry_run: bool = False) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        api: NeteaseClient,
+        dry_run: bool = False,
+        state: StateRepository | None = None,
+    ) -> None:
         self.cfg = cfg
         self.api = api
         self.dry_run = dry_run
@@ -49,6 +56,7 @@ class RunService:
             downloader=Downloader(filename_template=first_template),
             workers=max(1, download_workers),
             dry_run=dry_run,
+            state=state,
         )
         self.process_service = ProcessService(
             cfg=cfg,
@@ -61,6 +69,7 @@ class RunService:
             metadata=MetadataWriter(),
             workers=max(1, process_workers),
             dry_run=dry_run,
+            state=state,
         )
 
     def rebuild_index(self) -> tuple[int, int]:

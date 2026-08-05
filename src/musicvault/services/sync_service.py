@@ -7,9 +7,12 @@ from pathlib import Path
 
 from musicvault.adapters.processors.downloader import Downloader
 from musicvault.adapters.providers.netease_client import NeteaseClient
+from musicvault.application.source_state import SourceStateRecorder
 from musicvault.core.config import Config
 from musicvault.core.models import DownloadedTrack, Track
 from musicvault.core.preset import Preset, audio_spec_key
+from musicvault.domain.models import Playlist
+from musicvault.ports.state import StateRepository
 from musicvault.shared.output import warn as output_warn
 from musicvault.shared.tui_progress import BatchProgress, console
 from musicvault.shared.utils import (
@@ -33,12 +36,15 @@ class SyncService:
         downloader: Downloader,
         workers: int,
         dry_run: bool = False,
+        state: StateRepository | None = None,
     ) -> None:
         self.cfg = cfg
         self.api = api
         self.downloader = downloader
         self.workers = max(1, workers)
         self.dry_run = dry_run
+        # 可选：把本次 sync 的源侧状态写入新 SQLite，供 target-sync 消费
+        self.recorder = SourceStateRecorder(state) if state is not None else None
         # dry-run 计划（仅 dry_run 模式下填充）：with_url / no_url / pruned / moves / renames / stale_index
         self.plan: dict = {}
 
@@ -85,6 +91,7 @@ class SyncService:
         track_playlists: dict[int, list[int]] = {}
         all_tracks: dict[int, Track] = {}
         pending_renames: list[tuple[int, str, str]] = []
+        playlist_track_order: dict[int, list[int]] = {}
 
         if playlist_ids:
             logger.info("将同步 %s 个歌单", len(playlist_ids))
@@ -97,6 +104,7 @@ class SyncService:
                     pending_renames.append((pid, old_name, new_name))
                 playlist_index[str(pid)] = {"name": info["name"], "track_count": info["track_count"]}
                 tracks = self.api.get_playlist_tracks(pid)
+                playlist_track_order[pid] = [track.id for track in tracks]
                 for track in tracks:
                     all_tracks[track.id] = track
                     track_playlists.setdefault(track.id, []).append(pid)
@@ -149,6 +157,9 @@ class SyncService:
         downloaded = self._sync_tracks(new_tracks, track_playlists)
         self._mark_synced(downloaded, synced_ids, track_playlists)
 
+        if self.recorder is not None:
+            self._record_source_state(all_tracks, playlist_track_order, playlist_index, song_ids)
+
         # 单行摘要
         added = len(downloaded)
         n_playlists = len(playlist_ids) + (1 if song_ids else 0)
@@ -161,6 +172,26 @@ class SyncService:
         console.print("    " + " | ".join(stats) if stats else "    [dim]无变化[/dim]")
 
         return downloaded
+
+    def _record_source_state(
+        self,
+        all_tracks: dict[int, Track],
+        playlist_track_order: dict[int, list[int]],
+        playlist_index: dict[str, dict[str, object]],
+        song_ids: list[int],
+    ) -> None:
+        """把本次 sync 的曲目、歌单关系与单独管理的单曲写入 SQLite。"""
+        assert self.recorder is not None
+        playlists: list[Playlist] = []
+        for pid_str, entry in playlist_index.items():
+            if not pid_str.lstrip("-").isdigit() or not isinstance(entry, dict):
+                continue
+            pid = int(pid_str)
+            name = str(entry.get("name") or pid)
+            playlists.append(Playlist(pid, name, tuple(playlist_track_order.get(pid, ()))))
+        # 只登记本次已获取详情的单曲，避免陈旧 song_id 违反外键约束
+        managed_songs = [song_id for song_id in song_ids if song_id in all_tracks]
+        self.recorder.record_source_state(all_tracks.values(), playlists, managed_songs)
 
     def _cleanup_stale_state(self) -> int:
         """清理 canonical 文件已不存在的过期索引条目，避免阻止重新下载。

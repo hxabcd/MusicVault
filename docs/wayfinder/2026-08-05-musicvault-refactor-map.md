@@ -31,6 +31,8 @@
 - 可验证 CLI 流程为：`msv migrate` → `msv presets` → `msv target-sync [--preset NAME] [--dry-run]`。
 - 新增契约测试覆盖 SQLite、迁移、Preset API、TargetSynchronizer 生命周期和 dry-run；当前完整测试集为 163 项通过。
 
+后续提交继续打通旧流水线与新状态：`sync`/`process` 通过新增的 `SourceStateRecorder`（`application/source_state.py`）在单事务内把曲目、歌单关系、单独管理单曲和 canonical 媒体资产写入 SQLite，使 `msv sync` → `msv target-sync` 形成真实闭环；dry-run 不写库，陈旧单曲 id 不触发外键失败。
+
 ## Decisions so far
 
 - [模块化单体与端口适配器](../specs/2026-08-05-architecture-modular-monolith-spec.md) — 以 domain/application/ports/adapters/presentation 划分职责，不拆微服务。
@@ -61,7 +63,7 @@
 
 ## Remaining implementation work
 
-- 将旧 `RunService`、`SyncService`、`ProcessService` 和 `rebuild_index` 逐步迁移到新的 application Seam，并让现有 `sync/pull/process` 最终复用 SQLite 状态和 SourceSnapshot。
+- 旧流水线迁移接缝：`sync`/`pull`/`process` 已完成 SQLite 状态写入（见 Implementation status）；`rebuild_index` 仍未接入，且旧 JSON 状态文件仍与 SQLite 双写，收敛依赖后续把流水线真正迁到 media_store 布局（当前媒体资产路径仍指向旧 downloads）。
 - 在 Manifest 决策完成后，为 `managed` 目标增加可预览、可记录且仅限已管理对象的清理。
 - 根据外部 preset 使用场景补充 MediaResolver 的按需生成、目标元数据/歌词表现和目标适配器端口。
 - 如需正式关闭 map，先完成上述兼容流水线迁移并在 GitHub Issues 中同步关闭对应票据。
