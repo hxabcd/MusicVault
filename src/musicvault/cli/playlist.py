@@ -130,7 +130,8 @@ def _load_playlist_index(cfg: Config) -> dict[str, dict[str, object]]:
 
 
 def _cleanup_playlist_files(pid: int, cfg: Config) -> None:
-    from musicvault.shared.utils import load_json, safe_filename, save_json
+    from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
+    from musicvault.shared.utils import load_json, safe_filename
 
     playlist_index = load_json(cfg.state_dir / "playlists.json", {})
     entry = playlist_index.get(str(pid), {})
@@ -145,23 +146,20 @@ def _cleanup_playlist_files(pid: int, cfg: Config) -> None:
             shutil.rmtree(target)
             deleted_dirs += 1
 
-    # 更新 synced_tracks.json：移除该歌单的关联
-    synced = load_json(cfg.synced_state_file, {"ids": []})
+    # 从 SQLite 移除该歌单（级联删除 playlist_tracks），并找出不再属于任何歌单的曲目
+    repo = SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+    snapshot = repo.create_snapshot()
+    playlist = snapshot.playlist(pid)
     ids_to_remove: set[int] = set()
-    if isinstance(synced, dict):
-        ids = synced.get("ids", [])
-        if isinstance(ids, list):
-            # 旧格式：无法区分歌单，跳过
-            pass
-        elif isinstance(ids, dict):
-            for tid_str, pids in list(ids.items()):
-                new_pids = [p for p in pids if p != pid]
-                if new_pids:
-                    ids[tid_str] = new_pids
-                else:
-                    ids_to_remove.add(int(tid_str))
-                    del ids[tid_str]
-            save_json(cfg.synced_state_file, {"ids": ids})
+    if playlist is not None:
+        repo.remove_playlist(pid)
+        for track_id in playlist.track_ids:
+            # 该曲目是否还属于其他歌单（删除本歌单后）
+            still_member = any(
+                other.track_ids and track_id in other.track_ids for other in snapshot.playlists if other.id != pid
+            )
+            if not still_member:
+                ids_to_remove.add(track_id)
 
     # 记录 canonical 文件的 inode（删除前），用于后续匹配 未分类 中的硬链接
     canonical_inodes: set[tuple[int, int]] = set()
@@ -183,6 +181,7 @@ def _cleanup_playlist_files(pid: int, cfg: Config) -> None:
             for f in list(cfg.downloads_dir.iterdir()):
                 if f.is_file() and f.stem.startswith(f"{track_id}_"):
                     f.unlink(missing_ok=True)
+        repo.remove_track(track_id)
 
     # 删除 未分类 中对应的硬链接（它们指向同一 inode，unlink 不会自动消失）
     if canonical_inodes:
@@ -205,20 +204,6 @@ def _cleanup_playlist_files(pid: int, cfg: Config) -> None:
                     uncat_dir.rmdir()
             except OSError:
                 pass
-
-    # 同步清理 processed_files.json 中的对应条目，防止残留文件被下次 process 捡起
-    processed = load_json(cfg.processed_state_file, {})
-    if isinstance(processed, dict):
-        changed = False
-        for tid_str in list(processed.keys()):
-            try:
-                if int(tid_str) in ids_to_remove:
-                    del processed[tid_str]
-                    changed = True
-            except (TypeError, ValueError):
-                continue
-        if changed:
-            save_json(cfg.processed_state_file, processed)
 
     if deleted_dirs:
         logger.info("已删除 [bold]%s[/bold] 的音乐文件（%s 个目录）", dir_name, deleted_dirs)

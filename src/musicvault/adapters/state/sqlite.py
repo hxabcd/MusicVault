@@ -69,6 +69,17 @@ CREATE TABLE IF NOT EXISTS export_targets (
     deletion_policy TEXT NOT NULL,
     config_json TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS processed_tracks (
+    track_id INTEGER PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+    preset_hash TEXT NOT NULL,
+    updated_at REAL
+);
+
+CREATE TABLE IF NOT EXISTS pending_files (
+    path TEXT PRIMARY KEY,
+    track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE
+);
 """
 
 _MIGRATIONS: dict[int, str] = {1: _SCHEMA_SQL}
@@ -230,6 +241,22 @@ class SQLiteStateRepository:
         else:
             connection.execute("INSERT OR IGNORE INTO managed_songs(track_id) VALUES (?)", (track_id,))
 
+    def remove_track(self, track_id: int, *, connection: sqlite3.Connection | None = None) -> None:
+        """删除曲目及其级联关系（playlist_tracks / managed_songs / media_assets）。"""
+        if connection is None:
+            with self.transaction() as owned:
+                owned.execute("DELETE FROM tracks WHERE id = ?", (track_id,))
+        else:
+            connection.execute("DELETE FROM tracks WHERE id = ?", (track_id,))
+
+    def remove_playlist(self, playlist_id: int, *, connection: sqlite3.Connection | None = None) -> None:
+        """删除歌单及其曲目关系（playlist_tracks 级联）。"""
+        if connection is None:
+            with self.transaction() as owned:
+                owned.execute("DELETE FROM playlists WHERE id = ?", (playlist_id,))
+        else:
+            connection.execute("DELETE FROM playlists WHERE id = ?", (playlist_id,))
+
     def upsert_media_asset(self, asset: MediaAsset, *, connection: sqlite3.Connection | None = None) -> None:
         if connection is None:
             with self.transaction() as owned:
@@ -330,6 +357,43 @@ class SQLiteStateRepository:
             playlists = self._list_playlists(connection)
             assets = self._list_media_assets(connection)
         return SourceSnapshot.from_data(tracks, playlists, assets)
+
+    # -- processed_tracks / pending_files（替代旧 processed_files.json） --
+
+    def record_processed(self, track_id: int, preset_hash: str, updated_at: float) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                """INSERT INTO processed_tracks(track_id, preset_hash, updated_at)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(track_id) DO UPDATE SET
+                     preset_hash=excluded.preset_hash, updated_at=excluded.updated_at""",
+                (track_id, preset_hash, updated_at),
+            )
+
+    def is_processed(self, track_id: int, required_specs: set[str]) -> bool:
+        """track 已覆盖全部必需 spec 且存在处理记录时返回 True。"""
+        with self.transaction() as connection:
+            row = connection.execute("SELECT 1 FROM processed_tracks WHERE track_id = ?", (track_id,)).fetchone()
+            if row is None:
+                return False
+            rows = connection.execute(
+                "SELECT spec FROM media_assets WHERE track_id = ? AND asset_type = 'audio'",
+                (track_id,),
+            ).fetchall()
+        covered = {row["spec"] for row in rows}
+        return required_specs <= covered
+
+    def add_pending_file(self, path: str, track_id: int) -> None:
+        with self.transaction() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO pending_files(path, track_id) VALUES (?, ?)",
+                (path, track_id),
+            )
+
+    def find_track_id_by_path(self, path: str) -> int | None:
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT track_id FROM pending_files WHERE path = ?", (path,)).fetchone()
+        return int(row["track_id"]) if row is not None else None
 
     def _list_tracks(self, connection: sqlite3.Connection) -> list[Track]:
         rows = connection.execute("SELECT * FROM tracks ORDER BY id").fetchall()

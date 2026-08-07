@@ -39,6 +39,8 @@ def test_initialize_creates_versioned_minimal_schema(tmp_path: Path) -> None:
         "media_assets",
         "preset_registry",
         "export_targets",
+        "processed_tracks",
+        "pending_files",
     } <= tables
 
 
@@ -119,3 +121,30 @@ def test_deleting_playlist_cascades_playlist_tracks(tmp_path: Path) -> None:
             "SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = 10"
         ).fetchone()[0]
     assert remaining == 0
+
+
+def test_is_processed_requires_spec_coverage_and_record(tmp_path: Path) -> None:
+    repo = SQLiteStateRepository(SQLiteState(tmp_path / "state.db"))
+    repo.upsert_track(_track(1))
+    repo.upsert_media_asset(MediaAsset(track_id=1, asset_type="audio", spec="FLAC", path=tmp_path / "1.flac"))
+    repo.record_processed(1, "hash", 0.0)
+
+    assert repo.is_processed(1, {"FLAC"})
+    # spec 未覆盖 → 未处理
+    assert not repo.is_processed(1, {"FLAC", "MP3-192k"})
+    # 无处理记录 → 未处理
+    repo.upsert_track(_track(2))
+    assert not repo.is_processed(2, {"FLAC"})
+
+
+def test_remove_track_cascades_processed_and_pending(tmp_path: Path) -> None:
+    repo = SQLiteStateRepository(SQLiteState(tmp_path / "state.db"))
+    repo.upsert_track(_track(1))
+    repo.record_processed(1, "hash", 0.0)
+    repo.add_pending_file("downloads/cache/1.mp3", 1)
+
+    repo.remove_track(1)
+
+    assert repo.get_track(1) is None
+    assert repo.find_track_id_by_path("downloads/cache/1.mp3") is None
+    assert not repo.is_processed(1, set())

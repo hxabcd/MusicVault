@@ -35,45 +35,33 @@ class SyncService:
         api: NeteaseClient,
         downloader: Downloader,
         workers: int,
+        state: StateRepository,
         dry_run: bool = False,
-        state: StateRepository | None = None,
     ) -> None:
         self.cfg = cfg
         self.api = api
         self.downloader = downloader
         self.workers = max(1, workers)
         self.dry_run = dry_run
-        # 可选：把本次 sync 的源侧状态写入新 SQLite，供 target-sync 消费
-        self.recorder = SourceStateRecorder(state) if state is not None else None
+        # 把本次 sync 的源侧状态写入 SQLite，供 target-sync 消费
+        self.recorder = SourceStateRecorder(state)
         # dry-run 计划（仅 dry_run 模式下填充）：with_url / no_url / pruned / moves / renames / stale_index
         self.plan: dict = {}
 
-    # ------------------------------------------------------------------
-    # 同步状态持久化（synced_tracks.json）
-    # ------------------------------------------------------------------
+    def _load_synced_state(self) -> dict[int, list[int]]:
+        """从 SQLite 快照派生 {track_id: [playlist_ids]} 映射。
 
-    @staticmethod
-    def _load_synced_state(cfg: Config) -> dict[int, list[int]]:
-        """加载 synced_tracks.json，自动迁移旧格式。
-
-        旧格式: {"ids": [1, 2, 3]}
-        新格式: {"ids": {"1": [10, 20], "2": [10]}}
-        返回: {track_id: [playlist_ids]}
+        替代旧 synced_tracks.json：曲目与歌单关系由 SourceStateRecorder
+        在 sync 完成后写入，这里只读。无歌单归属的单独管理单曲保留空列表。
         """
-        raw = load_json(cfg.synced_state_file, {})
-        ids = raw.get("ids", [])
-        if isinstance(ids, list):
-            return {int(x): [] for x in ids if isinstance(x, (int, str))}
-        # 新格式
-        return {int(k): [int(p) for p in v] for k, v in ids.items()}
-
-    @staticmethod
-    def _save_synced_state(cfg: Config, state_map: dict[int, list[int]]) -> None:
-        """将 {track_id: [playlist_ids]} 写入 synced_tracks.json（新格式）。"""
-        ids: dict[str, list[int]] = {}
-        for tid, pids in sorted(state_map.items()):
-            ids[str(tid)] = sorted(pids)
-        save_json(cfg.synced_state_file, {"ids": ids})
+        snapshot = self.recorder.state.create_snapshot()
+        state_map: dict[int, list[int]] = {}
+        for playlist in snapshot.playlists:
+            for track_id in playlist.track_ids:
+                state_map.setdefault(track_id, []).append(playlist.id)
+        for track in snapshot.tracks:
+            state_map.setdefault(track.id, [])
+        return state_map
 
     # ------------------------------------------------------------------
     # 主流程
@@ -155,10 +143,7 @@ class SyncService:
             return []
 
         downloaded = self._sync_tracks(new_tracks, track_playlists)
-        self._mark_synced(downloaded, synced_ids, track_playlists)
-
-        if self.recorder is not None:
-            self._record_source_state(all_tracks, playlist_track_order, playlist_index, song_ids)
+        self._record_source_state(all_tracks, playlist_track_order, playlist_index, song_ids)
 
         # 单行摘要
         added = len(downloaded)
@@ -181,7 +166,6 @@ class SyncService:
         song_ids: list[int],
     ) -> None:
         """把本次 sync 的曲目、歌单关系与单独管理的单曲写入 SQLite。"""
-        assert self.recorder is not None
         playlists: list[Playlist] = []
         for pid_str, entry in playlist_index.items():
             if not pid_str.lstrip("-").isdigit() or not isinstance(entry, dict):
@@ -194,46 +178,22 @@ class SyncService:
         self.recorder.record_source_state(all_tracks.values(), playlists, managed_songs)
 
     def _cleanup_stale_state(self) -> int:
-        """清理 canonical 文件已不存在的过期索引条目，避免阻止重新下载。
+        """清理 canonical 文件已不存在的过期状态，避免阻止重新下载。
 
-        processed_files.json 格式：key 为 track_id 字符串，value 含 audios 字典或旧版 flac/mp3/source 等字段。
-        检查对应文件是否存在，不存在则从索引中移除。返回过期条目的数量；
-        dry-run 模式下只计算并上报，不写入任何文件。
+        检查 SQLite media_assets 中每个 audio 资产的 canonical 文件是否仍存在，
+        不存在则删除该曲目（级联清理 processed_tracks / pending_files / 关系）。
+        返回过期曲目数量；dry-run 模式下只计算并上报，不写入任何数据。
         """
-        processed = load_json(self.cfg.processed_state_file, {})
-        if not isinstance(processed, dict) or not processed:
+        snapshot = self.recorder.state.create_snapshot()
+        if not snapshot.media_assets:
             return 0
 
         stale_ids: set[int] = set()
-        for key, value in list(processed.items()):
-            if not isinstance(value, dict):
+        for asset in snapshot.media_assets:
+            if asset.asset_type != "audio":
                 continue
-
-            has_any = False
-            # 新版格式：{"audios": {"FLAC": "relative/path", ...}}
-            audios = value.get("audios")
-            if isinstance(audios, dict):
-                for _spec_key, rel in audios.items():
-                    if isinstance(rel, str) and (self.cfg.workspace_path / rel).exists():
-                        has_any = True
-                        break
-
-            # 旧版格式兼容（flac / mp3 / lossless / source / lrc）
-            if not has_any:
-                for field in ("flac", "mp3", "lossless", "source", "lrc"):
-                    rel = value.get(field)
-                    if isinstance(rel, str) and (self.cfg.workspace_path / rel).exists():
-                        has_any = True
-                        break
-
-            if has_any:
-                continue
-
-            try:
-                stale_ids.add(int(key))
-            except (TypeError, ValueError):
-                pass
-            del processed[key]
+            if not asset.path.exists():
+                stale_ids.add(asset.track_id)
 
         if not stale_ids:
             return 0
@@ -242,15 +202,9 @@ class SyncService:
             logger.info("dry-run：将清理 %s 条过期索引条目", len(stale_ids))
             return len(stale_ids)
 
-        save_json(self.cfg.processed_state_file, processed)
-        state_map = self._load_synced_state(self.cfg)
-        existing = set(state_map.keys())
-        cleaned = existing - stale_ids
-        if cleaned != existing:
-            for sid in stale_ids:
-                state_map.pop(sid, None)
-            self._save_synced_state(self.cfg, state_map)
-            logger.info("清理过期状态：%s 个文件已不存在，已从索引中移除", len(stale_ids))
+        for sid in stale_ids:
+            self.recorder.state.remove_track(sid)
+        logger.info("清理过期状态：%s 个文件已不存在，已从索引中移除", len(stale_ids))
         return len(stale_ids)
 
     def _handle_playlist_rename(self, pid: int, old_name: str, new_name: str, all_tracks: dict[int, Track]) -> None:
@@ -266,7 +220,7 @@ class SyncService:
                 shutil.rmtree(old_dir)
 
         # 重建新目录中的硬链接
-        state_map = self._load_synced_state(self.cfg)
+        state_map = self._load_synced_state()
         for track_id, pids in state_map.items():
             if pid not in pids:
                 continue
@@ -304,7 +258,7 @@ class SyncService:
         返回需要调整的曲目列表 [(track, 需删除的目录, 需新增的目录)]；
         dry-run 模式下只计算并返回，不执行任何文件操作、不写状态。
         """
-        old_map = self._load_synced_state(self.cfg)
+        old_map = self._load_synced_state()
         if not old_map:
             return []
 
@@ -352,12 +306,8 @@ class SyncService:
                     for name in add_names:
                         self._create_track_links(audio_maps[track.id], track, name)
 
-            # 写回更新后的歌单分配
-            new_map = dict(old_map)
-            for track_id, new_pids in track_playlists.items():
-                if track_id in old_map:
-                    new_map[track_id] = sorted(new_pids)
-            self._save_synced_state(self.cfg, new_map)
+            # 歌单分配以 run_sync 末尾的 _record_source_state（playlist_track_order）为准，
+            # 这里无需再写回旧 JSON 状态。
 
         return moves
 
@@ -433,8 +383,8 @@ class SyncService:
         return safe_filename(name)
 
     def _diff_tracks(self, tracks: list[Track]) -> tuple[list[Track], set[int]]:
-        """返回 (新增曲目, 已同步的 track_id 集合)，调用方可将集合传给 _mark_synced 避免重复加载。"""
-        state_map = self._load_synced_state(self.cfg)
+        """返回 (新增曲目, 已同步的 track_id 集合)，已同步集合来自 SQLite 快照。"""
+        state_map = self._load_synced_state()
         synced_ids = set(state_map.keys())
         new_tracks = [track for track in tracks if track.id not in synced_ids]
         return new_tracks, synced_ids
@@ -495,7 +445,7 @@ class SyncService:
 
         返回 (清理数量, stale_ids)；dry-run 模式下只计算并上报，不删除文件、不写状态。
         """
-        state_map = self._load_synced_state(self.cfg)
+        state_map = self._load_synced_state()
         synced_ids = set(state_map.keys())
         stale_ids = sorted(synced_ids - set(remote_tracks.keys()))
         if not stale_ids:
@@ -550,7 +500,8 @@ class SyncService:
             removed_count += 1
 
         if removed_count:
-            self._save_synced_state(self.cfg, state_map)
+            for track_id in stale_ids:
+                self.recorder.state.remove_track(track_id)
             logger.info("清理远端已删除曲目：%s 首", removed_count)
         return removed_count, stale_ids
 
@@ -572,15 +523,11 @@ class SyncService:
         logger.info("下载准备完成：可下载=%s 跳过=%s", len(pending), skipped)
 
         downloaded = self._run_download_batch(pending, track_playlists)
-        # 写入下载索引（供 process 阶段匹配 raw file → track_id）
-        processed_path = self.cfg.processed_state_file
-        processed = load_json(processed_path, {})
-        if not isinstance(processed, dict):
-            processed = {}
+        # 写入 raw→track 映射（供 process 阶段从文件名反查 track_id）
         for item in downloaded:
+            self.recorder.state.upsert_track(item.track)
             rel = workspace_rel_path(Path(item.source_file), self.cfg.workspace_path)
-            processed[str(item.track.id)] = {"source": rel}
-        save_json(processed_path, processed)
+            self.recorder.state.add_pending_file(rel, item.track.id)
         return downloaded
 
     def _run_download_batch(
@@ -615,40 +562,15 @@ class SyncService:
             except KeyboardInterrupt:
                 pool.shutdown(wait=False, cancel_futures=True)
                 if results:
-                    _save_partial_downloads(self.cfg, results)
+                    self._save_partial_downloads(results)
                 raise
 
         return results
 
-    def _mark_synced(
-        self, downloaded: list[DownloadedTrack], existing_ids: set[int], track_playlists: dict[int, list[int]]
-    ) -> None:
-        """将新下载的 track ID 合并到 existing_ids 并写回状态文件"""
-        if not downloaded:
-            return
-        state_map = self._load_synced_state(self.cfg)
-        for item in downloaded:
-            tid = item.track.id
-            existing_ids.add(tid)
-            state_map[tid] = sorted(track_playlists.get(tid, []))
-        self._save_synced_state(self.cfg, state_map)
-
-
-def _save_partial_downloads(cfg: Config, results: list[DownloadedTrack]) -> None:
-    """Save partially completed downloads to state files so the next run skips them."""
-    processed_path = cfg.processed_state_file
-    processed = load_json(processed_path, {})
-    if not isinstance(processed, dict):
-        processed = {}
-    for item in results:
-        rel = workspace_rel_path(Path(item.source_file), cfg.workspace_path)
-        processed[str(item.track.id)] = {"source": rel}
-    save_json(processed_path, processed)
-
-    # synced_tracks.json — 使用新格式
-    state_map = SyncService._load_synced_state(cfg)
-    for item in results:
-        tid = item.track.id
-        if tid not in state_map:
-            state_map[tid] = sorted(item.playlist_ids)
-    SyncService._save_synced_state(cfg, state_map)
+    def _save_partial_downloads(self, results: list[DownloadedTrack]) -> None:
+        """中断时把已下载曲目登记到 SQLite，供下次 sync 跳过。"""
+        # 曲目本体先入 SQLite；歌单关系由下次 sync 的 _record_source_state 重建
+        for item in results:
+            self.recorder.state.upsert_track(item.track)
+            rel = workspace_rel_path(Path(item.source_file), self.cfg.workspace_path)
+            self.recorder.state.add_pending_file(rel, item.track.id)

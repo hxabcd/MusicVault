@@ -1,95 +1,69 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
+from musicvault.application.source_state import SourceStateRecorder
 from musicvault.core.config import Config
 from musicvault.core.models import Track
 from musicvault.core.preset import Preset
+from musicvault.domain.models import Playlist
 from musicvault.services.sync_service import SyncService
 
+# ---------------------------------------------------------------------------
+# 同步状态加载（SQLite 快照派生，替代旧 synced_tracks.json 格式解析）
+# ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# synced_tracks.json 格式加载/保存
-# ---------------------------------------------------------------------------
+
+def _seed_state(cfg: Config, state_map: dict[int, list[int]]) -> None:
+    """把 {track_id: [playlist_ids]} 写入 SQLite，供 _load_synced_state 派生。"""
+    repo = SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+    playlists: dict[int, Playlist] = {}
+    tracks = [Track(id=tid, name=f"曲目 {tid}", artists=[], album="专辑", raw={}) for tid in state_map]
+    for tid, pids in state_map.items():
+        for pid in pids:
+            playlists.setdefault(pid, Playlist(pid, f"歌单{pid}", ()))
+    for pid, playlist in playlists.items():
+        object.__setattr__(
+            playlist,
+            "track_ids",
+            tuple(tid for tid, pids in state_map.items() if pid in pids),
+        )
+    SourceStateRecorder(repo).record_source_state(tracks, playlists.values())
 
 
 class TestLoadSyncedState:
-    def test_old_format_flat_list(self) -> None:
-        import tempfile
+    def test_derives_playlist_assignments(self, tmp_path: Path) -> None:
+        cfg = _make_config(tmp_path)
+        _seed_state(cfg, {123: [10, 20], 456: [10]})
 
-        with tempfile.TemporaryDirectory() as tmp:
-            ws = Path(tmp)
-            state_file = ws / "state" / "synced_tracks.json"
-            state_file.parent.mkdir(parents=True)
-            state_file.write_text(json.dumps({"ids": [123, 456, 789]}), encoding="utf-8")
+        svc = SyncService(
+            cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+        )
+        result = svc._load_synced_state()
+        assert result == {123: [10, 20], 456: [10]}
 
-            cfg = MagicMock(spec=Config)
-            cfg.synced_state_file = state_file
+    def test_isolated_song_has_empty_playlists(self, tmp_path: Path) -> None:
+        """无歌单归属的单独管理单曲保留空列表。"""
+        cfg = _make_config(tmp_path)
+        _seed_state(cfg, {789: []})
 
-            result = SyncService._load_synced_state(cfg)
-            assert result == {123: [], 456: [], 789: []}
+        svc = SyncService(
+            cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+        )
+        result = svc._load_synced_state()
+        assert result == {789: []}
 
-    def test_new_format_dict(self) -> None:
-        import tempfile
+    def test_empty_snapshot_returns_empty(self, tmp_path: Path) -> None:
+        cfg = _make_config(tmp_path)
+        SQLiteStateRepository(SQLiteState(cfg.state_db_file))
 
-        with tempfile.TemporaryDirectory() as tmp:
-            ws = Path(tmp)
-            state_file = ws / "state" / "synced_tracks.json"
-            state_file.parent.mkdir(parents=True)
-            state_file.write_text(json.dumps({"ids": {"123": [10, 20], "456": [10]}}), encoding="utf-8")
-
-            cfg = MagicMock(spec=Config)
-            cfg.synced_state_file = state_file
-
-            result = SyncService._load_synced_state(cfg)
-            assert result == {123: [10, 20], 456: [10]}
-
-    def test_missing_file_returns_empty(self) -> None:
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmp:
-            ws = Path(tmp)
-            state_file = ws / "state" / "nonexistent.json"
-
-            cfg = MagicMock(spec=Config)
-            cfg.synced_state_file = state_file
-
-            result = SyncService._load_synced_state(cfg)
-            assert result == {}
-
-
-class TestSaveSyncedState:
-    def test_save_and_reload(self) -> None:
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmp:
-            ws = Path(tmp)
-            state_file = ws / "state" / "synced_tracks.json"
-
-            cfg = MagicMock(spec=Config)
-            cfg.synced_state_file = state_file
-
-            SyncService._save_synced_state(cfg, {123: [10, 20], 456: [10]})
-
-            loaded = json.loads(state_file.read_text(encoding="utf-8"))
-            assert loaded == {"ids": {"123": [10, 20], "456": [10]}}
-
-    def test_playlist_ids_are_sorted(self) -> None:
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmp:
-            ws = Path(tmp)
-            state_file = ws / "state" / "synced_tracks.json"
-
-            cfg = MagicMock(spec=Config)
-            cfg.synced_state_file = state_file
-
-            SyncService._save_synced_state(cfg, {999: [30, 10, 20]})
-
-            loaded = json.loads(state_file.read_text(encoding="utf-8"))
-            assert loaded["ids"]["999"] == [10, 20, 30]
+        svc = SyncService(
+            cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+        )
+        result = svc._load_synced_state()
+        assert result == {}
 
 
 # ---------------------------------------------------------------------------
@@ -102,8 +76,7 @@ def _make_config(tmp_path: Path) -> Config:
 
     cfg = MagicMock(spec=Config)
     cfg.workspace_path = tmp_path
-    cfg.synced_state_file = tmp_path / "state" / "synced_tracks.json"
-    cfg.processed_state_file = tmp_path / "state" / "processed_files.json"
+    cfg.state_db_file = tmp_path / "state.db"
     cfg.state_dir = tmp_path / "state"
     cfg.downloads_dir = tmp_path / "downloads"
     cfg.library_dir = tmp_path / "library"
@@ -163,48 +136,57 @@ def _make_track(track_id: int) -> Track:
 
 
 class TestReconcileNoChange:
+    def _svc(self, cfg: Config) -> SyncService:
+        return SyncService(
+            cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+        )
+
     def test_empty_old_state(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
         cfg.state_dir.mkdir(parents=True)
-        SyncService._save_synced_state(cfg, {})
+        _seed_state(cfg, {})
 
-        svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
+        svc = self._svc(cfg)
         svc._reconcile_playlist_assignments({123: [10]}, _make_playlist_index(), {})
         # 不应抛异常
 
     def test_assignments_unchanged(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
         cfg.state_dir.mkdir(parents=True)
-        SyncService._save_synced_state(cfg, {123: [10, 20]})
-        cfg.processed_state_file.parent.mkdir(parents=True, exist_ok=True)
+        _seed_state(cfg, {123: [10, 20]})
 
-        svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
+        svc = self._svc(cfg)
         svc._reconcile_playlist_assignments({123: [10, 20]}, _make_playlist_index(), {})
 
-        result = SyncService._load_synced_state(cfg)
+        result = svc._load_synced_state()
         assert result[123] == [10, 20]
 
     def test_no_track_in_all_tracks(self, tmp_path: Path) -> None:
         """如果 track 不在 all_tracks 中，应静默跳过。"""
         cfg = _make_config(tmp_path)
         cfg.state_dir.mkdir(parents=True)
-        SyncService._save_synced_state(cfg, {123: [10]})
+        _seed_state(cfg, {123: [10]})
 
-        svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
+        svc = self._svc(cfg)
         svc._reconcile_playlist_assignments({123: [20]}, _make_playlist_index(), {})
 
-        # 状态应更新但无文件操作（无 track 信息）
-        result = SyncService._load_synced_state(cfg)
-        assert result[123] == [20]
+        # 无 track 信息，状态保持不变（歌单分配以 run_sync 末尾 recorder 为准）
+        result = svc._load_synced_state()
+        assert result[123] == [10]
 
 
 class TestReconcilePlaylistChanged:
+    def _svc(self, cfg: Config) -> SyncService:
+        return SyncService(
+            cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+        )
+
     def test_add_playlist_creates_link(self, tmp_path: Path) -> None:
         """曲目新增到歌单B → 在B目录创建硬链接。"""
         cfg = _make_config(tmp_path)
         cfg.state_dir.mkdir(parents=True)
         cfg.downloads_dir.mkdir(parents=True)
-        SyncService._save_synced_state(cfg, {123: [10]})
+        _seed_state(cfg, {123: [10]})
 
         track = _make_track(123)
         # 创建 canonical 源文件
@@ -215,7 +197,7 @@ class TestReconcilePlaylistChanged:
         mp3_src.write_text("mp3")
         lrc_src.write_text("lrc")
 
-        svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
+        svc = self._svc(cfg)
         svc._reconcile_playlist_assignments({123: [10, 20]}, _make_playlist_index(), {123: track})
 
         # B 目录中应有链接
@@ -223,16 +205,12 @@ class TestReconcilePlaylistChanged:
         assert (cfg.preset_dir("portable") / "歌单B" / "Test Song - Test Artist.mp3").exists()
         assert (cfg.preset_dir("portable") / "歌单B" / "Test Song - Test Artist.lrc").exists()
 
-        # 状态已更新
-        result = SyncService._load_synced_state(cfg)
-        assert result[123] == [10, 20]
-
     def test_remove_playlist_deletes_link(self, tmp_path: Path) -> None:
         """曲目从歌单B移除 → B目录中的链接被删除。"""
         cfg = _make_config(tmp_path)
         cfg.state_dir.mkdir(parents=True)
         cfg.downloads_dir.mkdir(parents=True)
-        SyncService._save_synced_state(cfg, {123: [10, 20]})
+        _seed_state(cfg, {123: [10, 20]})
 
         track = _make_track(123)
         # 创建 canonical 源文件
@@ -247,28 +225,24 @@ class TestReconcilePlaylistChanged:
         b_arc.write_text("flac")
         b_port.write_text("mp3")
 
-        svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
+        svc = self._svc(cfg)
         svc._reconcile_playlist_assignments({123: [10]}, _make_playlist_index(), {123: track})
 
         # B 目录中的链接应被删除
         assert not b_arc.exists()
         assert not b_port.exists()
 
-        # A 目录不受影响（没有创建因为 canonical 文件不在 A）
-        result = SyncService._load_synced_state(cfg)
-        assert result[123] == [10]
-
     def test_canonical_missing_skips(self, tmp_path: Path) -> None:
         """canonical 源文件不存在时静默跳过。"""
         cfg = _make_config(tmp_path)
         cfg.state_dir.mkdir(parents=True)
         cfg.downloads_dir.mkdir(parents=True)
-        SyncService._save_synced_state(cfg, {123: [10]})
+        _seed_state(cfg, {123: [10]})
 
         track = _make_track(123)
         # 不创建 canonical 文件
 
-        svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
+        svc = self._svc(cfg)
         svc._reconcile_playlist_assignments({123: [10, 20]}, _make_playlist_index(), {123: track})
 
         # 不应创建任何链接（canonical 缺失）
@@ -282,10 +256,14 @@ class TestReconcilePlaylistChanged:
 
 
 class TestLinkNames:
+    def _svc(self, cfg: Config) -> SyncService:
+        # 仅测链接文件名，状态接口用 stub 占位
+        return SyncService(cfg, MagicMock(), MagicMock(), workers=1, state=MagicMock())
+
     def test_link_name_archive(self) -> None:
         cfg = MagicMock(spec=Config)
         cfg.presets = []
-        svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
+        svc = self._svc(cfg)
         track = Track(id=1, name="Song", artists=["Artist"], album="A", cover_url=None, raw={})
         preset = Preset(name="archive", format="flac", filename_template="{artist} - {name}")
         name = svc._link_name(track, preset, ".flac")
@@ -294,7 +272,7 @@ class TestLinkNames:
     def test_link_name_portable_no_alias(self) -> None:
         cfg = MagicMock(spec=Config)
         cfg.presets = []
-        svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
+        svc = self._svc(cfg)
         track = Track(id=1, name="Song", artists=["Artist"], album="A", cover_url=None, raw={})
         preset = Preset(
             name="portable", format="mp3", bitrate="192k",
@@ -306,7 +284,7 @@ class TestLinkNames:
     def test_link_name_portable_with_alias(self) -> None:
         cfg = MagicMock(spec=Config)
         cfg.presets = []
-        svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
+        svc = self._svc(cfg)
         track = Track(id=1, name="Song", artists=["Artist"], album="A", aliases=["Alias"], cover_url=None, raw={})
         preset = Preset(
             name="portable", format="mp3", bitrate="192k",
@@ -318,7 +296,7 @@ class TestLinkNames:
     def test_link_name_portable_no_alias_again(self) -> None:
         cfg = MagicMock(spec=Config)
         cfg.presets = []
-        svc = SyncService(cfg, MagicMock(), MagicMock(), workers=1)
+        svc = self._svc(cfg)
         track = Track(id=1, name="Song", artists=["Artist"], album="A", cover_url=None, raw={})
         preset = Preset(
             name="portable", format="mp3", bitrate="192k",

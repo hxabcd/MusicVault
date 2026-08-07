@@ -8,8 +8,8 @@ from typing import Iterable, Mapping
 
 from musicvault.adapters.processors.decryptor import Decryptor
 from musicvault.adapters.processors.lyrics import (
-    StandardLyrics,
     KaraokeLyrics,
+    StandardLyrics,
 )
 from musicvault.adapters.processors.metadata_writer import MetadataWriter
 from musicvault.adapters.processors.organizer import Organizer
@@ -26,7 +26,6 @@ from musicvault.shared.utils import (
     format_track_name,
     load_json,
     safe_filename,
-    save_json,
     workspace_rel_path,
 )
 
@@ -42,8 +41,8 @@ class ProcessService:
         organizer: Organizer,
         metadata: MetadataWriter,
         workers: int,
+        state: StateRepository,
         dry_run: bool = False,
-        state: StateRepository | None = None,
     ) -> None:
         self.cfg = cfg
         self.api = api
@@ -52,8 +51,8 @@ class ProcessService:
         self.metadata = metadata
         self.workers = max(1, workers)
         self.dry_run = dry_run
-        # 可选：把本次处理产出的媒体资产登记到新 SQLite，供 target-sync 消费
-        self.recorder = SourceStateRecorder(state) if state is not None else None
+        # 把本次处理产出的媒体资产登记到 SQLite，供 target-sync 消费
+        self.recorder = SourceStateRecorder(state)
 
     # ------------------------------------------------------------------
     # 公开入口
@@ -88,8 +87,7 @@ class ProcessService:
         if not tasks:
             return
 
-        processed_index = self._load_processed_index()
-        pending, skipped = self._filter_pending(tasks, processed_index, force=force)
+        pending, skipped = self._filter_pending(tasks, force=force)
         logger.info("已处理索引过滤：阶段=%s force=%s 跳过=%s 待处理=%s", stage_name, force, skipped, len(pending))
         if not pending:
             return
@@ -119,7 +117,7 @@ class ProcessService:
                             if rf == raw_file:
                                 track_info, playlist_names = ti, pn
                                 break
-                        self._mark_processed(audio_map, processed_index)
+                        self._mark_processed(audio_map, track_info)
                         if track_info and playlist_names:
                             results.append((audio_map, track_info, playlist_names))
                         bp.advance(success=True, idx=idx, item_name=raw_file.name)
@@ -130,24 +128,18 @@ class ProcessService:
                         )
             except KeyboardInterrupt:
                 pool.shutdown(wait=False, cancel_futures=True)
-                if processed_index:
-                    self._save_processed_index(processed_index)
                 raise
-
-        self._save_processed_index(processed_index)
 
         for audio_map, track_info, playlist_names in results:
             self._link_track(audio_map, track_info, playlist_names)
 
-        if self.recorder is not None:
-            self._record_processed_results(results)
+        self._record_processed_results(results)
 
     def _record_processed_results(
         self,
         results: list[tuple[dict[str, Path], Track, list[str]]],
     ) -> None:
         """把本次处理产出的曲目与 canonical 媒体资产写入 SQLite。"""
-        assert self.recorder is not None
         tracks: list[Track] = []
         seen: set[int] = set()
         assets: list[MediaAsset] = []
@@ -361,65 +353,37 @@ class ProcessService:
                         create_link(lrc_src, dst_dir / f"{link_stem}.lrc")
 
     # ------------------------------------------------------------------
-    # processed_files.json
+    # 已处理状态（processed_files.json 已被 SQLite processed_tracks 替代）
     # ------------------------------------------------------------------
-
-    def _load_processed_index(self) -> dict[str, dict[str, object]]:
-        loaded = load_json(self.cfg.processed_state_file, {})
-        if not isinstance(loaded, dict):
-            return {}
-        normalized: dict[str, dict[str, object]] = {}
-        for key, value in loaded.items():
-            if not isinstance(key, str) or not isinstance(value, dict):
-                continue
-            normalized[key] = dict(value)
-        return normalized
-
-    def _save_processed_index(self, index: dict[str, dict[str, object]]) -> None:
-        save_json(self.cfg.processed_state_file, index)
 
     def _filter_pending(
         self,
         tasks: list[tuple[Path, Track, list[str]]],
-        processed_index: Mapping[str, Mapping[str, object]],
         force: bool,
     ) -> tuple[list[tuple[Path, Track, list[str]]], int]:
         if force:
             return tasks, 0
 
-        current_hash = compute_preset_hash(self.cfg.presets)
+        required_specs = {audio_spec_key(fmt, br) for fmt, br in build_audio_specs(self.cfg.presets)}
         pending: list[tuple[Path, Track, list[str]]] = []
         skipped = 0
         for raw_file, track, playlist_names in tasks:
-            idx_entry = processed_index.get(str(track.id))
-            if idx_entry and isinstance(idx_entry, dict) and idx_entry.get("audios"):
-                stored_hash = idx_entry.get("preset_hash")
-                if stored_hash and stored_hash == current_hash:
-                    skipped += 1
-                    logger.info("跳过已处理文件（preset 未变）：track_id=%s", track.id)
-                    continue
-                logger.info("Preset 配置已变更，将重新处理：track_id=%s", track.id)
+            if self.recorder.state.is_processed(track.id, required_specs):
+                skipped += 1
+                logger.info("跳过已处理文件（spec 已覆盖）：track_id=%s", track.id)
+                continue
             pending.append((raw_file, track, playlist_names))
         return pending, skipped
 
-    def _mark_processed(
-        self,
-        audio_map: dict[str, Path],
-        processed_index: dict[str, dict[str, object]],
-    ) -> None:
+    def _mark_processed(self, audio_map: dict[str, Path], track: Track | None = None) -> None:
         if not audio_map:
             return
         first_path = next(iter(audio_map.values()))
-        track_id = first_path.stem.split("_")[0]
-        audios: dict[str, str] = {}
-        for spec_key, p in audio_map.items():
-            rel = workspace_rel_path(p, self.cfg.workspace_path)
-            audios[spec_key] = rel
-        processed_index[track_id] = {
-            "audios": audios,
-            "preset_hash": compute_preset_hash(self.cfg.presets),
-            "updated_at": int(time.time()),
-        }
+        track_id = int(first_path.stem.split("_")[0])
+        if track is not None:
+            # processed_tracks 外键引用 tracks，先确保曲目存在
+            self.recorder.state.upsert_track(track)
+        self.recorder.state.record_processed(track_id, compute_preset_hash(self.cfg.presets), time.time())
 
     # ------------------------------------------------------------------
     # 本地处理（msv process 独立模式）
@@ -429,16 +393,12 @@ class ProcessService:
         pending: list[tuple[Path, int]] = []
 
         cache_files = [f for f in self._iter_downloads() if not f.stem.isdigit()]
-        if cache_files:
-            processed = load_json(self.cfg.processed_state_file, {})
-            if not isinstance(processed, dict):
-                processed = {}
-            for raw_file in cache_files:
-                track_id = self._guess_track_id(raw_file, index=processed)
-                if track_id is None:
-                    logger.info("跳过文件：无法推断 track_id，文件=%s", raw_file.name)
-                    continue
-                pending.append((raw_file, track_id))
+        for raw_file in cache_files:
+            track_id = self._guess_track_id(raw_file)
+            if track_id is None:
+                logger.info("跳过文件：无法推断 track_id，文件=%s", raw_file.name)
+                continue
+            pending.append((raw_file, track_id))
 
         seen_ids = {pid for _, pid in pending}
         for canon_path, track_id in self._scan_canonical_files():
@@ -518,33 +478,10 @@ class ProcessService:
         return names or [self.cfg.default_playlist_name]
 
     def _guess_track_id(self, file_path: Path, index: Mapping[str, object] | None = None) -> int | None:
-        index_map: Mapping[str, object]
-        if index is None:
-            index_path = self.cfg.processed_state_file
-            loaded = load_json(index_path, {})
-            index_map = loaded if isinstance(loaded, dict) else {}
-        else:
-            index_map = index
-
+        """从 SQLite pending_files 反查 raw 文件所属 track_id。"""
+        del index  # 旧 JSON 索引参数已废弃，保留签名兼容调用方
         rel = workspace_rel_path(file_path, self.cfg.workspace_path)
-        for key, value in index_map.items():
-            if not isinstance(value, dict):
-                continue
-            audios = value.get("audios")
-            if isinstance(audios, dict):
-                for _spec_key, spec_rel in audios.items():
-                    if spec_rel == rel:
-                        try:
-                            return int(key)
-                        except (TypeError, ValueError):
-                            pass
-            for field in ("flac", "mp3", "source"):
-                if value.get(field) == rel:
-                    try:
-                        return int(key)
-                    except (TypeError, ValueError):
-                        pass
-        return None
+        return self.recorder.state.find_track_id_by_path(rel)
 
     def _safe_track(self, track_id: int, fallback_name: str) -> Track:
         detail = self.api.get_track_detail(track_id)

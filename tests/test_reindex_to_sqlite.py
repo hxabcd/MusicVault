@@ -60,19 +60,21 @@ def test_rebuild_index_records_tracks_playlists_and_assets(tmp_path: Path) -> No
     assert asset.source == "pipeline:reindex"
 
 
-def test_rebuild_index_without_state_still_writes_json(tmp_path: Path) -> None:
+def test_rebuild_index_writes_sqlite_state(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     _setup_downloads(cfg)
     _setup_playlists(cfg)
     _setup_library_links(cfg)
+    repo = _repository(cfg)
 
-    service = RunService(cfg, api=MagicMock())
+    service = RunService(cfg, api=MagicMock(), state=repo)
     track_count, playlist_count = service.rebuild_index()
 
     assert track_count == 2
     assert playlist_count == 1
-    synced = service.sync_service._load_synced_state(cfg)
+    synced = service.sync_service._load_synced_state()
     assert synced == {111: [10], 222: []}
+    assert not (cfg.state_dir / "synced_tracks.json").exists()
 
 
 def test_rebuild_index_does_not_overwrite_known_track_metadata(tmp_path: Path) -> None:

@@ -80,14 +80,6 @@ class Config:
     def preset_dir(self, preset_name: str) -> Path:
         return self.library_dir / preset_name
 
-    @property
-    def synced_state_file(self) -> Path:
-        return self.state_dir / "synced_tracks.json"
-
-    @property
-    def processed_state_file(self) -> Path:
-        return self.state_dir / "processed_files.json"
-
     def ensure_dirs(self) -> None:
         for path in (
             self.workspace_path,

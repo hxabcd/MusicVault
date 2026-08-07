@@ -24,7 +24,6 @@ from musicvault.shared.utils import (
     format_track_name,
     load_json,
     safe_filename,
-    save_json,
     workspace_rel_path,
 )
 
@@ -36,14 +35,14 @@ class RunService:
         self,
         cfg: Config,
         api: NeteaseClient,
+        state: StateRepository,
         dry_run: bool = False,
-        state: StateRepository | None = None,
     ) -> None:
         self.cfg = cfg
         self.api = api
         self.dry_run = dry_run
-        # 可选：把重建/处理的源侧状态写入新 SQLite，供 target-sync 消费
-        self.recorder = SourceStateRecorder(state) if state is not None else None
+        # 把重建/处理的源侧状态写入 SQLite，供 target-sync 消费
+        self.recorder = SourceStateRecorder(state)
 
         cpu = os.cpu_count() or 4
         auto_download = max(1, min(6, cpu))
@@ -78,7 +77,7 @@ class RunService:
         )
 
     def rebuild_index(self) -> tuple[int, int]:
-        """通过 downloads/ 和 library/ 目录重建 synced_tracks.json 和 processed_files.json。
+        """通过 downloads/ 和 library/ 目录重建 SQLite 状态。
 
         返回 (track_count, playlist_count)。
         """
@@ -153,13 +152,8 @@ class RunService:
                     if tid is not None:
                         track_playlists.setdefault(tid, set()).add(pid)
 
-        # 5. 重建 synced_tracks.json
-        synced: dict[int, list[int]] = {}
-        for tid in sorted(track_ids):
-            synced[tid] = sorted(track_playlists.get(tid, set()))
-        SyncService._save_synced_state(self.cfg, synced)
-
-        # 6. 重建 processed_files.json（新版 audios 格式）
+        # 5. synced 状态已由 _record_rebuilt_state 写入 SQLite（见下）
+        # 6. 重建媒体资产（audios）并登记 processed 状态
         processed: dict[str, dict[str, object]] = {}
         for tid in sorted(track_ids):
             audios: dict[str, str] = {}
@@ -173,15 +167,8 @@ class RunService:
                     if spec_key:
                         audios[spec_key] = workspace_rel_path(f, self.cfg.workspace_path)
             if audios:
-                processed[str(tid)] = {
-                    "audios": audios,
-                    "preset_hash": compute_preset_hash(self.cfg.presets),
-                    "updated_at": int(time.time()),
-                }
-        save_json(self.cfg.processed_state_file, processed)
-
-        if self.recorder is not None:
-            self._record_rebuilt_state(track_ids, track_playlists, playlist_index, processed)
+                processed[str(tid)] = {"audios": audios}
+        self._record_rebuilt_state(track_ids, track_playlists, playlist_index, processed)
 
         orphaned = sum(1 for tid in track_ids if not track_playlists.get(tid))
         playlist_count = len({pid for pids in track_playlists.values() for pid in pids})
@@ -191,7 +178,7 @@ class RunService:
             console.print(f"  [dim]（其中 {orphaned} 首未关联到任何歌单）[/dim]")
 
         logger.info(
-            "索引重建完成：%s 首曲目，%s 个歌单，synced_tracks.json + processed_files.json 已更新",
+            "索引重建完成：%s 首曲目，%s 个歌单，SQLite 状态已更新",
             len(track_ids),
             playlist_count,
         )
@@ -205,7 +192,6 @@ class RunService:
         processed: dict[str, dict[str, object]],
     ) -> None:
         """把磁盘重建的源侧状态写入 SQLite，供 target-sync 消费。"""
-        assert self.recorder is not None
         # 已存在的曲目保留真实元数据，占位记录只补缺失项，避免覆盖 sync 写入的信息。
         known_ids = {track.id for track in self.recorder.state.create_snapshot().tracks}
         tracks = [
@@ -232,11 +218,15 @@ class RunService:
         ]
         managed = [song_id for song_id in self.cfg.get_song_ids() if song_id in track_ids]
         self.recorder.record_source_state(tracks, playlists, managed, assets)
+        # 重建即视为已处理（spec 已由 audios 覆盖），下次 process 跳过
+        for tid_str, entry in processed.items():
+            if entry.get("audios"):
+                self.recorder.state.record_processed(int(tid_str), compute_preset_hash(self.cfg.presets), time.time())
 
     def link_only(self, cookie: str) -> tuple[int, int]:
         """仅创建 library 硬链接，跳过下载、解码、转码、元数据和歌词处理。
 
-        从 synced_tracks.json 读取 track_id → playlist_ids 映射，
+        从 SQLite 快照读取 track_id → playlist_ids 映射，
         通过 API 批量获取曲目详情生成文件名，在各 preset 目录中重建硬链接。
 
         返回 (linked_tracks, playlist_count)。dry-run 模式下只统计将创建的链接，不落盘。
@@ -246,10 +236,10 @@ class RunService:
         if not self.dry_run:
             self.cfg.ensure_dirs()
 
-        # 1. 加载同步状态
-        state_map = SyncService._load_synced_state(self.cfg)
+        # 1. 加载同步状态（自 SQLite 快照派生）
+        state_map = self.sync_service._load_synced_state()
         if not state_map:
-            console.print("[dim]synced_tracks.json 为空，无需创建链接[/dim]")
+            console.print("[dim]暂无已同步曲目，无需创建链接[/dim]")
             return 0, 0
 
         # 2. 加载歌单索引
@@ -369,7 +359,7 @@ class RunService:
 
     def _cleanup_uncategorized_orphans(self) -> None:
         """清理 library/*/未分类 下无索引归属的硬链接。"""
-        synced = SyncService._load_synced_state(self.cfg)
+        synced = self.sync_service._load_synced_state()
         valid_ids = set(synced.keys())
         if not valid_ids:
             return
@@ -443,9 +433,6 @@ def _guess_spec_from_filename(filename: str) -> str | None:
 
 
 def _abs_path(workspace: Path, stored: str) -> Path:
-    """把 processed_files.json 中保存的路径还原为绝对路径。
-
-    保存的是 workspace 相对路径；跨盘符时保存的就是绝对路径。
-    """
+    """把相对路径还原为绝对路径；跨盘符时保存的本身就是绝对路径。"""
     path = Path(stored)
     return path if path.is_absolute() else (workspace / path).resolve()
