@@ -29,6 +29,3 @@ _避免_：当前状态（当前状态可能在运行中变化，源快照强调
 
 **单向同步（One-way Synchronization）**：数据只从 MusicVault 源侧流向目标端，目标端的修改不会反向写入源侧。
 _避免_：双向同步、镜像（镜像是某种删除策略，不等同于同步方向）
-
-**歌单链接（Playlist Links）**：内置目标同步器，通过链接或复制在本地目录中表现歌单关系。
-_避免_：library preset（Playlist Links 是规则，library 是结果目录）

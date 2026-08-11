@@ -20,3 +20,6 @@ coverage.xml
 workspace/
 dev_config.json
 .worktrees/
+
+# Claude Code local pointer (instructions live in AGENTS.md)
+CLAUDE.md
