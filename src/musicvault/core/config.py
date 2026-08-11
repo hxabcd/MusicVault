@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from musicvault.adapters.filesystem.workspace import WorkspacePaths
 from musicvault.domain.preset import Preset, default_presets, validate_presets
 from musicvault.shared.utils import load_json, save_json
 
@@ -81,15 +82,10 @@ class Config:
         return self.library_dir / preset_name
 
     def ensure_dirs(self) -> None:
-        for path in (
-            self.workspace_path,
-            self.downloads_dir,
-            self.downloads_cache_dir,
-            self.cache_dir,
-            self.media_store_dir,
-            self.state_dir,
-            self.logs_dir,
-        ):
+        # 新布局五区域（cache/media_store/library/logs/state.db）由 WorkspacePaths 单一定义；
+        # 此处补充旧流水线临时目录（downloads/state）与 preset 目录。
+        WorkspacePaths(self.workspace_path).ensure()
+        for path in (self.downloads_dir, self.downloads_cache_dir, self.state_dir):
             path.mkdir(parents=True, exist_ok=True)
         for preset in self.presets:
             self.preset_dir(preset.name).mkdir(parents=True, exist_ok=True)
