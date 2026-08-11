@@ -46,25 +46,12 @@ class Config:
         return Path(self.workspace).resolve()
 
     @property
-    def downloads_dir(self) -> Path:
-        return self.workspace_path / "downloads"
-
-    @property
-    def downloads_cache_dir(self) -> Path:
-        return self.downloads_dir / "cache"
-
-    @property
     def cache_dir(self) -> Path:
-        """新架构的临时缓存目录；downloads/cache 作为旧布局保留。"""
         return self.workspace_path / "cache"
 
     @property
     def media_store_dir(self) -> Path:
         return self.workspace_path / "media_store"
-
-    @property
-    def state_dir(self) -> Path:
-        return self.workspace_path / "state"
 
     @property
     def state_db_file(self) -> Path:
@@ -83,16 +70,10 @@ class Config:
 
     def ensure_dirs(self) -> None:
         # 新布局五区域（cache/media_store/library/logs/state.db）由 WorkspacePaths 单一定义；
-        # 此处补充旧流水线临时目录（downloads/state）与 preset 目录。
+        # 此处仅补充 preset 目录。
         WorkspacePaths(self.workspace_path).ensure()
-        for path in (self.downloads_dir, self.downloads_cache_dir, self.state_dir):
-            path.mkdir(parents=True, exist_ok=True)
         for preset in self.presets:
             self.preset_dir(preset.name).mkdir(parents=True, exist_ok=True)
-
-    # 说明：歌单/单曲管理已迁往 StateRepository 端口与 PlaylistUseCase 用例
-    # （managed_songs / playlists 表）；state_dir 仅保留给一次性导入
-    # （WorkspaceMigration._import_legacy_state）与 legacy 配置迁移作中间态。
 
     # -- serialization --
 
@@ -214,16 +195,6 @@ class Config:
         if path.exists():
             raw = load_json(path, {})
             cfg = cls.from_dict(raw)
-            if "playlist_ids" in raw or "playlist_id" in raw:
-                # 一次性迁移中间态：写入 state/playlists.json，由 msv migrate 导入 SQLite
-                legacy_ids = _extract_legacy_playlist_ids(raw)
-                if legacy_ids:
-                    cfg.ensure_dirs()
-                    index_path = cfg.state_dir / "playlists.json"
-                    index = load_json(index_path, {})
-                    for pid in legacy_ids:
-                        index.setdefault(str(pid), {"name": "", "track_count": 0})
-                    save_json(index_path, index)
             cfg.save(path)
         else:
             cfg = cls()
@@ -348,23 +319,6 @@ def _normalize_preset_dict(d: dict[str, Any]) -> dict[str, Any]:
             del result[key]
 
     return result
-
-
-def _extract_legacy_playlist_ids(raw: dict[str, Any]) -> list[int]:
-    playlist_ids = raw.get("playlist_ids") or raw.get("playlist_id")
-    if playlist_ids is None:
-        return []
-    if isinstance(playlist_ids, int):
-        return [playlist_ids]
-    if isinstance(playlist_ids, list):
-        parsed: list[int] = []
-        for pid in playlist_ids:
-            try:
-                parsed.append(int(pid))
-            except (TypeError, ValueError):
-                raise RuntimeError(f"playlist_ids 格式错误：{pid}") from None
-        return parsed
-    raise RuntimeError(f"playlist_ids 格式错误：{playlist_ids}")
 
 
 def _parse_workers_int(value: Any) -> int | None:

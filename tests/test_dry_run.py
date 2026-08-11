@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -11,7 +10,6 @@ from musicvault.domain.models import DownloadedTrack, Track
 from musicvault.domain.models import Playlist
 from musicvault.application.process_use_case import ProcessUseCase
 from musicvault.application.sync_use_case import SyncUseCase
-from musicvault.shared.utils import save_json
 
 
 def _make_cfg(tmp_path: Path) -> Config:
@@ -51,12 +49,10 @@ def _seed_synced(cfg: Config, state_map: dict[int, list[int]]) -> None:
 class TestSyncDryRun:
     def test_new_track_reported_no_writes(self, tmp_path: Path) -> None:
         cfg = _make_cfg(tmp_path)
-        cfg.state_dir.mkdir(parents=True)
         cfg.media_store_dir.mkdir(parents=True)
         cfg.cache_dir.mkdir(parents=True)
-        # 已有 1 首已同步，playlists.json 索引已存在
+        # 已有 1 首已同步（状态经 SQLite 预置）
         _seed_synced(cfg, {111: [10]})
-        save_json(cfg.state_dir / "playlists.json", {"10": {"name": "歌单A", "track_count": 2}})
 
         # API：歌单信息变化（正式运行会更新索引文件）、曲目新增 222
         api = MagicMock()
@@ -73,9 +69,6 @@ class TestSyncDryRun:
         downloader.download_track.assert_not_called()
         state_map = svc.load_synced_state()
         assert 222 not in state_map
-        # playlists.json 保持原内容（正式运行会更新 track_count）
-        raw = json.loads((cfg.state_dir / "playlists.json").read_text(encoding="utf-8"))
-        assert raw == {"10": {"name": "歌单A", "track_count": 2}}
 
         # 计划包含新曲目与歌单信息变化
         assert [t.id for t in svc.plan["with_url"]] == [222]
@@ -83,7 +76,6 @@ class TestSyncDryRun:
 
     def test_prune_reported_files_kept(self, tmp_path: Path) -> None:
         cfg = _make_cfg(tmp_path)
-        cfg.state_dir.mkdir(parents=True)
         cfg.media_store_dir.mkdir(parents=True)
         cfg.cache_dir.mkdir(parents=True)
         # 本地有 111（远端已删除）和 222（远端仍在）
@@ -128,7 +120,6 @@ class TestSyncDryRun:
     def test_normal_mode_writes_to_sqlite(self, tmp_path: Path) -> None:
         """回归：dry_run=False 时下载并把状态写入 SQLite（不再写 JSON）。"""
         cfg = _make_cfg(tmp_path)
-        cfg.state_dir.mkdir(parents=True)
         cfg.media_store_dir.mkdir(parents=True)
         cfg.cache_dir.mkdir(parents=True)
         repo = _repository(cfg)
@@ -155,20 +146,18 @@ class TestSyncDryRun:
         call_args = downloader.download_track.call_args
         assert call_args.args[2] == cfg.cache_dir
         assert 111 in svc.load_synced_state()
-        assert not (cfg.state_dir / "synced_tracks.json").exists()
+        assert not (cfg.workspace_path / "state").exists()
 
 
 class TestProcessDryRun:
     def test_pending_files_reported_no_writes(self, tmp_path: Path) -> None:
         cfg = _make_cfg(tmp_path)
-        cfg.state_dir.mkdir(parents=True)
         cfg.media_store_dir.mkdir(parents=True)
         cfg.cache_dir.mkdir(parents=True)
         # 本地 canonical 文件，不在 processed 索引中 → 待处理
         canonical = cfg.media_store_dir / "333" / "audio" / "333.flac"
         canonical.parent.mkdir(parents=True, exist_ok=True)
         canonical.write_text("fake flac")
-        save_json(cfg.state_dir / "playlists.json", {"10": {"name": "歌单A", "track_count": 1}})
 
         api = MagicMock()
         api.get_tracks_detail.return_value = {333: _make_track(333)}
@@ -192,7 +181,6 @@ class TestProcessDryRun:
         from musicvault.domain.preset import compute_preset_hash
 
         cfg = _make_cfg(tmp_path)
-        cfg.state_dir.mkdir(parents=True)
         cfg.media_store_dir.mkdir(parents=True)
         cfg.cache_dir.mkdir(parents=True)
         canonical = cfg.media_store_dir / "333" / "audio" / "333.flac"

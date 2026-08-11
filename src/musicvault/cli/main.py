@@ -148,13 +148,6 @@ def build_parser() -> argparse.ArgumentParser:
     presets.add_argument("--workspace", default=None, help="工作目录")
     presets.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
 
-    migrate = sub.add_parser("migrate", help="迁移 workspace", description="将旧 downloads 音频安全复制到 media_store")
-    migrate.add_argument(
-        "--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）"
-    )
-    migrate.add_argument("--workspace", default=None, help="工作目录")
-    migrate.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
-
     target_sync = sub.add_parser(
         "target-sync", help="运行本地目标同步", description="从 SQLite 源快照执行已发现 preset 的目标同步"
     )
@@ -228,23 +221,6 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as error:  # noqa: BLE001 - CLI 将加载失败转换为非零退出码
             output_error(f"preset 加载失败：{error}")
             return 2
-        return 0
-
-    if args.command == "migrate":
-        if getattr(args, "workspace", None) is not None:
-            cfg.workspace = args.workspace
-        try:
-            from musicvault.application.bootstrap import build_workspace_migrator
-
-            report = build_workspace_migrator(cfg).migrate()
-        except Exception as error:  # noqa: BLE001 - CLI 将迁移失败转换为非零退出码
-            output_error(f"workspace 迁移失败：{error}")
-            return 2
-        output_success(
-            f"迁移完成：复制 {report.copied_assets} 个媒体资产，"
-            f"跳过 {report.skipped_assets} 个，缓存复制 {report.copied_cache_files} 个，"
-            f"忽略 {report.ignored_files} 个文件"
-        )
         return 0
 
     if args.command == "target-sync":

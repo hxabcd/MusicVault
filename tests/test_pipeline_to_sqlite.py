@@ -34,7 +34,6 @@ def _repository(cfg: Config) -> SQLiteStateRepository:
 
 def test_sync_records_tracks_and_playlists_to_sqlite(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
-    cfg.state_dir.mkdir(parents=True)
     cfg.media_store_dir.mkdir(parents=True)
     cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
@@ -63,7 +62,6 @@ def test_sync_records_managed_songs_to_sqlite(tmp_path: Path) -> None:
     from musicvault.application.playlist_use_case import PlaylistUseCase
 
     cfg = _make_cfg(tmp_path)
-    cfg.state_dir.mkdir(parents=True)
     cfg.media_store_dir.mkdir(parents=True)
     cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
@@ -82,7 +80,6 @@ def test_sync_records_managed_songs_to_sqlite(tmp_path: Path) -> None:
 
 def test_dry_run_sync_does_not_write_sqlite(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
-    cfg.state_dir.mkdir(parents=True)
     cfg.media_store_dir.mkdir(parents=True)
     cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
@@ -99,7 +96,6 @@ def test_dry_run_sync_does_not_write_sqlite(tmp_path: Path) -> None:
 
 def test_process_records_media_assets_to_sqlite(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
-    cfg.state_dir.mkdir(parents=True)
     cfg.media_store_dir.mkdir(parents=True)
     cfg.cache_dir.mkdir(parents=True)
     cfg.presets = []  # 简化：只把 canonical 文件本身登记为媒体资产
@@ -154,7 +150,6 @@ def test_sync_with_stale_song_id_does_not_crash(tmp_path: Path) -> None:
     from musicvault.application.playlist_use_case import PlaylistUseCase
 
     cfg = _make_cfg(tmp_path)
-    cfg.state_dir.mkdir(parents=True)
     cfg.media_store_dir.mkdir(parents=True)
     cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
@@ -177,7 +172,6 @@ def test_sync_with_stale_song_id_does_not_crash(tmp_path: Path) -> None:
 def test_synced_state_feeds_target_sync_closed_loop(tmp_path: Path) -> None:
     """sync 写入 SQLite → 登记媒体资产 → target-sync 消费快照并生成 playlist_links。"""
     cfg = _make_cfg(tmp_path)
-    cfg.state_dir.mkdir(parents=True)
     cfg.media_store_dir.mkdir(parents=True)
     cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
@@ -219,7 +213,6 @@ def test_synced_state_feeds_target_sync_closed_loop(tmp_path: Path) -> None:
 def test_sync_no_longer_writes_synced_tracks_json(tmp_path: Path) -> None:
     """synced_tracks.json 被 SQLite 完全替代：运行后不再产生该文件。"""
     cfg = _make_cfg(tmp_path)
-    cfg.state_dir.mkdir(parents=True)
     cfg.media_store_dir.mkdir(parents=True)
     cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
@@ -238,13 +231,12 @@ def test_sync_no_longer_writes_synced_tracks_json(tmp_path: Path) -> None:
 
     SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo).run_sync("cookie", playlist_ids=[10])
 
-    assert not (cfg.state_dir / "synced_tracks.json").exists()
+    assert not (cfg.workspace_path / "state").exists()
 
 
 def test_second_sync_reads_synced_state_from_sqlite(tmp_path: Path) -> None:
     """第二次 sync 从 SQLite 识别已同步曲目，不重复下载，也不依赖 JSON。"""
     cfg = _make_cfg(tmp_path)
-    cfg.state_dir.mkdir(parents=True)
     cfg.media_store_dir.mkdir(parents=True)
     cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
@@ -284,7 +276,6 @@ def test_second_sync_reads_synced_state_from_sqlite(tmp_path: Path) -> None:
 def test_process_no_longer_writes_processed_json(tmp_path: Path) -> None:
     """processed_files.json 被 SQLite 完全替代：处理完成后不再产生该文件。"""
     cfg = _make_cfg(tmp_path)
-    cfg.state_dir.mkdir(parents=True)
     cfg.media_store_dir.mkdir(parents=True)
     cfg.cache_dir.mkdir(parents=True)
     cfg.presets = []  # 简化：只把 canonical 文件本身登记为媒体资产
@@ -299,7 +290,7 @@ def test_process_no_longer_writes_processed_json(tmp_path: Path) -> None:
     svc = ProcessUseCase(cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=1, dry_run=False, state=repo)
     svc.run_process(downloaded=[item], force=False)
 
-    assert not (cfg.state_dir / "processed_files.json").exists()
+    assert not (cfg.workspace_path / "state").exists()
 
 
 def test_second_process_skips_when_specs_covered(tmp_path: Path) -> None:
@@ -307,7 +298,6 @@ def test_second_process_skips_when_specs_covered(tmp_path: Path) -> None:
     from musicvault.domain.preset import compute_preset_hash
 
     cfg = _make_cfg(tmp_path)
-    cfg.state_dir.mkdir(parents=True)
     cfg.media_store_dir.mkdir(parents=True)
     cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
@@ -341,7 +331,6 @@ def test_guess_track_id_reads_pending_files(tmp_path: Path) -> None:
     from musicvault.shared.utils import workspace_rel_path
 
     cfg = _make_cfg(tmp_path)
-    cfg.state_dir.mkdir(parents=True)
     cfg.media_store_dir.mkdir(parents=True)
     cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)

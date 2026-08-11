@@ -77,7 +77,6 @@ def _make_config(tmp_path: Path) -> Config:
     cfg = MagicMock(spec=Config)
     cfg.workspace_path = tmp_path
     cfg.state_db_file = tmp_path / "state.db"
-    cfg.state_dir = tmp_path / "state"
     cfg.media_store_dir = tmp_path / "media_store"
     cfg.library_dir = tmp_path / "library"
     cfg.preset_dir = lambda name: tmp_path / "library" / name
@@ -143,7 +142,6 @@ class TestReconcileNoChange:
 
     def test_empty_old_state(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
-        cfg.state_dir.mkdir(parents=True)
         _seed_state(cfg, {})
 
         svc = self._svc(cfg)
@@ -152,7 +150,6 @@ class TestReconcileNoChange:
 
     def test_assignments_unchanged(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
-        cfg.state_dir.mkdir(parents=True)
         _seed_state(cfg, {123: [10, 20]})
 
         svc = self._svc(cfg)
@@ -164,7 +161,6 @@ class TestReconcileNoChange:
     def test_no_track_in_all_tracks(self, tmp_path: Path) -> None:
         """如果 track 不在 all_tracks 中，应静默跳过。"""
         cfg = _make_config(tmp_path)
-        cfg.state_dir.mkdir(parents=True)
         _seed_state(cfg, {123: [10]})
 
         svc = self._svc(cfg)
@@ -184,7 +180,6 @@ class TestReconcilePlaylistChanged:
     def test_add_playlist_creates_link(self, tmp_path: Path) -> None:
         """曲目新增到歌单B → 在B目录创建硬链接。"""
         cfg = _make_config(tmp_path)
-        cfg.state_dir.mkdir(parents=True)
         cfg.media_store_dir.mkdir(parents=True)
         _seed_state(cfg, {123: [10]})
 
@@ -209,7 +204,6 @@ class TestReconcilePlaylistChanged:
     def test_remove_playlist_deletes_link(self, tmp_path: Path) -> None:
         """曲目从歌单B移除 → B目录中的链接被删除。"""
         cfg = _make_config(tmp_path)
-        cfg.state_dir.mkdir(parents=True)
         cfg.media_store_dir.mkdir(parents=True)
         _seed_state(cfg, {123: [10, 20]})
 
@@ -239,7 +233,6 @@ class TestReconcilePlaylistChanged:
     def test_canonical_missing_skips(self, tmp_path: Path) -> None:
         """canonical 源文件不存在时静默跳过。"""
         cfg = _make_config(tmp_path)
-        cfg.state_dir.mkdir(parents=True)
         cfg.media_store_dir.mkdir(parents=True)
         _seed_state(cfg, {123: [10]})
 

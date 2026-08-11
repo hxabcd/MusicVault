@@ -109,8 +109,6 @@ def test_ensure_dirs_creates_preset_dirs() -> None:
         cfg.ensure_dirs()
         assert (Path(tmp) / "library" / "archive").is_dir()
         assert (Path(tmp) / "library" / "portable").is_dir()
-        assert (Path(tmp) / "downloads").is_dir()
-        assert (Path(tmp) / "state").is_dir()
 
 
 def test_preset_dir_property() -> None:

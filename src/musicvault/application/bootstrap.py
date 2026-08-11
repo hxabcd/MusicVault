@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from musicvault.adapters.filesystem.workspace import WorkspaceMigration, WorkspacePaths
+from musicvault.adapters.filesystem.workspace import WorkspacePaths
 from musicvault.adapters.providers.netease_client import NeteaseClient
 from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
 from musicvault.adapters.targets.filesystem import FilesystemTarget
@@ -72,13 +72,6 @@ def build_pipeline(
         state=SQLiteStateRepository(SQLiteState(config.state_db_file)),
         dry_run=dry_run,
     )
-
-
-def build_workspace_migrator(config: Config) -> WorkspaceMigration:
-    """组装 workspace 迁移器（migrate 命令专用）。"""
-    paths = WorkspacePaths(config.workspace_path)
-    state = SQLiteStateRepository(SQLiteState(paths.state_db))
-    return WorkspaceMigration(paths, state)
 
 
 def build_playlist_use_case(config: Config) -> PlaylistUseCase:
