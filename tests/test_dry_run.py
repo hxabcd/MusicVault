@@ -185,10 +185,13 @@ class TestProcessDryRun:
         canonical = cfg.media_store_dir / "333" / "audio" / "333.flac"
         canonical.parent.mkdir(parents=True, exist_ok=True)
         canonical.write_text("fake flac")
+        mp3 = cfg.media_store_dir / "333" / "audio" / "333_192k.mp3"
+        mp3.write_text("fake mp3")
 
         repo = _repository(cfg)
         repo.upsert_track(_make_track(333))
         repo.upsert_media_asset(build_audio_asset_from_file(333, "FLAC", canonical))
+        repo.upsert_media_asset(build_audio_asset_from_file(333, "MP3-192k", mp3))
         repo.record_processed(333, compute_preset_hash(cfg.presets), 0.0)
 
         api = MagicMock()

@@ -87,7 +87,8 @@ def render_pipeline_result(result: PipelineResult, *, dry_run: bool, command: st
             console.print(f"  [dim]随后将进入后处理：新下载的 {n_new} 首曲目（转码/元数据/歌词/硬链接）[/dim]")
         console.print("  [bold yellow]dry-run 结束：未下载、未修改任何文件[/bold yellow]")
         return
-    render_sync_summary(result.track_count, result.playlist_count, result.downloaded, result.pruned)
+    if command != "process" or result.track_count:
+        render_sync_summary(result.track_count, result.playlist_count, result.downloaded, result.pruned)
     if command != "pull":
         if result.processed:
             console.print(f"  [green]处理完成 {result.processed} 首[/green]")
