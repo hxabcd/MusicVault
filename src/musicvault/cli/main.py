@@ -286,13 +286,17 @@ def main(argv: list[str] | None = None) -> int:
     pipeline_cmd = args.command if args.command in ("sync", "pull", "process") else "sync"
 
     from musicvault.application.bootstrap import build_pipeline
+    from musicvault.cli.render import BatchProgressAdapter, render_link_result, render_pipeline_result
 
     service = build_pipeline(cfg, dry_run=getattr(args, "dry_run", False))
+    progress = BatchProgressAdapter()
     try:
         if args.command == "process" and getattr(args, "only_link", False):
-            service.link_only(cookie=cookie)
+            result = service.link_only(cookie=cookie)
+            render_link_result(result, dry_run=getattr(args, "dry_run", False))
         else:
-            service.run_pipeline(cookie=cookie, command=pipeline_cmd)
+            result = service.run_pipeline(cookie=cookie, command=pipeline_cmd, progress=progress)
+            render_pipeline_result(result, dry_run=getattr(args, "dry_run", False), command=pipeline_cmd)
     except KeyboardInterrupt:
         output_info("已取消")
         return 130

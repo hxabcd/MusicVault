@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 class SyncResult:
     """sync 运行的结构化结果：CLI 据此渲染，process 阶段消费 downloaded。"""
 
-    downloaded: tuple[DownloadedTrack, ...]
+    downloaded: tuple[DownloadedTrack, ...] = ()
     added: int = 0
     no_url: int = 0
     pruned: int = 0
@@ -61,6 +61,8 @@ class SyncUseCase:
         self.paths = WorkspacePaths(cfg.workspace_path)
         # 把本次 sync 的源侧状态写入 SQLite，供 target-sync 消费
         self.recorder = SourceStateRecorder(state)
+        # 歌单索引：run_sync 正常路径末尾填充；无歌单早退时保持空（run_pipeline 直接消费）
+        self.playlist_index: dict[str, dict[str, object]] = {}
 
     def load_synced_state(self) -> dict[int, list[int]]:
         """从 SQLite 快照派生 {track_id: [playlist_ids]} 映射。

@@ -45,7 +45,7 @@ adapters ───────────────────┘
 
 - 所有具体依赖在 composition root（`application/bootstrap.py` 的 `build_runtime` / `build_source_client` / `build_pipeline`）组装；业务用例不自行创建数据库连接、SDK 客户端或 Rich 控制台。
 - 测试接缝是 application 用例：注入 fake 端口（如鸭子类型 fake SourceClient）即可测整条流水线，这是测试大部分用例的方式。
-- 已知偏离：旧流水线用例（`PipelineUseCase` 链）内部仍直接使用 `shared/tui_progress` 的 Rich 进度展示，输出剥离留待后续；新链路（target-sync）已合规。
+- 已修复：旧流水线用例已返回结构化结果，Rich 展示仅存在于 cli/。
 - 已知偏离补充：`adapters/processors/organizer.py` 使用 `shared.output.warn` 输出告警，不在原「旧流水线用例使用 Rich 进度」声明范围内。
 
 ## 两条流水线
