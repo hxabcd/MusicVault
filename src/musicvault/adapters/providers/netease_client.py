@@ -62,6 +62,7 @@ class LoginResult:
     nickname: str
 
 
+# Implements ports.source.SourceClient（protocol，静态鸭子类型）
 class NeteaseClient:
     """NeteaseCloudMusicApi（pymusiclibrary）API 访问封装
 
