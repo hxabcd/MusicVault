@@ -9,7 +9,7 @@ from musicvault.core.config import Config
 from musicvault.domain.models import Track
 from musicvault.domain.preset import Preset
 from musicvault.domain.models import Playlist
-from musicvault.services.sync_service import SyncService
+from musicvault.application.sync_use_case import SyncUseCase
 
 # ---------------------------------------------------------------------------
 # 同步状态加载（SQLite 快照派生，替代旧 synced_tracks.json 格式解析）
@@ -38,7 +38,7 @@ class TestLoadSyncedState:
         cfg = _make_config(tmp_path)
         _seed_state(cfg, {123: [10, 20], 456: [10]})
 
-        svc = SyncService(
+        svc = SyncUseCase(
             cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteStateRepository(SQLiteState(cfg.state_db_file))
         )
         result = svc._load_synced_state()
@@ -49,7 +49,7 @@ class TestLoadSyncedState:
         cfg = _make_config(tmp_path)
         _seed_state(cfg, {789: []})
 
-        svc = SyncService(
+        svc = SyncUseCase(
             cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteStateRepository(SQLiteState(cfg.state_db_file))
         )
         result = svc._load_synced_state()
@@ -59,7 +59,7 @@ class TestLoadSyncedState:
         cfg = _make_config(tmp_path)
         SQLiteStateRepository(SQLiteState(cfg.state_db_file))
 
-        svc = SyncService(
+        svc = SyncUseCase(
             cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteStateRepository(SQLiteState(cfg.state_db_file))
         )
         result = svc._load_synced_state()
@@ -136,8 +136,8 @@ def _make_track(track_id: int) -> Track:
 
 
 class TestReconcileNoChange:
-    def _svc(self, cfg: Config) -> SyncService:
-        return SyncService(
+    def _svc(self, cfg: Config) -> SyncUseCase:
+        return SyncUseCase(
             cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteStateRepository(SQLiteState(cfg.state_db_file))
         )
 
@@ -176,8 +176,8 @@ class TestReconcileNoChange:
 
 
 class TestReconcilePlaylistChanged:
-    def _svc(self, cfg: Config) -> SyncService:
-        return SyncService(
+    def _svc(self, cfg: Config) -> SyncUseCase:
+        return SyncUseCase(
             cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteStateRepository(SQLiteState(cfg.state_db_file))
         )
 
@@ -256,9 +256,9 @@ class TestReconcilePlaylistChanged:
 
 
 class TestLinkNames:
-    def _svc(self, cfg: Config) -> SyncService:
+    def _svc(self, cfg: Config) -> SyncUseCase:
         # 仅测链接文件名，状态接口用 stub 占位
-        return SyncService(cfg, MagicMock(), MagicMock(), workers=1, state=MagicMock())
+        return SyncUseCase(cfg, MagicMock(), MagicMock(), workers=1, state=MagicMock())
 
     def test_link_name_archive(self) -> None:
         cfg = MagicMock(spec=Config)

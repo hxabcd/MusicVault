@@ -10,7 +10,7 @@ from musicvault.core.config import Config
 from musicvault.domain.models import DownloadedTrack, Track
 from musicvault.domain.models import Playlist
 from musicvault.services.process_service import ProcessService
-from musicvault.services.sync_service import SyncService
+from musicvault.application.sync_use_case import SyncUseCase
 from musicvault.shared.utils import save_json
 
 
@@ -65,7 +65,7 @@ class TestSyncDryRun:
         api.get_tracks_download_urls.return_value = {222: "http://example.com/222.mp3"}
 
         downloader = MagicMock()
-        svc = SyncService(cfg, api, downloader, workers=2, dry_run=True, state=_repository(cfg))
+        svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=True, state=_repository(cfg))
         downloaded = svc.run_sync("cookie", playlist_ids=[10])
 
         # 不下载、不写状态
@@ -95,7 +95,7 @@ class TestSyncDryRun:
         api.get_playlist_info.return_value = {"name": "歌单A", "track_count": 1}
         api.get_playlist_tracks.return_value = [_make_track(222)]
 
-        svc = SyncService(cfg, api, MagicMock(), workers=2, dry_run=True, state=_repository(cfg))
+        svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=True, state=_repository(cfg))
         svc.run_sync("cookie", playlist_ids=[10])
 
         # 111 列入清理计划，但文件与状态均保留
@@ -125,7 +125,7 @@ class TestSyncDryRun:
             playlist_ids=[10],
         )
 
-        svc = SyncService(cfg, api, downloader, workers=2, dry_run=False, state=repo)
+        svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo)
         downloaded = svc.run_sync("cookie", playlist_ids=[10])
 
         assert len(downloaded) == 1

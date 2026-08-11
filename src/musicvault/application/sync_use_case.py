@@ -6,12 +6,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from musicvault.adapters.processors.downloader import Downloader
-from musicvault.adapters.providers.netease_client import NeteaseClient
 from musicvault.application.source_state import SourceStateRecorder
 from musicvault.core.config import Config
-from musicvault.domain.models import DownloadedTrack, Track
+from musicvault.domain.models import DownloadedTrack, Playlist, Track
 from musicvault.domain.preset import Preset, audio_spec_key
-from musicvault.domain.models import Playlist
+from musicvault.ports.source import SourceClient
 from musicvault.ports.state import StateRepository
 from musicvault.shared.output import warn as output_warn
 from musicvault.shared.tui_progress import BatchProgress, console
@@ -28,11 +27,13 @@ from musicvault.shared.utils import (
 logger = logging.getLogger(__name__)
 
 
-class SyncService:
+class SyncUseCase:
+    """同步应用用例：拉取源端曲目、下载与源侧状态登记"""
+
     def __init__(
         self,
         cfg: Config,
-        api: NeteaseClient,
+        api: SourceClient,
         downloader: Downloader,
         workers: int,
         state: StateRepository,

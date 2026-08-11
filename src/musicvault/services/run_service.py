@@ -17,7 +17,7 @@ from musicvault.domain.preset import audio_spec_key, compute_preset_hash
 from musicvault.domain.models import Playlist
 from musicvault.ports.state import StateRepository
 from musicvault.services.process_service import ProcessService
-from musicvault.services.sync_service import SyncService
+from musicvault.application.sync_use_case import SyncUseCase
 from musicvault.shared.tui_progress import console, ok
 from musicvault.shared.utils import (
     create_link,
@@ -54,7 +54,7 @@ class RunService:
         ffmpeg_threads = cfg.ffmpeg_threads or auto_ffmpeg
 
         first_template = cfg.presets[0].filename_template if cfg.presets else "{artist} - {name}"
-        self.sync_service = SyncService(
+        self.sync_service = SyncUseCase(
             cfg=cfg,
             api=api,
             downloader=Downloader(filename_template=first_template),
