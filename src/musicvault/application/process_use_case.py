@@ -13,12 +13,11 @@ from musicvault.adapters.processors.lyrics import (
 )
 from musicvault.adapters.processors.metadata_writer import MetadataWriter
 from musicvault.adapters.processors.organizer import Organizer
-from musicvault.adapters.providers.netease_client import NeteaseClient
 from musicvault.application.source_state import SourceStateRecorder, build_audio_asset_from_file
 from musicvault.core.config import Config
-from musicvault.domain.models import DownloadedTrack, Track
+from musicvault.domain.models import DownloadedTrack, MediaAsset, Track
 from musicvault.domain.preset import Preset, audio_spec_key, build_audio_specs, compute_preset_hash
-from musicvault.domain.models import MediaAsset
+from musicvault.ports.source import SourceClient
 from musicvault.ports.state import StateRepository
 from musicvault.shared.tui_progress import BatchProgress, console
 from musicvault.shared.utils import (
@@ -32,11 +31,13 @@ from musicvault.shared.utils import (
 logger = logging.getLogger(__name__)
 
 
-class ProcessService:
+class ProcessUseCase:
+    """处理应用用例：解码、转码、元数据、歌词与 library 硬链接"""
+
     def __init__(
         self,
         cfg: Config,
-        api: NeteaseClient,
+        api: SourceClient,
         decryptor: Decryptor,
         organizer: Organizer,
         metadata: MetadataWriter,

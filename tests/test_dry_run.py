@@ -9,7 +9,7 @@ from musicvault.application.source_state import SourceStateRecorder
 from musicvault.core.config import Config
 from musicvault.domain.models import DownloadedTrack, Track
 from musicvault.domain.models import Playlist
-from musicvault.services.process_service import ProcessService
+from musicvault.application.process_use_case import ProcessUseCase
 from musicvault.application.sync_use_case import SyncUseCase
 from musicvault.shared.utils import save_json
 
@@ -151,7 +151,7 @@ class TestProcessDryRun:
         decryptor = MagicMock()
         organizer = MagicMock()
         metadata = MagicMock()
-        svc = ProcessService(cfg, api, decryptor, organizer, metadata, workers=2, dry_run=True, state=_repository(cfg))
+        svc = ProcessUseCase(cfg, api, decryptor, organizer, metadata, workers=2, dry_run=True, state=_repository(cfg))
         svc.run_process(downloaded=[], force=False)
 
         # 不执行任何处理管线、不写索引
@@ -181,7 +181,7 @@ class TestProcessDryRun:
         api.get_tracks_detail.return_value = {333: _make_track(333)}
         api.get_playlist_tracks.return_value = []
 
-        svc = ProcessService(cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=2, dry_run=True, state=repo)
+        svc = ProcessUseCase(cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=2, dry_run=True, state=repo)
         svc.run_process(downloaded=[], force=False)
 
         # spec 已覆盖：dry-run 不应产生任何待处理项

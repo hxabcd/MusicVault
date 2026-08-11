@@ -16,7 +16,7 @@ from musicvault.domain.models import Track
 from musicvault.domain.preset import audio_spec_key, compute_preset_hash
 from musicvault.domain.models import Playlist
 from musicvault.ports.state import StateRepository
-from musicvault.services.process_service import ProcessService
+from musicvault.application.process_use_case import ProcessUseCase
 from musicvault.application.sync_use_case import SyncUseCase
 from musicvault.shared.tui_progress import console, ok
 from musicvault.shared.utils import (
@@ -62,7 +62,7 @@ class RunService:
             dry_run=dry_run,
             state=state,
         )
-        self.process_service = ProcessService(
+        self.process_service = ProcessUseCase(
             cfg=cfg,
             api=api,
             decryptor=Decryptor(),

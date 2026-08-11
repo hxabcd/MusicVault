@@ -370,7 +370,7 @@ class SyncUseCase:
         return None
 
     # ------------------------------------------------------------------
-    # 链接文件名（与 ProcessService 保持一致）
+    # 链接文件名（与 ProcessUseCase 保持一致）
     # ------------------------------------------------------------------
 
     def _link_name(self, track: Track, preset: Preset, suffix: str = "") -> str:

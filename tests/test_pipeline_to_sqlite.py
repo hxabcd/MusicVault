@@ -10,7 +10,7 @@ from musicvault.application.source_state import SourceStateRecorder, build_audio
 from musicvault.application.sync_engine import SyncEngine
 from musicvault.core.config import Config
 from musicvault.domain.models import DownloadedTrack, Track
-from musicvault.services.process_service import ProcessService
+from musicvault.application.process_use_case import ProcessUseCase
 from musicvault.application.sync_use_case import SyncUseCase
 
 
@@ -108,7 +108,7 @@ def test_process_records_media_assets_to_sqlite(tmp_path: Path) -> None:
     api = MagicMock()
     api.get_track_lyrics.return_value = {}
     item = DownloadedTrack(track=_make_track(333), source_file=str(canonical), is_ncm=False, playlist_ids=[])
-    svc = ProcessService(
+    svc = ProcessUseCase(
         cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=1, dry_run=False, state=repo
     )
     svc.run_process(downloaded=[item], force=False)
@@ -266,7 +266,7 @@ def test_process_no_longer_writes_processed_json(tmp_path: Path) -> None:
     api = MagicMock()
     api.get_track_lyrics.return_value = {}
     item = DownloadedTrack(track=_make_track(333), source_file=str(canonical), is_ncm=False, playlist_ids=[])
-    svc = ProcessService(cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=1, dry_run=False, state=repo)
+    svc = ProcessUseCase(cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=1, dry_run=False, state=repo)
     svc.run_process(downloaded=[item], force=False)
 
     assert not (cfg.state_dir / "processed_files.json").exists()
@@ -299,7 +299,7 @@ def test_second_process_skips_when_specs_covered(tmp_path: Path) -> None:
     api.get_track_lyrics.return_value = {}
     organizer = MagicMock()
     item = DownloadedTrack(track=_make_track(333), source_file=str(flac), is_ncm=False, playlist_ids=[])
-    svc = ProcessService(cfg, api, MagicMock(), organizer, MagicMock(), workers=1, dry_run=False, state=repo)
+    svc = ProcessUseCase(cfg, api, MagicMock(), organizer, MagicMock(), workers=1, dry_run=False, state=repo)
     svc.run_process(downloaded=[item], force=False)
 
     organizer.route_audio.assert_not_called()
@@ -320,5 +320,5 @@ def test_guess_track_id_reads_pending_files(tmp_path: Path) -> None:
     rel = workspace_rel_path(raw, cfg.workspace_path)
     repo.add_pending_file(rel, 333)
 
-    svc = ProcessService(cfg, MagicMock(), MagicMock(), MagicMock(), MagicMock(), workers=1, state=repo)
+    svc = ProcessUseCase(cfg, MagicMock(), MagicMock(), MagicMock(), MagicMock(), workers=1, state=repo)
     assert svc._guess_track_id(raw) == 333
