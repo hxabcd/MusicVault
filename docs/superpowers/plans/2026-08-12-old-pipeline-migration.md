@@ -203,12 +203,12 @@ Expected: FAIL（asset.path 不匹配）。
 →
 ```python
         is_canonical = (
-            raw_file.parent.parent.name == "audio"
+            raw_file.parent.name == "audio"
             and raw_file.parent.parent.parent == self.paths.media_store
             and raw_file.stem.isdigit()
         )
 ```
-（parent 形态为 `<ws>/media_store/<tid>/audio`；`parent.parent.parent == media_store` 校验根，`parent.parent.name.isdigit()` 由 stem.isdigit 与目录结构共同保证，`audio` 段校验防止误判其他资产类型。）
+（raw_file 形态为 `<ws>/media_store/<tid>/audio/<tid>.ext`：`parent.name == "audio"` 校验资产段，`parent.parent.parent == media_store` 校验根（raw_file → audio → <tid> → media_store），`stem.isdigit()` 校验 canonical 命名；`parent.parent.name.isdigit()` 由目录结构隐含，无需单独校验。）
 
 `:203-204`：
 ```python
