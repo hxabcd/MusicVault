@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from musicvault.core.preset import Preset, validate_presets, default_presets, audio_spec_key, build_audio_specs
+from musicvault.domain.preset import Preset, validate_presets, default_presets, audio_spec_key, build_audio_specs
 
 
 class TestPresetDefaults:

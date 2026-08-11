@@ -163,7 +163,7 @@ class TestProcessDryRun:
     def test_processed_track_skipped(self, tmp_path: Path) -> None:
         """media_assets 已覆盖 spec 且 processed_tracks 有记录 → dry-run 不列出。"""
         from musicvault.application.source_state import build_audio_asset_from_file
-        from musicvault.core.preset import compute_preset_hash
+        from musicvault.domain.preset import compute_preset_hash
 
         cfg = _make_cfg(tmp_path)
         cfg.state_dir.mkdir(parents=True)

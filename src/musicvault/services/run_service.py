@@ -13,7 +13,7 @@ from musicvault.adapters.providers.netease_client import NeteaseClient
 from musicvault.application.source_state import SourceStateRecorder, build_audio_asset_from_file
 from musicvault.core.config import Config
 from musicvault.domain.models import Track
-from musicvault.core.preset import audio_spec_key, compute_preset_hash
+from musicvault.domain.preset import audio_spec_key, compute_preset_hash
 from musicvault.domain.models import Playlist
 from musicvault.ports.state import StateRepository
 from musicvault.services.process_service import ProcessService

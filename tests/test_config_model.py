@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 
 import pytest
 from musicvault.core.config import Config
-from musicvault.core.preset import Preset
+from musicvault.domain.preset import Preset
 
 
 def test_load_creates_default_file() -> None:

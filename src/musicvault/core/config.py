@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from musicvault.core.preset import Preset, default_presets, validate_presets
+from musicvault.domain.preset import Preset, default_presets, validate_presets
 from musicvault.shared.utils import load_json, save_json
 
 _METADATA_FIELD_NAMES = frozenset(

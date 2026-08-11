@@ -274,7 +274,7 @@ def test_process_no_longer_writes_processed_json(tmp_path: Path) -> None:
 
 def test_second_process_skips_when_specs_covered(tmp_path: Path) -> None:
     """media_assets 覆盖全部必需 spec 且 processed_tracks 有记录 → 第二次跳过。"""
-    from musicvault.core.preset import compute_preset_hash
+    from musicvault.domain.preset import compute_preset_hash
 
     cfg = _make_cfg(tmp_path)
     cfg.state_dir.mkdir(parents=True)
