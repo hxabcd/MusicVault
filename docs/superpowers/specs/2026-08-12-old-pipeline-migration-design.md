@@ -1,7 +1,7 @@
 # 设计：旧流水线迁入 media_store 新布局（C 阶段实施设计）
 
 日期：2026-08-12
-状态：已批准（用户确认：canonical 直写 media_store；Rich 剥离同批；删除 WorkspaceMigration/migrate/legacy JSON；删除 reindex；旧工作区升级兼容完全忽略）
+状态：已实施（2026-08-12，C 阶段全部完成，含阶段 0-6 与 Task 1-8）
 
 > 本设计承接 `docs/superpowers/specs/2026-08-12-old-pipeline-migration-handoff.md`（交接文档），是 C 阶段实施的正式设计。前置条件（A+B+E 修复）已于 2026-08-12 完成（JSON 退役、WorkspacePaths 单一来源、架构检查测试等均已落地）。
 

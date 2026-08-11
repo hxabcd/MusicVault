@@ -51,10 +51,11 @@ pip install -e .
 | `msv remove` | 移除已添加的歌单 |
 | `msv list` | 查看已添加的歌单 |
 | `msv ls` | `list` 的别名 |
-| `msv migrate` | 将旧 workspace 安全迁移到 `cache`、`media_store` 和 SQLite |
 | `msv presets` | 列出内置和外部 Python preset |
 | `msv target-sync` | 从 SQLite 源快照运行目标同步 preset |
 | `msv help` | 显示帮助信息 |
+
+文件落位：canonical 文件写入 `media_store/<track_id>/audio/`，下载缓存与解密中间产物落 `cache/`（临时目录，可清理）。
 
 ### msv sync — 同步音乐
 
@@ -74,7 +75,7 @@ msv pull [--config CONFIG] [--cookie COOKIE] [--workspace WORKSPACE] [-v]
 
 ### msv process — 仅后处理
 
-对本地已下载的文件进行后处理（解密、转码、写元数据、写歌词）。需要 `processed_files.json` 索引存在。
+对本地已下载的文件进行后处理（解密、转码、写元数据、写歌词）。canonical 文件位于 `media_store/<track_id>/audio/`，已处理状态记录在 SQLite（`processed_tracks`）。
 
 ```bash
 msv process [--config CONFIG] [--cookie COOKIE] [--workspace WORKSPACE] [--force] [--no-translation] [-v]
@@ -82,16 +83,16 @@ msv process [--config CONFIG] [--cookie COOKIE] [--workspace WORKSPACE] [--force
 
 ### 模块化目标同步闭环
 
-已有 workspace 可先执行一次迁移。迁移默认保留旧文件作为备份，并把旧状态导入 `state.db`：
+外部 preset 脚本通过配置中的 `preset_system.directories` 发现，并依赖版本化的
+`musicvault.preset_api.v1`。`target-sync` 在一次运行中为所有启用 preset 共享同一个 SQLite `SourceSnapshot`：
 
 ```bash
-msv migrate --workspace ./workspace
 msv presets --workspace ./workspace
 msv target-sync --workspace ./workspace [--preset playlist_links] [--dry-run]
 ```
 
-外部 preset 脚本通过配置中的 `preset_system.directories` 发现，并依赖版本化的
-`musicvault.preset_api.v1`。`target-sync` 在一次运行中为所有启用 preset 共享同一个 SQLite `SourceSnapshot`。
+`library/` 是可重建的目标视图：由 `link`（`process --only-link`）或 `target-sync`
+从 SQLite 状态（DB → library）重建，不直接从下载目录扫描。
 
 ### msv add — 添加歌单
 
@@ -246,7 +247,7 @@ msv sync          # 开始同步
 | `network` | `cover_timeout` | `15` | 封面下载超时（秒） |
 | `network` | `max_retries` | `3` | 最大重试次数 |
 | `metadata` | `fields` | `null` | 写入的元数据字段列表（null=全部） |
-| `process` | `keep_downloads` | `false` | 是否保留原始下载文件 |
+| `process` | `keep_downloads` | `false` | 是否保留 `cache/` 中的原始下载文件（默认清理） |
 | `playlist` | `default_name` | `"未分类"` | 无歌单关联曲目的默认分类名 |
 | `ffmpeg` | `path` | `""` | ffmpeg 手动路径（空=自动从 PATH 检测） |
 | `api` | `download_url_chunk_size` | `200` | 下载 URL 批量请求大小 |
@@ -276,17 +277,17 @@ msv sync          # 开始同步
 
 ```
 workspace/
-├── downloads/           原始下载文件 + canonical 文件（{track_id}.flac/.mp3）
-│   └── cache/           下载缓存
-├── state/
-│   ├── synced_tracks.json     已同步曲目 ID 索引
-│   ├── processed_files.json   已处理文件索引
-│   └── playlists.json         歌单元数据缓存
-└── library/
-    ├── lossless/         无损结果（.flac 或 .mp3，完整元数据）
-    │   └── <歌单名>/
-    └── lossy/            有损结果（.mp3/.m4a/.ogg/.opus，基本元数据 + .lrc）
-        └── <歌单名>/
+├── cache/                临时文件（下载缓存、解密中间产物，可随时清理）
+├── media_store/
+│   └── <track_id>/
+│       └── audio/        长期媒体资产（canonical 文件：{track_id}.flac/.mp3 及 .lrc）
+├── library/              可重建的目标视图（由 link/target-sync 从 DB 重建）
+│   ├── lossless/         无损结果（.flac 或 .mp3，完整元数据）
+│   │   └── <歌单名>/
+│   └── lossy/            有损结果（.mp3/.m4a/.ogg/.opus，基本元数据 + .lrc）
+│       └── <歌单名>/
+├── logs/                 运行日志
+└── state.db              SQLite 状态库（schema 版本化）
 ```
 
 ## 开发

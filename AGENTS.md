@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 uv pip install -e .                          # 可编辑安装（Python 3.12+，依赖见 pyproject.toml）
-python -m pytest tests/ -q                   # 全量测试（当前 204 项通过）
+python -m pytest tests/ -q                   # 全量测试（当前 234 项通过）
 python -m pytest tests/test_source_port.py -v                # 单文件测试
 python -m pytest tests/test_source_port.py::test_name -v     # 单个用例
 python -m ruff check src/ tests/             # lint（line-length=120）
@@ -51,9 +51,9 @@ adapters ───────────────────┘
 ## 两条流水线
 
 1. **旧命令流**（`sync`/`pull`/`process`）：`cli` → `build_pipeline(config)` → `PipelineUseCase` 编排 `SyncUseCase`/`ProcessUseCase`，状态经 `SourceStateRecorder` 写入 SQLite。
-2. **目标同步新链路**（`migrate` → `presets` → `target-sync`）：`build_runtime(config)` 组装 → `PresetRegistry` 加载内置（playlist_links）与外部 preset 目录 → 一次运行内所有启用 preset 共享同一 SQLite `SourceSnapshot`，按 `prepare → sync_item → finalize` 生命周期执行目标操作；`--dry-run` 不产生副作用。
+2. **目标同步新链路**（`presets` → `target-sync`）：`build_runtime(config)` 组装 → `PresetRegistry` 加载内置（playlist_links）与外部 preset 目录 → 一次运行内所有启用 preset 共享同一 SQLite `SourceSnapshot`，按 `prepare → sync_item → finalize` 生命周期执行目标操作；`--dry-run` 不产生副作用。
 
-workspace 布局：`cache/`（临时文件）、`media_store/<track_id>/audio/`（长期媒体资产，canonical 文件）、`library/`（可重建的目标视图）、`logs/`、`state.db`（SQLite，schema 版本化，写入走事务）。
+workspace 布局：`cache/`（临时文件，含下载缓存与解密中间产物）、`media_store/<track_id>/audio/`（长期媒体资产，canonical 文件）、`library/`（可重建的目标视图，由 link/target-sync 从 DB 重建）、`logs/`、`state.db`（SQLite，schema 版本化，写入走事务）。
 
 ## 文档约定
 

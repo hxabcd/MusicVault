@@ -1,7 +1,7 @@
-# 交接文档：旧流水线迁入 media_store 新布局（规划，未实施）
+# 交接文档：旧流水线迁入 media_store 新布局（已实施）
 
 日期：2026-08-12
-状态：规划中（交接文档，等待 A+B+E 修复完成后再启动）
+状态：已实施（2026-08-12，C 阶段完成，含设计决策的偏差：reindex 为删除而非迁移）
 
 > 本文件由 2026-08-12 spec 落实审计（7 代理并行）产出，作为旧流水线迁移工作的独立规划起点。相关设计见 `docs/superpowers/specs/2026-08-12-spec-deviation-remediation-design.md` 的阶段 0。所有行号基于审计时的代码快照，实施前需重新核对。
 
@@ -56,12 +56,12 @@
 
 ## 完成定义（DoD）
 
-- [ ] sync/process/reindex 运行后 canonical 文件落在 `media_store/<track_id>/audio/`，`downloads/` 不再产生新文件
-- [ ] 下载缓存落在 `cache/`，清理逻辑（`keep_downloads`）作用于新位置
-- [ ] reindex 基于新布局（media_store 参与），且方向与语义明确（目录重建 DB 或 DB 重建 library 二选一并文档化）
-- [ ] `source_state.py:49-52` 自述注释删除（已不再成立）
-- [ ] 全量 pytest（≥204 项）绿 + ruff 通过
-- [ ] 若同批完成 Rich 剥离：`shared/tui_progress` 仅被 cli/ 引用，AGENTS.md 已知偏离更新为已修复
+- [x] sync/process 运行后 canonical 文件落在 `media_store/<track_id>/audio/`，`downloads/` 不再产生新文件（reindex 已删除，见下条）
+- [x] 下载缓存落在 `cache/`，清理逻辑（`keep_downloads`）作用于新位置
+- [x] reindex 条目按实施后的真实状态核销：reindex 命令整体**删除**（设计决策 4，`rebuild_index`/`_record_rebuilt_state` 及配套辅助、测试删除），而非「基于新布局迁移」；唯一重建视图方向为 `link`（DB→library），已在 README/AGENTS.md 文档化
+- [x] `source_state.py:49-52` 自述注释删除（已不再成立）
+- [x] 全量 pytest 234 项绿 + `ruff check` 通过（注：`ruff format --check` 尚有 8 个 src/tests 文件待格式化，为 Task 1-7 遗留，见 task-8-report）
+- [x] Rich 剥离同批完成：`shared/tui_progress` 在 application 层零引用，AGENTS.md 已知偏离更新为已修复（既有 `shared.output.warn` 告警偏离仍存在，声明保留）
 
 ## 实施建议
 
