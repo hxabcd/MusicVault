@@ -219,11 +219,14 @@ Expected: FAIL（asset.path 不匹配）。
 →
 ```python
                     result = self.organizer.route_audio(
-                        raw_file, track_info, self.paths.media_asset_path(track_id, "audio", "").parent, {spec},
+                        raw_file,
+                        track_info,
+                        self.paths.media_store / str(track_id) / "audio",
+                        {spec},
                         force=force,
                     )
 ```
-（`media_asset_path(track_id, "audio", "")` 返回 `<ws>/media_store/<tid>/audio/<空名>`，`.parent` 即 `<ws>/media_store/<tid>/audio`；filename 空串仅用于取目录。若嫌取巧，直接 `self.paths.media_store / str(track_id) / "audio"` 亦可，但保持单一来源优先。）
+（注意：**不要用** `media_asset_path(track_id, "audio", "").parent` 取目录——pathlib 在 join 时空串段被丢弃，`.parent` 会去掉真实存在的 `audio` 段，解析到 `media_store/<tid>/`。直接拼 `media_store / str(track_id) / "audio"`。`route_audio` 内部会 `output_dir.mkdir(parents=True, exist_ok=True)`，无需预先建目录。）
 
 `:216`：
 ```python
@@ -234,7 +237,11 @@ Expected: FAIL（asset.path 不匹配）。
 →
 ```python
             raw_result = self.organizer.route_audio(
-                decoded, track_info, self.paths.media_asset_path(track_id, "audio", "").parent, audio_specs, force=force
+                decoded,
+                track_info,
+                self.paths.media_store / str(track_id) / "audio",
+                audio_specs,
+                force=force,
             )
 ```
 
@@ -313,7 +320,7 @@ Expected: FAIL（canonical 仍留在磁盘，因 `_prune_stale_tracks` 删的是
 ```python
     def find_canonical_for_spec(self, track_id: int, spec_key: str) -> Path | None:
         """查找符合指定 spec_key 的 canonical 文件（media_store/<track_id>/audio/ 中）。"""
-        audio_dir = self.paths.media_asset_path(track_id, "audio", "").parent
+        audio_dir = self.paths.media_store / str(track_id) / "audio"
         if not audio_dir.is_dir():
             return None
         if spec_key == "ORIGINAL":
@@ -349,7 +356,7 @@ Expected: FAIL（canonical 仍留在磁盘，因 `_prune_stale_tracks` 删的是
 ```python
             # 收集 canonical 文件 inode（删除前）
             canonical_inodes: set[tuple[int, int]] = set()
-            audio_dir = self.paths.media_asset_path(track_id, "audio", "").parent
+            audio_dir = self.paths.media_store / str(track_id) / "audio"
             if audio_dir.is_dir():
                 for f in list(audio_dir.iterdir()):
                     if not f.is_file():
@@ -428,7 +435,7 @@ Expected: FAIL（canonical 仍留在磁盘，因 `_prune_stale_tracks` 删的是
     def remove_song(self, song_id: int) -> None:
         """移除单曲管理登记并删除其 canonical 文件。"""
         self.state.remove_managed_song(song_id)
-        audio_dir = self.paths.media_asset_path(song_id, "audio", "").parent
+        audio_dir = self.paths.media_store / str(song_id) / "audio"
         if audio_dir.is_dir():
             shutil.rmtree(audio_dir)
 ```
