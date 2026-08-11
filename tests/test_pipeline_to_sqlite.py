@@ -124,6 +124,31 @@ def test_process_records_media_assets_to_sqlite(tmp_path: Path) -> None:
     assert asset.sha256
 
 
+def test_process_routes_audio_to_media_store_dir(tmp_path: Path) -> None:
+    """route_audio 的输出目录是 media_store/<tid>/audio/（canonical 落位）。"""
+    cfg = _make_cfg(tmp_path)
+    cfg.cache_dir.mkdir(parents=True)
+    repo = _repository(cfg)
+
+    api = MagicMock()
+    api.get_track_lyrics.return_value = {}
+    raw = cfg.cache_dir / "333.mp3"
+    raw.write_bytes(b"fake mp3")
+    decryptor = MagicMock()
+    decryptor.decrypt_if_needed.return_value = raw
+    organizer = MagicMock()
+    output = cfg.media_store_dir / "333" / "audio" / "333_192k.mp3"
+    organizer.route_audio.return_value = {("mp3", "192k"): output}
+    # route_audio 是 mock：把其返回的 canonical 文件真实落盘，供 LRC 写入与资产登记（sha256）读取
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(b"fake mp3")
+    item = DownloadedTrack(track=_make_track(333), source_file=str(raw), is_ncm=False, playlist_ids=[])
+    svc = ProcessUseCase(cfg, api, decryptor, organizer, MagicMock(), workers=1, dry_run=False, state=repo)
+    svc.run_process(downloaded=[item], force=False)
+
+    assert organizer.route_audio.call_args.args[2] == cfg.media_store_dir / "333" / "audio"
+
+
 def test_sync_with_stale_song_id_does_not_crash(tmp_path: Path) -> None:
     """远端已删除的单曲不应触发 managed_songs 外键违反，sync 应正常完成。"""
     from musicvault.application.playlist_use_case import PlaylistUseCase

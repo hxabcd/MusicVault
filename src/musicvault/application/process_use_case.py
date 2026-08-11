@@ -210,7 +210,7 @@ class ProcessUseCase:
                     result = self.organizer.route_audio(
                         raw_file,
                         track_info,
-                        self.paths.media_asset_path(track_id, "audio", "").parent,
+                        self.paths.media_store / str(track_id) / "audio",
                         {spec},
                         force=force,
                     )
@@ -224,7 +224,7 @@ class ProcessUseCase:
             )
             decoded = self.decryptor.decrypt_if_needed(downloaded, self.paths.cache / "decoded")
             raw_result = self.organizer.route_audio(
-                decoded, track_info, self.paths.media_asset_path(track_id, "audio", "").parent, audio_specs, force=force
+                decoded, track_info, self.paths.media_store / str(track_id) / "audio", audio_specs, force=force
             )
             audio_map = {audio_spec_key(fmt, br): p for (fmt, br), p in raw_result.items()}
 
