@@ -1,6 +1,6 @@
-# 模块化单体与端口适配器架构 Spec
+# 模块化单体与端口适配器 Spec
 
-状态：规划中
+状态：已完成（2026-08-12）
 范围：本次工程重构
 
 ## Problem Statement
@@ -74,4 +74,14 @@ adapters ───────────────────┘
 ## Further Notes
 
 本架构允许未来增加目标同步器、设备适配器和播放器 API，而不改变 domain 与主要 application 用例。
+
+## Completion Notes
+
+2026-08-12 完成剩余迁移：
+
+- `core/models.py` 与 `core/preset.py` 已收敛为 `domain/models.py` 与 `domain/preset.py`，domain 自包含、不再依赖 core。
+- 源端网易云能力由 `ports/source.py` 的 `SourceClient` 协议描述，`NeteaseClient` 为实现。
+- 旧 `sync`/`pull`/`process`/`reindex` 流水线已从 `services/` 迁为 `application/sync_use_case.py`、`application/process_use_case.py`、`application/pipeline_use_case.py` 应用用例，API 类型全部端口化，可用 fake source 测试。
+- 所有具体依赖组装收敛到 `application/bootstrap.py`（`build_runtime`/`build_pipeline`），CLI 只保留输入输出与登录交互。
+- 已知偏离：`application` 用例内部仍直接使用 `shared/tui_progress` 的 Rich 进度展示（spec 实现决策中「Rich 输出由 presentation 层决定」对 target-sync 新链路已成立，旧流水线用例的输出剥离留待后续）。
 

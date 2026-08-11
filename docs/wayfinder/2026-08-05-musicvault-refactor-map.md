@@ -1,6 +1,6 @@
 # MusicVault 最小可运行重构路线图
 
-状态：部分完成（最小闭环已实现）
+状态：已完成（2026-08-12）
 类型：wayfinder:map
 
 ## Destination
@@ -63,10 +63,8 @@
 
 ## Remaining implementation work
 
-- 旧流水线迁移接缝：`sync`/`pull`/`process` 已完成 SQLite 状态写入（见 Implementation status）；`rebuild_index` 仍未接入，且旧 JSON 状态文件仍与 SQLite 双写，收敛依赖后续把流水线真正迁到 media_store 布局（当前媒体资产路径仍指向旧 downloads）。
-- 在 Manifest 决策完成后，为 `managed` 目标增加可预览、可记录且仅限已管理对象的清理。
-- 根据外部 preset 使用场景补充 MediaResolver 的按需生成、目标元数据/歌词表现和目标适配器端口。
-- 如需正式关闭 map，先完成上述兼容流水线迁移并在 GitHub Issues 中同步关闭对应ticket。
+- 已按《模块化单体与端口适配器 Spec》完成旧流水线迁移接缝：`sync`/`pull`/`process`/`reindex` 已迁为 application 用例（`SyncUseCase`/`ProcessUseCase`/`PipelineUseCase`），源端 SDK 端口化（`ports/source.py`），CLI 组装收敛到 `bootstrap.build_pipeline`，`services/` 目录已删除。
+- 后续可选：application 用例的 Rich 输出剥离（spec Completion Notes 已注明）；Manifest 决策完成后的 managed 目标清理；MediaResolver 按需生成与目标元数据/歌词端口。
 
 ## Out of scope
 
