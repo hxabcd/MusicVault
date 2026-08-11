@@ -1,7 +1,7 @@
 """CLI 层 KeyboardInterrupt 处理测试。
 
-主流程（reindex / sync / process 等 pipeline 路径）中断返回退出码 130 且不抛裸异常
-（cli/main.py:281-283、330-332）；二维码扫码等待阶段取消登录返回退出码 2。
+主流程（sync / process 等 pipeline 路径）中断返回退出码 130 且不抛裸异常；
+二维码扫码等待阶段取消登录返回退出码 2。
 """
 
 from __future__ import annotations
@@ -14,9 +14,6 @@ from musicvault.cli.main import main
 
 class _InterruptingService:
     """模拟运行中途被 Ctrl+C 打断的 pipeline 服务。"""
-
-    def rebuild_index(self) -> None:
-        raise KeyboardInterrupt
 
     def run_pipeline(self, **kwargs: object) -> None:
         raise KeyboardInterrupt
@@ -31,15 +28,6 @@ def _fake_signal_module() -> types.ModuleType:
     fake.SIGINT = 2
     fake.signal = lambda signum, handler: None
     return fake
-
-
-def test_reindex_keyboard_interrupt_returns_130(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr("musicvault.cli.main.signal", _fake_signal_module())
-    monkeypatch.setattr("musicvault.application.bootstrap.build_pipeline", lambda cfg: _InterruptingService())
-
-    code = main(["reindex", "--config", str(tmp_path / "config.json")])
-
-    assert code == 130
 
 
 def test_sync_keyboard_interrupt_returns_130(tmp_path: Path, monkeypatch) -> None:

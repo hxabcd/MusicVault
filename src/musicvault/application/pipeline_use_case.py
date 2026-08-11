@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 from pathlib import Path
 
 from musicvault.adapters.processors.decryptor import Decryptor
@@ -10,11 +9,10 @@ from musicvault.adapters.processors.downloader import Downloader
 from musicvault.adapters.processors.metadata_writer import MetadataWriter
 from musicvault.adapters.processors.organizer import Organizer
 from musicvault.application.process_use_case import ProcessUseCase
-from musicvault.application.source_state import SourceStateRecorder, build_audio_asset_from_file
+from musicvault.application.source_state import SourceStateRecorder
 from musicvault.application.sync_use_case import SyncUseCase
 from musicvault.core.config import Config
-from musicvault.domain.models import Playlist, Track
-from musicvault.domain.preset import audio_spec_key, compute_preset_hash
+from musicvault.domain.preset import audio_spec_key
 from musicvault.ports.source import SourceClient
 from musicvault.ports.state import StateRepository
 from musicvault.shared.tui_progress import console, ok
@@ -22,14 +20,13 @@ from musicvault.shared.utils import (
     create_link,
     format_track_name,
     safe_filename,
-    workspace_rel_path,
 )
 
 logger = logging.getLogger(__name__)
 
 
 class PipelineUseCase:
-    """流水线用例：sync/pull/process/reindex 的编排与源侧状态登记"""
+    """流水线用例：sync/pull/process 的编排与源侧状态登记"""
 
     def __init__(
         self,
@@ -75,156 +72,6 @@ class PipelineUseCase:
             dry_run=dry_run,
             state=state,
         )
-
-    def rebuild_index(self) -> tuple[int, int]:
-        """通过 downloads/ 和 library/ 目录重建 SQLite 状态。
-
-        返回 (track_count, playlist_count)。
-        """
-        self.cfg.ensure_dirs()
-        downloads = self.cfg.downloads_dir
-
-        # 1. 扫描 downloads/ 中的 canonical 文件（跳过 cache/ 子目录）
-        audio_exts = {".flac", ".mp3", ".m4a", ".ogg", ".opus", ".wav"}
-        track_ids: set[int] = set()
-        for f in downloads.iterdir():
-            if not f.is_file():
-                continue
-            if f.suffix.lower() not in audio_exts:
-                continue
-            stem = f.stem.split("_")[0]  # strip bitrate suffix (e.g., 12345_192k → 12345)
-            if stem.isdigit():
-                track_ids.add(int(stem))
-
-        if not track_ids:
-            console.print("[dim]downloads 目录中未找到任何 canonical 文件[/dim]")
-            return 0, 0
-
-        # 2. 构建 playlist 目录名 → playlist_id 的反向映射
-        playlist_index = {
-            str(pl.id): {"name": pl.name, "track_count": len(pl.track_ids)}
-            for pl in self.recorder.state.list_playlists()
-        }
-        dirname_to_pid: dict[str, int] = {}
-        for pid_str, entry in playlist_index.items():
-            name = entry.get("name") if isinstance(entry, dict) else None
-            if name:
-                dirname_to_pid[safe_filename(str(name))] = int(pid_str)
-
-        # 3. 构建 canonical 文件的 inode 映射，用于硬链接匹配
-        inode_to_tid: dict[tuple[int, int], int] = {}
-        for tid in track_ids:
-            for ext in (".flac", ".mp3", ".m4a", ".ogg", ".opus"):
-                canon = downloads / f"{tid}{ext}"
-                try:
-                    st = canon.stat()
-                    inode_to_tid[(st.st_dev, st.st_ino)] = tid
-                except OSError:
-                    continue
-                # Also check bitrate-suffixed variants
-                for f in downloads.iterdir():
-                    if not f.is_file():
-                        continue
-                    if f.stem.startswith(f"{tid}_") and f.suffix.lower() == ext:
-                        try:
-                            st2 = f.stat()
-                            inode_to_tid[(st2.st_dev, st2.st_ino)] = tid
-                        except OSError:
-                            continue
-
-        # 4. 扫描 library 目录（按 preset），通过 inode 匹配硬链接 → track_id
-        track_playlists: dict[int, set[int]] = {tid: set() for tid in track_ids}
-        for preset in self.cfg.presets:
-            parent = self.cfg.preset_dir(preset.name)
-            if not parent.is_dir():
-                continue
-            for pl_dir in parent.iterdir():
-                if not pl_dir.is_dir():
-                    continue
-                pid = dirname_to_pid.get(pl_dir.name)
-                if pid is None:
-                    continue
-                for f in pl_dir.iterdir():
-                    if not f.is_file():
-                        continue
-                    try:
-                        st = f.stat()
-                        tid = inode_to_tid.get((st.st_dev, st.st_ino))
-                    except OSError:
-                        continue
-                    if tid is not None:
-                        track_playlists.setdefault(tid, set()).add(pid)
-
-        # 5. synced 状态已由 _record_rebuilt_state 写入 SQLite（见下）
-        # 6. 重建媒体资产（audios）并登记 processed 状态
-        processed: dict[str, dict[str, object]] = {}
-        for tid in sorted(track_ids):
-            audios: dict[str, str] = {}
-            # Scan downloads for all canonical files matching this track_id
-            for f in downloads.iterdir():
-                if not f.is_file() or f.suffix.lower() not in audio_exts:
-                    continue
-                stem, tid_str = f.stem, str(tid)
-                if stem == tid_str or stem.startswith(f"{tid_str}_"):
-                    spec_key = _guess_spec_from_filename(f.name)
-                    if spec_key:
-                        audios[spec_key] = workspace_rel_path(f, self.cfg.workspace_path)
-            if audios:
-                processed[str(tid)] = {"audios": audios}
-        self._record_rebuilt_state(track_ids, track_playlists, playlist_index, processed)
-
-        orphaned = sum(1 for tid in track_ids if not track_playlists.get(tid))
-        playlist_count = len({pid for pids in track_playlists.values() for pid in pids})
-
-        console.print(f"  重建完成：[cyan]{len(track_ids)}[/cyan] 首曲目，[cyan]{playlist_count}[/cyan] 个歌单")
-        if orphaned:
-            console.print(f"  [dim]（其中 {orphaned} 首未关联到任何歌单）[/dim]")
-
-        logger.info(
-            "索引重建完成：%s 首曲目，%s 个歌单，SQLite 状态已更新",
-            len(track_ids),
-            playlist_count,
-        )
-        return len(track_ids), playlist_count
-
-    def _record_rebuilt_state(
-        self,
-        track_ids: set[int],
-        track_playlists: dict[int, set[int]],
-        playlist_index: dict[str, dict[str, object]],
-        processed: dict[str, dict[str, object]],
-    ) -> None:
-        """把磁盘重建的源侧状态写入 SQLite，供 target-sync 消费。"""
-        # 已存在的曲目保留真实元数据，占位记录只补缺失项，避免覆盖 sync 写入的信息。
-        known_ids = {track.id for track in self.recorder.state.create_snapshot().tracks}
-        tracks = [
-            Track(id=tid, name=str(tid), artists=[], album="Unknown Album", raw={})
-            for tid in sorted(track_ids)
-            if tid not in known_ids
-        ]
-        playlists: list[Playlist] = []
-        for pid_str, entry in playlist_index.items():
-            if not pid_str.lstrip("-").isdigit() or not isinstance(entry, dict):
-                continue
-            pid = int(pid_str)
-            name = str(entry.get("name") or pid)
-            member_ids = tuple(sorted(tid for tid, pids in track_playlists.items() if pid in pids))
-            # 跳过空歌单，避免清空 sync 已录的 playlist_tracks 关系。
-            if member_ids:
-                playlists.append(Playlist(pid, name, member_ids))
-        assets = [
-            build_audio_asset_from_file(
-                int(tid_str), spec_key, _abs_path(self.cfg.workspace_path, rel), source="pipeline:reindex"
-            )
-            for tid_str, entry in processed.items()
-            for spec_key, rel in (entry.get("audios") or {}).items()
-        ]
-        managed = [song_id for song_id in self.recorder.state.list_managed_songs() if song_id in track_ids]
-        self.recorder.record_source_state(tracks, playlists, managed, assets)
-        # 重建即视为已处理（spec 已由 audios 覆盖），下次 process 跳过
-        for tid_str, entry in processed.items():
-            if entry.get("audios"):
-                self.recorder.state.record_processed(int(tid_str), compute_preset_hash(self.cfg.presets), time.time())
 
     def link_only(self, cookie: str) -> tuple[int, int]:
         """仅创建 library 硬链接，跳过下载、解码、转码、元数据和歌词处理。
@@ -418,30 +265,3 @@ class PipelineUseCase:
 
         if removed:
             logger.info("未分类清理完成：已删除 %s 个孤立文件", removed)
-
-
-def _guess_spec_from_filename(filename: str) -> str | None:
-    """从 canonical 文件名猜测 spec_key。
-
-    例如 '12345.flac' → 'FLAC', '12345_192k.mp3' → 'MP3-192k'。
-    """
-    from pathlib import Path
-
-    p = Path(filename)
-    suffix = p.suffix.lower()
-    fmt_map = {".flac": "flac", ".mp3": "mp3", ".m4a": "aac", ".ogg": "ogg", ".opus": "opus"}
-    fmt = fmt_map.get(suffix)
-    if fmt is None:
-        return None
-    stem = p.stem
-    if "_" in stem:
-        parts = stem.split("_", 1)
-        if parts[1].rstrip("k").isdigit():
-            return audio_spec_key(fmt, parts[1])
-    return audio_spec_key(fmt, None)
-
-
-def _abs_path(workspace: Path, stored: str) -> Path:
-    """把相对路径还原为绝对路径；跨盘符时保存的本身就是绝对路径。"""
-    path = Path(stored)
-    return path if path.is_absolute() else (workspace / path).resolve()

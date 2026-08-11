@@ -34,7 +34,7 @@ adapters ───────────────────┘
 ```
 
 - `domain/` — 纯领域模型与规则：`models.py`（Track/Playlist/MediaAsset/SourceSnapshot/TargetDescriptor）、`preset.py`（Preset、audio specs）、`operations.py`。只允许标准库，不得依赖 CLI、Rich、SQLite、网易云 SDK 或 ffmpeg。
-- `application/` — 应用用例与编排：`SyncUseCase`（拉取+下载）、`ProcessUseCase`（后处理）、`PipelineUseCase`（sync/pull/process/reindex 编排）、`SourceStateRecorder`（源侧状态登记）；`bootstrap.py` 是 composition root。
+- `application/` — 应用用例与编排：`SyncUseCase`（拉取+下载）、`ProcessUseCase`（后处理）、`PipelineUseCase`（sync/pull/process 编排）、`SourceStateRecorder`（源侧状态登记）；`bootstrap.py` 是 composition root。
 - `ports/` — 抽象接口（Protocol）：`source.SourceClient`（网易云源端）、`state.StateRepository`（SQLite 状态）、`media.MediaResolver`、`target.TargetOperations`。端口只描述业务需要的能力，不暴露第三方类型。
 - `adapters/` — 具体实现：`providers/netease_client.py`（SourceClient 的实现）、`state/sqlite.py`、`filesystem/`（workspace、media_store）、`processors/`（decryptor/downloader/lyrics/metadata_writer/organizer）、`targets/`。
 - `preset_api/` — 外部 preset 脚本唯一可依赖的版本化公开 API（当前 `v1`）；内部重构不得破坏其签名，preset 脚本不得 import 内部模块。
@@ -50,7 +50,7 @@ adapters ───────────────────┘
 
 ## 两条流水线
 
-1. **旧命令流**（`sync`/`pull`/`process`/`reindex`）：`cli` → `build_pipeline(config)` → `PipelineUseCase` 编排 `SyncUseCase`/`ProcessUseCase`，状态经 `SourceStateRecorder` 写入 SQLite。
+1. **旧命令流**（`sync`/`pull`/`process`）：`cli` → `build_pipeline(config)` → `PipelineUseCase` 编排 `SyncUseCase`/`ProcessUseCase`，状态经 `SourceStateRecorder` 写入 SQLite。
 2. **目标同步新链路**（`migrate` → `presets` → `target-sync`）：`build_runtime(config)` 组装 → `PresetRegistry` 加载内置（playlist_links）与外部 preset 目录 → 一次运行内所有启用 preset 共享同一 SQLite `SourceSnapshot`，按 `prepare → sync_item → finalize` 生命周期执行目标操作；`--dry-run` 不产生副作用。
 
 workspace 布局：`cache/`（临时文件）、`media_store/<track_id>/audio/`（长期媒体资产，canonical 文件）、`library/`（可重建的目标视图）、`logs/`、`state.db`（SQLite，schema 版本化，写入走事务）。

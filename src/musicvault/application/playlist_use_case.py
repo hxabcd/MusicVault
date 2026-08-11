@@ -136,7 +136,7 @@ class PlaylistUseCase:
         if self.state.has_managed_song(song_id):
             return
         if self.state.get_track(song_id) is None:
-            # 占位曲目由 sync 获取真实元数据后覆盖（与 reindex 的占位模式一致）
+            # 占位曲目由 sync 获取真实元数据后覆盖
             self.state.upsert_track(Track(id=song_id, name=str(song_id), artists=[], album="", raw={}))
         self.state.add_managed_song(song_id)
 

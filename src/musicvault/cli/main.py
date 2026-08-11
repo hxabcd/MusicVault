@@ -141,9 +141,6 @@ def build_parser() -> argparse.ArgumentParser:
     ls_pl.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）")
     ls_pl.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
 
-    reindex = sub.add_parser("reindex", help="重建索引", description="通过 downloads 目录中的文件重建已下载索引")
-    _add_common_args(reindex, include_dry_run=False)
-
     presets = sub.add_parser("presets", help="列出可用 preset", description="发现并列出内置和外部 Python preset")
     presets.add_argument(
         "--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）"
@@ -272,21 +269,6 @@ def main(argv: list[str] | None = None) -> int:
         if result.status == OperationStatus.FAILED:
             return 1
         output_success(f"目标同步完成，snapshot={result.snapshot_hash[:16]}")
-        return 0
-
-    # reindex 不需要 API，直接重建索引
-    if args.command == "reindex":
-        workspace = getattr(args, "workspace", None)
-        if workspace is not None:
-            cfg.workspace = workspace
-        from musicvault.application.bootstrap import build_pipeline
-
-        service = build_pipeline(cfg)
-        try:
-            service.rebuild_index()
-        except KeyboardInterrupt:
-            output_info("已取消")
-            return 130
         return 0
 
     # 任意需要 API 的操作前先确保登录
