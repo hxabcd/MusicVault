@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from musicvault.application.pipeline_use_case import PipelineResult
-from musicvault.application.sync_use_case import SyncResult
 from musicvault.shared.tui_progress import BatchProgress, console, ok
 
 
@@ -27,14 +26,14 @@ class BatchProgressAdapter:
         self._batch = None
 
 
-def render_sync_summary(result: SyncResult) -> None:
+def render_sync_summary(track_count: int, playlist_count: int, added: int, pruned: int) -> None:
     """「从 N 个歌单同步 M 首」摘要（原 SyncUseCase.run_sync 内部打印）。"""
     stats: list[str] = []
-    if result.added:
-        stats.append(f"[green]+{result.added} 首[/green]")
-    if result.pruned:
-        stats.append(f"[red]-{result.pruned} 首[/red]")
-    console.print(f"  从 [cyan]{result.playlist_count}[/cyan] 个歌单同步 [cyan]{result.track_count}[/cyan] 首")
+    if added:
+        stats.append(f"[green]+{added} 首[/green]")
+    if pruned:
+        stats.append(f"[red]-{pruned} 首[/red]")
+    console.print(f"  从 [cyan]{playlist_count}[/cyan] 个歌单同步 [cyan]{track_count}[/cyan] 首")
     console.print("    " + " | ".join(stats) if stats else "    [dim]无变化[/dim]")
 
 
@@ -88,7 +87,7 @@ def render_pipeline_result(result: PipelineResult, *, dry_run: bool, command: st
             console.print(f"  [dim]随后将进入后处理：新下载的 {n_new} 首曲目（转码/元数据/歌词/硬链接）[/dim]")
         console.print("  [bold yellow]dry-run 结束：未下载、未修改任何文件[/bold yellow]")
         return
-    render_sync_summary(SyncResult(downloaded=(), added=result.downloaded, pruned=result.pruned))
+    render_sync_summary(result.track_count, result.playlist_count, result.downloaded, result.pruned)
     if command != "pull":
         if result.processed:
             console.print(f"  [green]处理完成 {result.processed} 首[/green]")

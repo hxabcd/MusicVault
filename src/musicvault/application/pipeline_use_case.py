@@ -34,6 +34,8 @@ class PipelineResult:
     downloaded: int = 0
     processed: int = 0
     pruned: int = 0
+    track_count: int = 0
+    playlist_count: int = 0
     dry_run_plan: dict | None = None
 
 
@@ -200,6 +202,8 @@ class PipelineUseCase:
         playlist_index: dict[str, dict[str, object]] = {}
         downloaded: tuple = ()
         pruned = 0
+        track_count = 0
+        playlist_count = 0
         dry_run_plan: dict | None = None
         if not only_process:
             sync_result = self.sync_service.run_sync(
@@ -209,6 +213,8 @@ class PipelineUseCase:
             )
             downloaded = sync_result.downloaded
             pruned = sync_result.pruned
+            track_count = sync_result.track_count
+            playlist_count = sync_result.playlist_count
             dry_run_plan = sync_result.dry_run_plan
             playlist_index = self.sync_service.playlist_index
 
@@ -231,6 +237,8 @@ class PipelineUseCase:
             downloaded=len(downloaded),
             processed=processed,
             pruned=pruned,
+            track_count=track_count,
+            playlist_count=playlist_count,
             dry_run_plan=dry_run_plan,
         )
 
