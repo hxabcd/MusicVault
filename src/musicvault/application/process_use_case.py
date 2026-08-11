@@ -191,8 +191,12 @@ class ProcessUseCase:
                 except Exception:
                     pass
 
-        # 判断是否已是 canonical 文件
-        is_canonical = raw_file.parent.resolve() == self.cfg.downloads_dir.resolve() and raw_file.stem.isdigit()
+        # 判断是否已是 canonical 文件（形态 <ws>/media_store/<tid>/audio/<tid>.ext）
+        is_canonical = (
+            raw_file.parent.name == "audio"
+            and raw_file.parent.parent.parent == self.paths.media_store
+            and raw_file.stem.isdigit()
+        )
 
         audio_specs = build_audio_specs(self.cfg.presets)
         if is_canonical:
@@ -204,7 +208,11 @@ class ProcessUseCase:
                 key = audio_spec_key(*spec)
                 if key not in audio_map:
                     result = self.organizer.route_audio(
-                        raw_file, track_info, self.cfg.downloads_dir, {spec}, force=force
+                        raw_file,
+                        track_info,
+                        self.paths.media_asset_path(track_id, "audio", "").parent,
+                        {spec},
+                        force=force,
                     )
                     if spec in result:
                         audio_map[key] = result[spec]
@@ -216,7 +224,7 @@ class ProcessUseCase:
             )
             decoded = self.decryptor.decrypt_if_needed(downloaded, self.paths.cache / "decoded")
             raw_result = self.organizer.route_audio(
-                decoded, track_info, self.cfg.downloads_dir, audio_specs, force=force
+                decoded, track_info, self.paths.media_asset_path(track_id, "audio", "").parent, audio_specs, force=force
             )
             audio_map = {audio_spec_key(fmt, br): p for (fmt, br), p in raw_result.items()}
 

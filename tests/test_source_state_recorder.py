@@ -40,8 +40,8 @@ def test_recorder_persists_tracks_playlists_and_managed_songs(tmp_path: Path) ->
 
 def test_recorder_persists_media_assets(tmp_path: Path) -> None:
     repo = _repository(tmp_path)
-    audio = tmp_path / "downloads" / "1.flac"
-    audio.parent.mkdir()
+    audio = tmp_path / "media_store" / "1" / "audio" / "1.flac"
+    audio.parent.mkdir(parents=True, exist_ok=True)
     audio.write_bytes(b"fake flac")
     recorder = SourceStateRecorder(repo)
 

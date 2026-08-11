@@ -78,7 +78,10 @@ def _make_config(tmp_path: Path) -> Config:
     cfg.workspace_path = tmp_path
     cfg.state_db_file = tmp_path / "state.db"
     cfg.state_dir = tmp_path / "state"
-    cfg.downloads_dir = tmp_path / "downloads"
+    # find_canonical_for_spec 在 Task 4 迁移前仍读 downloads_dir；
+    # 此处指向 123 的 audio 目录，使 canonical fixture 落 media_store 新布局
+    cfg.downloads_dir = tmp_path / "media_store" / "123" / "audio"
+    cfg.media_store_dir = tmp_path / "media_store"
     cfg.library_dir = tmp_path / "library"
     cfg.preset_dir = lambda name: tmp_path / "library" / name
     cfg.presets = [
@@ -185,14 +188,15 @@ class TestReconcilePlaylistChanged:
         """曲目新增到歌单B → 在B目录创建硬链接。"""
         cfg = _make_config(tmp_path)
         cfg.state_dir.mkdir(parents=True)
-        cfg.downloads_dir.mkdir(parents=True)
+        cfg.media_store_dir.mkdir(parents=True)
         _seed_state(cfg, {123: [10]})
 
         track = _make_track(123)
-        # 创建 canonical 源文件
-        flac_src = cfg.downloads_dir / "123.flac"
-        mp3_src = cfg.downloads_dir / "123.mp3"
-        lrc_src = cfg.downloads_dir / "123.portable.lrc"
+        # 创建 canonical 源文件（media_store/<tid>/audio/ 新布局）
+        flac_src = cfg.media_store_dir / "123" / "audio" / "123.flac"
+        mp3_src = cfg.media_store_dir / "123" / "audio" / "123.mp3"
+        lrc_src = cfg.media_store_dir / "123" / "audio" / "123.portable.lrc"
+        flac_src.parent.mkdir(parents=True, exist_ok=True)
         flac_src.write_text("flac")
         mp3_src.write_text("mp3")
         lrc_src.write_text("lrc")
@@ -209,13 +213,16 @@ class TestReconcilePlaylistChanged:
         """曲目从歌单B移除 → B目录中的链接被删除。"""
         cfg = _make_config(tmp_path)
         cfg.state_dir.mkdir(parents=True)
-        cfg.downloads_dir.mkdir(parents=True)
+        cfg.media_store_dir.mkdir(parents=True)
         _seed_state(cfg, {123: [10, 20]})
 
         track = _make_track(123)
-        # 创建 canonical 源文件
-        (cfg.downloads_dir / "123.flac").write_text("flac")
-        (cfg.downloads_dir / "123.mp3").write_text("mp3")
+        # 创建 canonical 源文件（media_store/<tid>/audio/ 新布局）
+        flac_src = cfg.media_store_dir / "123" / "audio" / "123.flac"
+        mp3_src = cfg.media_store_dir / "123" / "audio" / "123.mp3"
+        flac_src.parent.mkdir(parents=True, exist_ok=True)
+        flac_src.write_text("flac")
+        mp3_src.write_text("mp3")
 
         # 在 B 目录创建现有链接
         b_arc = cfg.preset_dir("archive") / "歌单B" / "Test Artist - Test Song.flac"
@@ -236,7 +243,7 @@ class TestReconcilePlaylistChanged:
         """canonical 源文件不存在时静默跳过。"""
         cfg = _make_config(tmp_path)
         cfg.state_dir.mkdir(parents=True)
-        cfg.downloads_dir.mkdir(parents=True)
+        cfg.media_store_dir.mkdir(parents=True)
         _seed_state(cfg, {123: [10]})
 
         track = _make_track(123)
