@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from musicvault.adapters.filesystem.workspace import WorkspacePaths
+from musicvault.adapters.filesystem.workspace import WorkspaceMigration, WorkspacePaths
 from musicvault.adapters.providers.netease_client import NeteaseClient
 from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
+from musicvault.adapters.targets.filesystem import FilesystemTarget
 from musicvault.application.pipeline_use_case import PipelineUseCase
+from musicvault.application.sync_engine import SyncEngine, SyncRunResult
 from musicvault.core.config import Config
 from musicvault.ports.source import SourceClient
 from musicvault.preset_api.builtins import register_builtin_presets
@@ -69,3 +71,37 @@ def build_pipeline(
         state=SQLiteStateRepository(SQLiteState(config.state_db_file)),
         dry_run=dry_run,
     )
+
+
+def build_workspace_migrator(config: Config) -> WorkspaceMigration:
+    """组装 workspace 迁移器（migrate 命令专用）。"""
+    paths = WorkspacePaths(config.workspace_path)
+    state = SQLiteStateRepository(SQLiteState(paths.state_db))
+    return WorkspaceMigration(paths, state)
+
+
+@dataclass(frozen=True, slots=True)
+class TargetSyncPipeline:
+    """target-sync 链路的组装：运行时 + 同步引擎；CLI 只负责参数与输出。"""
+
+    runtime: Runtime
+    engine: SyncEngine
+
+    def run(self, selected: set[str] | None = None) -> SyncRunResult:
+        """执行目标同步；selected 为空集时运行全部启用 preset。"""
+        if selected:
+            missing = sorted(selected - {item.name for item in self.runtime.presets.registrations()})
+            if missing:
+                raise RuntimeError(f"未找到指定 preset：{', '.join(missing)}")
+        return self.engine.run(
+            self.runtime.state.create_snapshot(),
+            self.runtime.presets.registrations(enabled_only=True),
+            selected=selected,
+        )
+
+
+def build_target_sync_pipeline(config: Config, *, dry_run: bool = False) -> TargetSyncPipeline:
+    """组装 target-sync 链路：运行时 + 目标端 + 同步引擎。"""
+    runtime = build_runtime(config)
+    engine = SyncEngine(FilesystemTarget(runtime.paths.library), dry_run=dry_run)
+    return TargetSyncPipeline(runtime=runtime, engine=engine)

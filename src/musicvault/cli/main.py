@@ -231,12 +231,9 @@ def main(argv: list[str] | None = None) -> int:
         if getattr(args, "workspace", None) is not None:
             cfg.workspace = args.workspace
         try:
-            from musicvault.adapters.filesystem.workspace import WorkspaceMigration, WorkspacePaths
-            from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
+            from musicvault.application.bootstrap import build_workspace_migrator
 
-            paths = WorkspacePaths(cfg.workspace_path)
-            state = SQLiteStateRepository(SQLiteState(paths.state_db))
-            report = WorkspaceMigration(paths, state).migrate()
+            report = build_workspace_migrator(cfg).migrate()
         except Exception as error:  # noqa: BLE001 - CLI 将迁移失败转换为非零退出码
             output_error(f"workspace 迁移失败：{error}")
             return 2
@@ -251,24 +248,11 @@ def main(argv: list[str] | None = None) -> int:
         if getattr(args, "workspace", None) is not None:
             cfg.workspace = args.workspace
         try:
-            from musicvault.adapters.targets.filesystem import FilesystemTarget
-            from musicvault.application.bootstrap import build_runtime
-            from musicvault.application.sync_engine import SyncEngine
+            from musicvault.application.bootstrap import build_target_sync_pipeline
             from musicvault.domain.operations import OperationStatus
 
-            runtime = build_runtime(cfg)
-            selected = set(args.preset) if args.preset else None
-            if selected:
-                missing = sorted(selected - {item.name for item in runtime.presets.registrations()})
-                if missing:
-                    raise RuntimeError(f"未找到指定 preset：{', '.join(missing)}")
-            result = SyncEngine(
-                FilesystemTarget(runtime.paths.library),
-                dry_run=getattr(args, "dry_run", False),
-            ).run(
-                runtime.state.create_snapshot(),
-                runtime.presets.registrations(enabled_only=True),
-                selected=selected,
+            result = build_target_sync_pipeline(cfg, dry_run=args.dry_run).run(
+                selected=set(args.preset) if args.preset else None
             )
         except Exception as error:  # noqa: BLE001 - CLI 将应用失败转换为非零退出码
             output_error(f"目标同步失败：{error}")
@@ -362,7 +346,9 @@ def _ensure_cookie(args: argparse.Namespace, cfg: Config) -> tuple[str | None, b
 
     console.print()
     console.print("[bold]首次使用需要登录网易云音乐账号[/bold]")
-    cookie = _interactive_login()
+    from musicvault.application.bootstrap import build_source_client
+
+    cookie = _interactive_login(build_source_client(cfg))
     if not cookie:
         output_error("登录失败或已取消")
         return None, False
@@ -386,11 +372,11 @@ def _render_qrcode(url: str) -> str:
     return buf.getvalue()
 
 
-def _interactive_login() -> str | None:
-    """交互式登录，返回 cookie 字符串；用户取消则返回 None"""
-    from musicvault.adapters.providers.netease_client import NeteaseClient
+def _interactive_login(api: object) -> str | None:
+    """交互式登录，返回 cookie 字符串；用户取消则返回 None。
 
-    api = NeteaseClient()
+    api 由 composition root（bootstrap.build_source_client）创建后注入。
+    """
     max_attempts = 3
 
     for attempt in range(max_attempts):
