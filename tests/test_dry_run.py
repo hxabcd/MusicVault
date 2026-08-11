@@ -62,17 +62,16 @@ class TestSyncDryRun:
 
         downloader = MagicMock()
         svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=True, state=_repository(cfg))
-        downloaded = svc.run_sync("cookie", playlist_ids=[10])
+        result = svc.run_sync("cookie", playlist_ids=[10])
 
         # 不下载、不写状态
-        assert downloaded == []
+        assert result.downloaded == ()
         downloader.download_track.assert_not_called()
         state_map = svc.load_synced_state()
         assert 222 not in state_map
-
         # 计划包含新曲目与歌单信息变化
-        assert [t.id for t in svc.plan["with_url"]] == [222]
-        assert svc.plan["pruned"] == []
+        assert [t.id for t in result.dry_run_plan["with_url"]] == [222]
+        assert result.dry_run_plan["pruned"] == []
 
     def test_prune_reported_files_kept(self, tmp_path: Path) -> None:
         cfg = _make_cfg(tmp_path)
@@ -89,10 +88,10 @@ class TestSyncDryRun:
         api.get_playlist_tracks.return_value = [_make_track(222)]
 
         svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=True, state=_repository(cfg))
-        svc.run_sync("cookie", playlist_ids=[10])
+        result = svc.run_sync("cookie", playlist_ids=[10])
 
         # 111 列入清理计划，但文件与状态均保留
-        assert svc.plan["pruned"] == [111]
+        assert result.dry_run_plan["pruned"] == [111]
         assert canonical.exists()
         state_map = svc.load_synced_state()
         assert 111 in state_map
@@ -138,9 +137,9 @@ class TestSyncDryRun:
         )
 
         svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo)
-        downloaded = svc.run_sync("cookie", playlist_ids=[10])
+        result = svc.run_sync("cookie", playlist_ids=[10])
 
-        assert len(downloaded) == 1
+        assert len(result.downloaded) == 1
         downloader.download_track.assert_called_once()
         # 下载缓存落在新 cache/ 目录（不再写 downloads/cache/）
         call_args = downloader.download_track.call_args

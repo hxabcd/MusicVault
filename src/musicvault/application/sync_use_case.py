@@ -3,10 +3,12 @@ from __future__ import annotations
 import logging
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 
 from musicvault.adapters.filesystem.workspace import WorkspacePaths
 from musicvault.adapters.processors.downloader import Downloader
+from musicvault.application.progress import ProgressReporter
 from musicvault.application.source_state import SourceStateRecorder
 from musicvault.core.config import Config
 from musicvault.domain.models import DownloadedTrack, Playlist, Track
@@ -14,7 +16,6 @@ from musicvault.domain.preset import Preset, audio_spec_key
 from musicvault.ports.source import SourceClient
 from musicvault.ports.state import StateRepository
 from musicvault.shared.output import warn as output_warn
-from musicvault.shared.tui_progress import BatchProgress, console
 from musicvault.shared.utils import (
     create_link,
     format_track_name,
@@ -24,6 +25,19 @@ from musicvault.shared.utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class SyncResult:
+    """sync 运行的结构化结果：CLI 据此渲染，process 阶段消费 downloaded。"""
+
+    downloaded: tuple[DownloadedTrack, ...]
+    added: int = 0
+    no_url: int = 0
+    pruned: int = 0
+    track_count: int = 0
+    playlist_count: int = 0
+    dry_run_plan: dict | None = None
 
 
 class SyncUseCase:
@@ -47,8 +61,6 @@ class SyncUseCase:
         self.paths = WorkspacePaths(cfg.workspace_path)
         # 把本次 sync 的源侧状态写入 SQLite，供 target-sync 消费
         self.recorder = SourceStateRecorder(state)
-        # dry-run 计划（仅 dry_run 模式下填充）：with_url / no_url / pruned / moves / renames / stale_index
-        self.plan: dict = {}
 
     def load_synced_state(self) -> dict[int, list[int]]:
         """从 SQLite 快照派生 {track_id: [playlist_ids]} 映射。
@@ -69,12 +81,18 @@ class SyncUseCase:
     # 主流程
     # ------------------------------------------------------------------
 
-    def run_sync(self, cookie: str, playlist_ids: list[int]) -> list[DownloadedTrack]:
+    def run_sync(
+        self,
+        cookie: str,
+        playlist_ids: list[int],
+        *,
+        progress: ProgressReporter | None = None,
+    ) -> SyncResult:
         stale_index = self._cleanup_stale_state()
         song_ids = self.recorder.state.list_managed_songs()
         if not playlist_ids and not song_ids:
             output_warn("未配置任何歌单或单曲，请先执行 msv add 添加歌单或 msv add --song <ID> 添加单曲")
-            return []
+            return SyncResult()
 
         self.api.login_with_cookie(cookie)
         playlist_index = {
@@ -134,32 +152,36 @@ class SyncUseCase:
 
         if self.dry_run:
             with_url, no_url = self._resolve_dry_urls(new_tracks)
-            self.plan = {
+            plan = {
                 "with_url": with_url,
                 "no_url": no_url,
                 "pruned": pruned_ids,
                 "moves": moves,
                 "renames": pending_renames,
                 "stale_index": stale_index,
+                "track_count": len(unique),
+                "playlist_count": len(playlist_ids) + (1 if song_ids else 0),
             }
-            self._print_dry_run_plan(unique_count=len(unique), n_playlists=len(playlist_ids) + (1 if song_ids else 0))
-            return []
+            return SyncResult(
+                downloaded=(),
+                dry_run_plan=plan,
+                track_count=len(unique),
+                playlist_count=len(playlist_ids) + (1 if song_ids else 0),
+            )
 
-        downloaded = self._sync_tracks(new_tracks, track_playlists)
+        downloaded, no_url = self._sync_tracks(new_tracks, track_playlists, progress)
         self._record_source_state(all_tracks, playlist_track_order, playlist_index, song_ids)
 
-        # 单行摘要
         added = len(downloaded)
         n_playlists = len(playlist_ids) + (1 if song_ids else 0)
-        console.print(f"  从 [cyan]{n_playlists}[/cyan] 个歌单同步 [cyan]{len(unique)}[/cyan] 首")
-        stats: list[str] = []
-        if added:
-            stats.append(f"[green]+{added} 首[/green]")
-        if pruned_count:
-            stats.append(f"[red]-{pruned_count} 首[/red]")
-        console.print("    " + " | ".join(stats) if stats else "    [dim]无变化[/dim]")
-
-        return downloaded
+        return SyncResult(
+            downloaded=tuple(downloaded),
+            added=added,
+            no_url=no_url,
+            pruned=pruned_count,
+            track_count=len(unique),
+            playlist_count=n_playlists,
+        )
 
     def _record_source_state(
         self,
@@ -404,48 +426,6 @@ class SyncUseCase:
         no_url = [t for t in tracks if not url_map.get(t.id)]
         return with_url, no_url
 
-    def _print_dry_run_plan(self, unique_count: int, n_playlists: int) -> None:
-        """输出 dry-run 计划预览（仅查询，未执行任何写操作）。"""
-        plan = self.plan
-        console.print(
-            f"  从 [cyan]{n_playlists}[/cyan] 个歌单同步 [cyan]{unique_count}[/cyan] 首（[bold yellow]dry-run 预览[/bold yellow]）"
-        )
-
-        with_url: list[Track] = plan.get("with_url") or []
-        no_url: list[Track] = plan.get("no_url") or []
-        pruned: list[int] = plan.get("pruned") or []
-        moves: list = plan.get("moves") or []
-        renames: list = plan.get("renames") or []
-        stale_index: int = plan.get("stale_index") or 0
-
-        if with_url:
-            console.print(f"  [green]将下载[/green] [cyan]{len(with_url)}[/cyan] 首：")
-            for i, t in enumerate(with_url, 1):
-                console.print(f"    [dim]{i:>3}.[/dim] {t.artist_text} - {t.name}")
-        else:
-            console.print("  [dim]将下载 0 首（无新增曲目）[/dim]")
-
-        if no_url:
-            console.print(f"  [yellow]无可用直链将跳过[/yellow] [cyan]{len(no_url)}[/cyan] 首：")
-            for i, t in enumerate(no_url, 1):
-                console.print(f"    [dim]{i:>3}.[/dim] {t.artist_text} - {t.name}")
-
-        if pruned:
-            console.print(
-                f"  [red]将清理远端已删除曲目[/red] [cyan]{len(pruned)}[/cyan] 首：{', '.join(map(str, pruned))}"
-            )
-
-        if renames:
-            console.print("  [cyan]歌单目录将重命名：[/cyan]")
-            for _pid, old, new in renames:
-                console.print(f"    [dim]-[/dim] {old} → {new}")
-
-        if moves:
-            console.print(f"  [cyan]歌单归属调整：[/cyan][cyan]{len(moves)}[/cyan] 首曲目的 library 链接将移动")
-
-        if stale_index:
-            console.print(f"  [yellow]将清理 {stale_index} 条本地文件缺失的过期索引[/yellow]")
-
     def _prune_stale_tracks(self, remote_tracks: dict[int, Track]) -> tuple[int, list[int]]:
         """删除远端已不存在的本地曲目（canonical 文件 + library 链接）。
 
@@ -506,10 +486,16 @@ class SyncUseCase:
             logger.info("清理远端已删除曲目：%s 首", removed_count)
         return removed_count, stale_ids
 
-    def _sync_tracks(self, tracks: list[Track], track_playlists: dict[int, list[int]]) -> list[DownloadedTrack]:
+    def _sync_tracks(
+        self,
+        tracks: list[Track],
+        track_playlists: dict[int, list[int]],
+        progress: ProgressReporter | None = None,
+    ) -> tuple[list[DownloadedTrack], int]:
+        """下载新增曲目，返回 (下载结果, 无直链跳过的数量)。"""
         if not tracks:
             logger.info("同步阶段无新增曲目，跳过下载")
-            return []
+            return [], 0
 
         url_map = self.api.get_tracks_download_urls([track.id for track in tracks])
         pending: list[tuple[Track, str]] = []
@@ -523,18 +509,19 @@ class SyncUseCase:
             pending.append((track, url))
         logger.info("下载准备完成：可下载=%s 跳过=%s", len(pending), skipped)
 
-        downloaded = self._run_download_batch(pending, track_playlists)
+        downloaded = self._run_download_batch(pending, track_playlists, progress)
         # 写入 raw→track 映射（供 process 阶段从文件名反查 track_id）
         for item in downloaded:
             self.recorder.state.upsert_track(item.track)
             rel = workspace_rel_path(Path(item.source_file), self.cfg.workspace_path)
             self.recorder.state.add_pending_file(rel, item.track.id)
-        return downloaded
+        return downloaded, skipped
 
     def _run_download_batch(
         self,
         tasks: list[tuple[Track, str]],
         track_playlists: dict[int, list[int]],
+        progress: ProgressReporter | None = None,
     ) -> list[DownloadedTrack]:
         if not tasks:
             logger.info("下载队列为空，无需执行")
@@ -544,27 +531,35 @@ class SyncUseCase:
         workers = min(self.workers, total)
         results: list[DownloadedTrack] = []
 
-        with ThreadPoolExecutor(max_workers=workers) as pool, BatchProgress(total=total, phase="下载中") as bp:
-            future_map = {
-                pool.submit(self.downloader.download_track, track, url, self.paths.cache): (idx, track)
-                for idx, (track, url) in enumerate(tasks, start=1)
-            }
-            try:
-                for future in as_completed(future_map):
-                    idx, track = future_map[future]
-                    try:
-                        item = future.result()
-                        item.playlist_ids = track_playlists.get(track.id, [])
-                        results.append(item)
-                        bp.advance(success=True, idx=idx, item_name=track.name)
-                    except Exception as exc:
-                        bp.advance(success=False, idx=idx, item_name=track.name)
-                        logger.error("下载失败：#%s %s，原因：%s", idx, track.name, exc, exc_info=True)
-            except KeyboardInterrupt:
-                pool.shutdown(wait=False, cancel_futures=True)
-                if results:
-                    self._save_partial_downloads(results)
-                raise
+        if progress is not None:
+            progress.begin(total=total, phase="下载中")
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                future_map = {
+                    pool.submit(self.downloader.download_track, track, url, self.paths.cache): (idx, track)
+                    for idx, (track, url) in enumerate(tasks, start=1)
+                }
+                try:
+                    for future in as_completed(future_map):
+                        idx, track = future_map[future]
+                        try:
+                            item = future.result()
+                            item.playlist_ids = track_playlists.get(track.id, [])
+                            results.append(item)
+                            if progress is not None:
+                                progress.advance(success=True, idx=idx, item_name=track.name)
+                        except Exception as exc:
+                            if progress is not None:
+                                progress.advance(success=False, idx=idx, item_name=track.name)
+                            logger.error("下载失败：#%s %s，原因：%s", idx, track.name, exc, exc_info=True)
+                except KeyboardInterrupt:
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    if results:
+                        self._save_partial_downloads(results)
+                    raise
+        finally:
+            if progress is not None:
+                progress.end()
 
         return results
 

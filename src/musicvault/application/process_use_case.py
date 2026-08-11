@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping
 
@@ -14,13 +15,13 @@ from musicvault.adapters.processors.lyrics import (
 )
 from musicvault.adapters.processors.metadata_writer import MetadataWriter
 from musicvault.adapters.processors.organizer import Organizer
+from musicvault.application.progress import ProgressReporter
 from musicvault.application.source_state import SourceStateRecorder, build_audio_asset_from_file
 from musicvault.core.config import Config
 from musicvault.domain.models import DownloadedTrack, MediaAsset, Track
 from musicvault.domain.preset import Preset, audio_spec_key, build_audio_specs, compute_preset_hash
 from musicvault.ports.source import SourceClient
 from musicvault.ports.state import StateRepository
-from musicvault.shared.tui_progress import BatchProgress, console
 from musicvault.shared.utils import (
     create_link,
     format_track_name,
@@ -29,6 +30,15 @@ from musicvault.shared.utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ProcessResult:
+    """process 运行的结构化结果。"""
+
+    processed: int = 0
+    skipped: int = 0
+    failed: int = 0
 
 
 class ProcessUseCase:
@@ -66,16 +76,17 @@ class ProcessUseCase:
         downloaded: list[DownloadedTrack],
         force: bool,
         playlist_index: dict[str, dict[str, object]] | None = None,
-    ) -> None:
+        *,
+        progress: ProgressReporter | None = None,
+    ) -> ProcessResult:
         if downloaded:
             playlist_index = playlist_index or {}
             tasks: list[tuple[Path, Track, list[str]]] = []
             for item in downloaded:
                 names = self._resolve_playlist_names(item.playlist_ids, playlist_index)
                 tasks.append((Path(item.source_file), item.track, names))
-            self._run_process_batch(tasks, "处理中", force)
-            return
-        self._process_local(force)
+            return self._run_process_batch(tasks, "处理中", force, progress)
+        return self._process_local(force, progress)
 
     # ------------------------------------------------------------------
     # 处理管线
@@ -86,57 +97,69 @@ class ProcessUseCase:
         tasks: list[tuple[Path, Track, list[str]]],
         stage_name: str,
         force: bool,
-    ) -> None:
+        progress: ProgressReporter | None = None,
+    ) -> ProcessResult:
         if not tasks:
-            return
+            return ProcessResult()
 
         pending, skipped = self._filter_pending(tasks, force=force)
         logger.info("已处理索引过滤：阶段=%s force=%s 跳过=%s 待处理=%s", stage_name, force, skipped, len(pending))
         if not pending:
-            return
+            return ProcessResult(skipped=skipped)
 
         if self.dry_run:
-            self._print_dry_run_plan(pending)
-            return
+            return ProcessResult(processed=len(pending), skipped=skipped)
 
         total = len(pending)
         workers = min(self.workers, total)
         results: list[tuple[dict[str, Path], Track, list[str]]] = []
+        failed = 0
 
-        with ThreadPoolExecutor(max_workers=workers) as pool, BatchProgress(total=total, phase=stage_name) as bp:
-            future_map = {
-                pool.submit(self._process_file, raw_file, track_info, force): (idx, raw_file)
-                for idx, (raw_file, track_info, _names) in enumerate(pending, start=1)
-            }
+        if progress is not None:
+            progress.begin(total=total, phase=stage_name)
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                future_map = {
+                    pool.submit(self._process_file, raw_file, track_info, force): (idx, raw_file)
+                    for idx, (raw_file, track_info, _names) in enumerate(pending, start=1)
+                }
 
-            try:
-                for future in as_completed(future_map):
-                    idx, raw_file = future_map[future]
-                    try:
-                        audio_map = future.result()
-                        track_info = None
-                        playlist_names = None
-                        for rf, ti, pn in pending:
-                            if rf == raw_file:
-                                track_info, playlist_names = ti, pn
-                                break
-                        self._mark_processed(audio_map, track_info)
-                        if track_info and playlist_names:
-                            results.append((audio_map, track_info, playlist_names))
-                        bp.advance(success=True, idx=idx, item_name=raw_file.name)
-                    except Exception as exc:
-                        bp.advance(success=False, idx=idx, item_name=raw_file.name)
-                        logger.error(
-                            "处理失败：阶段=%s #%s %s，原因：%s", stage_name, idx, raw_file.name, exc, exc_info=True
-                        )
-            except KeyboardInterrupt:
-                pool.shutdown(wait=False, cancel_futures=True)
-                raise
+                try:
+                    for future in as_completed(future_map):
+                        idx, raw_file = future_map[future]
+                        try:
+                            audio_map = future.result()
+                            track_info = None
+                            playlist_names = None
+                            for rf, ti, pn in pending:
+                                if rf == raw_file:
+                                    track_info, playlist_names = ti, pn
+                                    break
+                            self._mark_processed(audio_map, track_info)
+                            if track_info and playlist_names:
+                                results.append((audio_map, track_info, playlist_names))
+                            if progress is not None:
+                                progress.advance(success=True, idx=idx, item_name=raw_file.name)
+                        except Exception as exc:
+                            failed += 1
+                            if progress is not None:
+                                progress.advance(success=False, idx=idx, item_name=raw_file.name)
+                            logger.error(
+                                "处理失败：阶段=%s #%s %s，原因：%s", stage_name, idx, raw_file.name, exc, exc_info=True
+                            )
+                except KeyboardInterrupt:
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    raise
+        finally:
+            if progress is not None:
+                progress.end()
 
         for audio_map, track_info, playlist_names in results:
             self._link_track(audio_map, track_info, playlist_names)
 
         self._record_processed_results(results)
+
+        return ProcessResult(processed=len(results), skipped=skipped, failed=failed)
 
     def _record_processed_results(
         self,
@@ -153,12 +176,6 @@ class ProcessUseCase:
             for spec_key, path in audio_map.items():
                 assets.append(build_audio_asset_from_file(track_info.id, spec_key, path))
         self.recorder.record_source_state(tracks, media_assets=assets)
-
-    def _print_dry_run_plan(self, pending: list[tuple[Path, Track, list[str]]]) -> None:
-        """dry-run：仅报告将处理的文件清单，不执行解密/转码/元数据/歌词/硬链接。"""
-        console.print(f"  [bold yellow]dry-run 预览[/bold yellow]：将处理 [cyan]{len(pending)}[/cyan] 个文件")
-        for i, (raw_file, track, _names) in enumerate(pending, 1):
-            console.print(f"    [dim]{i:>3}.[/dim] {raw_file.name} → {track.artist_text} - {track.name}")
 
     def _process_file(
         self,
@@ -400,7 +417,7 @@ class ProcessUseCase:
     # 本地处理（msv process 独立模式）
     # ------------------------------------------------------------------
 
-    def _process_local(self, force: bool) -> None:
+    def _process_local(self, force: bool, progress: ProgressReporter | None = None) -> ProcessResult:
         pending: list[tuple[Path, int]] = []
 
         cache_files = [f for f in self._iter_downloads() if not f.stem.isdigit()]
@@ -419,7 +436,7 @@ class ProcessUseCase:
 
         if not pending:
             logger.info("下载目录中无待处理文件")
-            return
+            return ProcessResult()
 
         playlist_index = {
             str(pl.id): {"name": pl.name, "track_count": len(pl.track_ids)}
@@ -435,7 +452,7 @@ class ProcessUseCase:
             names = self._resolve_playlist_names(pids, playlist_index)
             tasks.append((raw_file, track_info, names))
 
-        self._run_process_batch(tasks, "处理中", force)
+        return self._run_process_batch(tasks, "处理中", force, progress)
 
     def _build_track_playlist_map(self) -> dict[int, list[int]]:
         mapping: dict[int, list[int]] = {}

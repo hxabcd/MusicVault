@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 from musicvault.adapters.filesystem.workspace import WorkspacePaths
@@ -10,13 +11,13 @@ from musicvault.adapters.processors.downloader import Downloader
 from musicvault.adapters.processors.metadata_writer import MetadataWriter
 from musicvault.adapters.processors.organizer import Organizer
 from musicvault.application.process_use_case import ProcessUseCase
+from musicvault.application.progress import ProgressReporter
 from musicvault.application.source_state import SourceStateRecorder
 from musicvault.application.sync_use_case import SyncUseCase
 from musicvault.core.config import Config
 from musicvault.domain.preset import audio_spec_key
 from musicvault.ports.source import SourceClient
 from musicvault.ports.state import StateRepository
-from musicvault.shared.tui_progress import console, ok
 from musicvault.shared.utils import (
     create_link,
     format_track_name,
@@ -24,6 +25,16 @@ from musicvault.shared.utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineResult:
+    """pipeline 运行的结构化结果。"""
+
+    downloaded: int = 0
+    processed: int = 0
+    pruned: int = 0
+    dry_run_plan: dict | None = None
 
 
 class PipelineUseCase:
@@ -41,7 +52,7 @@ class PipelineUseCase:
         self.dry_run = dry_run
         # workspace 各生命周期区域路径的唯一来源（cache/media_store/library/logs）
         self.paths = WorkspacePaths(cfg.workspace_path)
-        # 把重建/处理的源侧状态写入 SQLite，供 target-sync 消费
+        # 把同步/处理的源侧状态写入 SQLite，供 target-sync 消费
         self.recorder = SourceStateRecorder(state)
 
         cpu = os.cpu_count() or 4
@@ -92,7 +103,6 @@ class PipelineUseCase:
         # 1. 加载同步状态（自 SQLite 快照派生）
         state_map = self.sync_service.load_synced_state()
         if not state_map:
-            console.print("[dim]暂无已同步曲目，无需创建链接[/dim]")
             return 0, 0
 
         # 2. 加载歌单索引
@@ -168,21 +178,19 @@ class PipelineUseCase:
         playlist_count = len({pid for pids in state_map.values() for pid in pids})
 
         if self.dry_run:
-            console.print(
-                f"  [bold yellow]dry-run 预览[/bold yellow]：将创建 [cyan]{total_links}[/cyan] 个硬链接（涉及 [cyan]{linked_tracks}[/cyan] 首曲目，[cyan]{playlist_count}[/cyan] 个歌单）"
-            )
             logger.info("dry-run 链接预览：%s 个链接，%s 首曲目", total_links, linked_tracks)
             return linked_tracks, playlist_count
-
-        if linked_tracks:
-            console.print(f"  链接完成：[cyan]{linked_tracks}[/cyan] 首曲目，[cyan]{playlist_count}[/cyan] 个歌单")
-        else:
-            console.print("[dim]所有 library 链接均已就绪[/dim]")
 
         logger.info("仅链接模式完成：%s 首曲目已创建链接", linked_tracks)
         return linked_tracks, playlist_count
 
-    def run_pipeline(self, cookie: str, command: str) -> None:
+    def run_pipeline(
+        self,
+        cookie: str,
+        command: str,
+        *,
+        progress: ProgressReporter | None = None,
+    ) -> PipelineResult:
         if not self.dry_run:
             self.cfg.ensure_dirs()
 
@@ -190,31 +198,41 @@ class PipelineUseCase:
         only_process = command == "process"
 
         playlist_index: dict[str, dict[str, object]] = {}
-        downloaded: list = []
+        downloaded: tuple = ()
+        pruned = 0
+        dry_run_plan: dict | None = None
         if not only_process:
-            downloaded = self.sync_service.run_sync(
+            sync_result = self.sync_service.run_sync(
                 cookie=cookie,
                 playlist_ids=[pl.id for pl in self.recorder.state.list_playlists()],
+                progress=progress,
             )
+            downloaded = sync_result.downloaded
+            pruned = sync_result.pruned
+            dry_run_plan = sync_result.dry_run_plan
             playlist_index = self.sync_service.playlist_index
-            if self.dry_run and not only_pull:
-                n_new = len(self.sync_service.plan.get("with_url") or [])
-                console.print(f"  [dim]随后将进入后处理：新下载的 {n_new} 首曲目（转码/元数据/歌词/硬链接）[/dim]")
 
         # sync 的 dry-run 不跑 process 阶段（新下载文件尚未落地），process --dry-run 仍执行本地扫描预览
+        processed = 0
         if not only_pull and (not self.dry_run or only_process):
-            self.process_service.run_process(
+            process_result = self.process_service.run_process(
                 downloaded=downloaded,
                 force=self.cfg.force,
                 playlist_index=playlist_index,
+                progress=progress,
             )
+            processed = process_result.processed
 
         if not self.dry_run:
             # 清理未分类 中无索引归属的孤立文件（上一版 bug 的残留，以及后续边界情况）
             self._cleanup_uncategorized_orphans()
-            ok("完成")
-        else:
-            console.print("  [bold yellow]dry-run 结束：未下载、未修改任何文件[/bold yellow]")
+
+        return PipelineResult(
+            downloaded=len(downloaded),
+            processed=processed,
+            pruned=pruned,
+            dry_run_plan=dry_run_plan,
+        )
 
     def _cleanup_uncategorized_orphans(self) -> None:
         """清理 library/*/未分类 下无索引归属的硬链接。"""
