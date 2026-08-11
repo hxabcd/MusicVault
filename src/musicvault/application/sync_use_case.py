@@ -49,7 +49,7 @@ class SyncUseCase:
         # dry-run 计划（仅 dry_run 模式下填充）：with_url / no_url / pruned / moves / renames / stale_index
         self.plan: dict = {}
 
-    def _load_synced_state(self) -> dict[int, list[int]]:
+    def load_synced_state(self) -> dict[int, list[int]]:
         """从 SQLite 快照派生 {track_id: [playlist_ids]} 映射。
 
         替代旧 synced_tracks.json：曲目与歌单关系由 SourceStateRecorder
@@ -221,7 +221,7 @@ class SyncUseCase:
                 shutil.rmtree(old_dir)
 
         # 重建新目录中的硬链接
-        state_map = self._load_synced_state()
+        state_map = self.load_synced_state()
         for track_id, pids in state_map.items():
             if pid not in pids:
                 continue
@@ -231,7 +231,7 @@ class SyncUseCase:
 
             for preset in self.cfg.presets:
                 spec_key = audio_spec_key(preset.format, preset.bitrate)
-                audio_src = self._find_canonical_for_spec(track_id, spec_key)
+                audio_src = self.find_canonical_for_spec(track_id, spec_key)
                 if not audio_src:
                     continue
                 dst = self.cfg.preset_dir(preset.name) / new_safe / self._link_name(track, preset, audio_src.suffix)
@@ -259,7 +259,7 @@ class SyncUseCase:
         返回需要调整的曲目列表 [(track, 需删除的目录, 需新增的目录)]；
         dry-run 模式下只计算并返回，不执行任何文件操作、不写状态。
         """
-        old_map = self._load_synced_state()
+        old_map = self.load_synced_state()
         if not old_map:
             return []
 
@@ -288,7 +288,7 @@ class SyncUseCase:
                 for preset in self.cfg.presets:
                     spec_key = audio_spec_key(preset.format, preset.bitrate)
                     if spec_key not in audio_map:
-                        src = self._find_canonical_for_spec(track_id, spec_key)
+                        src = self.find_canonical_for_spec(track_id, spec_key)
                         if src:
                             audio_map[spec_key] = src
                 if not audio_map:
@@ -342,7 +342,7 @@ class SyncUseCase:
             if preset.write_lrc_file:
                 remove_link(p_dir / dirname / self._link_name(track, preset, ".lrc"))
 
-    def _find_canonical_for_spec(self, track_id: int, spec_key: str) -> Path | None:
+    def find_canonical_for_spec(self, track_id: int, spec_key: str) -> Path | None:
         """查找符合指定 spec_key 的 canonical 文件（downloads 目录中）。"""
         if spec_key == "ORIGINAL":
             for ext in (".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav"):
@@ -385,7 +385,7 @@ class SyncUseCase:
 
     def _diff_tracks(self, tracks: list[Track]) -> tuple[list[Track], set[int]]:
         """返回 (新增曲目, 已同步的 track_id 集合)，已同步集合来自 SQLite 快照。"""
-        state_map = self._load_synced_state()
+        state_map = self.load_synced_state()
         synced_ids = set(state_map.keys())
         new_tracks = [track for track in tracks if track.id not in synced_ids]
         return new_tracks, synced_ids
@@ -446,7 +446,7 @@ class SyncUseCase:
 
         返回 (清理数量, stale_ids)；dry-run 模式下只计算并上报，不删除文件、不写状态。
         """
-        state_map = self._load_synced_state()
+        state_map = self.load_synced_state()
         synced_ids = set(state_map.keys())
         stale_ids = sorted(synced_ids - set(remote_tracks.keys()))
         if not stale_ids:

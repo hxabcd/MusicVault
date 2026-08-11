@@ -71,7 +71,7 @@ class TestSyncDryRun:
         # 不下载、不写状态
         assert downloaded == []
         downloader.download_track.assert_not_called()
-        state_map = svc._load_synced_state()
+        state_map = svc.load_synced_state()
         assert 222 not in state_map
         # playlists.json 保持原内容（正式运行会更新 track_count）
         raw = json.loads((cfg.state_dir / "playlists.json").read_text(encoding="utf-8"))
@@ -101,7 +101,7 @@ class TestSyncDryRun:
         # 111 列入清理计划，但文件与状态均保留
         assert svc.plan["pruned"] == [111]
         assert canonical.exists()
-        state_map = svc._load_synced_state()
+        state_map = svc.load_synced_state()
         assert 111 in state_map
 
     def test_normal_mode_writes_to_sqlite(self, tmp_path: Path) -> None:
@@ -130,7 +130,7 @@ class TestSyncDryRun:
 
         assert len(downloaded) == 1
         downloader.download_track.assert_called_once()
-        assert 111 in svc._load_synced_state()
+        assert 111 in svc.load_synced_state()
         assert not (cfg.state_dir / "synced_tracks.json").exists()
 
 

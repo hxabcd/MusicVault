@@ -17,7 +17,7 @@ from musicvault.application.sync_use_case import SyncUseCase
 
 
 def _seed_state(cfg: Config, state_map: dict[int, list[int]]) -> None:
-    """把 {track_id: [playlist_ids]} 写入 SQLite，供 _load_synced_state 派生。"""
+    """把 {track_id: [playlist_ids]} 写入 SQLite，供 load_synced_state 派生。"""
     repo = SQLiteStateRepository(SQLiteState(cfg.state_db_file))
     playlists: dict[int, Playlist] = {}
     tracks = [Track(id=tid, name=f"曲目 {tid}", artists=[], album="专辑", raw={}) for tid in state_map]
@@ -41,7 +41,7 @@ class TestLoadSyncedState:
         svc = SyncUseCase(
             cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteStateRepository(SQLiteState(cfg.state_db_file))
         )
-        result = svc._load_synced_state()
+        result = svc.load_synced_state()
         assert result == {123: [10, 20], 456: [10]}
 
     def test_isolated_song_has_empty_playlists(self, tmp_path: Path) -> None:
@@ -52,7 +52,7 @@ class TestLoadSyncedState:
         svc = SyncUseCase(
             cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteStateRepository(SQLiteState(cfg.state_db_file))
         )
-        result = svc._load_synced_state()
+        result = svc.load_synced_state()
         assert result == {789: []}
 
     def test_empty_snapshot_returns_empty(self, tmp_path: Path) -> None:
@@ -62,7 +62,7 @@ class TestLoadSyncedState:
         svc = SyncUseCase(
             cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteStateRepository(SQLiteState(cfg.state_db_file))
         )
-        result = svc._load_synced_state()
+        result = svc.load_synced_state()
         assert result == {}
 
 
@@ -158,7 +158,7 @@ class TestReconcileNoChange:
         svc = self._svc(cfg)
         svc._reconcile_playlist_assignments({123: [10, 20]}, _make_playlist_index(), {})
 
-        result = svc._load_synced_state()
+        result = svc.load_synced_state()
         assert result[123] == [10, 20]
 
     def test_no_track_in_all_tracks(self, tmp_path: Path) -> None:
@@ -171,7 +171,7 @@ class TestReconcileNoChange:
         svc._reconcile_playlist_assignments({123: [20]}, _make_playlist_index(), {})
 
         # 无 track 信息，状态保持不变（歌单分配以 run_sync 末尾 recorder 为准）
-        result = svc._load_synced_state()
+        result = svc.load_synced_state()
         assert result[123] == [10]
 
 

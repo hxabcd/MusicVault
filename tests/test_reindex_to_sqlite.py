@@ -72,7 +72,7 @@ def test_rebuild_index_writes_sqlite_state(tmp_path: Path) -> None:
 
     assert track_count == 2
     assert playlist_count == 1
-    synced = service.sync_service._load_synced_state()
+    synced = service.sync_service.load_synced_state()
     assert synced == {111: [10], 222: []}
     assert not (cfg.state_dir / "synced_tracks.json").exists()
 

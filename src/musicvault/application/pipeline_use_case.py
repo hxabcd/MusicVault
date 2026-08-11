@@ -238,7 +238,7 @@ class PipelineUseCase:
             self.cfg.ensure_dirs()
 
         # 1. 加载同步状态（自 SQLite 快照派生）
-        state_map = self.sync_service._load_synced_state()
+        state_map = self.sync_service.load_synced_state()
         if not state_map:
             console.print("[dim]暂无已同步曲目，无需创建链接[/dim]")
             return 0, 0
@@ -269,7 +269,7 @@ class PipelineUseCase:
             for preset in self.cfg.presets:
                 spec_key = audio_spec_key(preset.format, preset.bitrate)
                 if spec_key not in audio_map:
-                    src = self.sync_service._find_canonical_for_spec(track_id, spec_key)
+                    src = self.sync_service.find_canonical_for_spec(track_id, spec_key)
                     if src:
                         audio_map[spec_key] = src
 
@@ -360,7 +360,7 @@ class PipelineUseCase:
 
     def _cleanup_uncategorized_orphans(self) -> None:
         """清理 library/*/未分类 下无索引归属的硬链接。"""
-        synced = self.sync_service._load_synced_state()
+        synced = self.sync_service.load_synced_state()
         valid_ids = set(synced.keys())
         if not valid_ids:
             return
