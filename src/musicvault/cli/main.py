@@ -289,22 +289,9 @@ def main(argv: list[str] | None = None) -> int:
         workspace = getattr(args, "workspace", None)
         if workspace is not None:
             cfg.workspace = workspace
-        from musicvault.adapters.providers.netease_client import NeteaseClient
-        from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
-        from musicvault.application.pipeline_use_case import PipelineUseCase
+        from musicvault.application.bootstrap import build_pipeline
 
-        service = PipelineUseCase(
-            cfg=cfg,
-            dry_run=getattr(args, "dry_run", False),
-            api=NeteaseClient(
-                text_cleaning_enabled=cfg.text_cleaning_enabled,
-                download_quality=cfg.download_quality,
-                api_download_url_chunk_size=cfg.api_download_url_chunk_size,
-                api_track_detail_chunk_size=cfg.api_track_detail_chunk_size,
-                alias_split_separators=cfg.alias_split_separators,
-            ),
-            state=SQLiteStateRepository(SQLiteState(cfg.state_db_file)),
-        )
+        service = build_pipeline(cfg)
         try:
             service.rebuild_index()
         except KeyboardInterrupt:
@@ -348,21 +335,9 @@ def main(argv: list[str] | None = None) -> int:
     # add / remove 成功后自动执行 sync；其余子命令照原样传递
     pipeline_cmd = args.command if args.command in ("sync", "pull", "process") else "sync"
 
-    from musicvault.adapters.providers.netease_client import NeteaseClient
-    from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
-    from musicvault.application.pipeline_use_case import PipelineUseCase
+    from musicvault.application.bootstrap import build_pipeline
 
-    service = PipelineUseCase(
-        cfg=cfg,
-        api=NeteaseClient(
-            text_cleaning_enabled=cfg.text_cleaning_enabled,
-            download_quality=cfg.download_quality,
-            api_download_url_chunk_size=cfg.api_download_url_chunk_size,
-            api_track_detail_chunk_size=cfg.api_track_detail_chunk_size,
-            alias_split_separators=cfg.alias_split_separators,
-        ),
-        state=SQLiteStateRepository(SQLiteState(cfg.state_db_file)),
-    )
+    service = build_pipeline(cfg, dry_run=getattr(args, "dry_run", False))
     try:
         if args.command == "process" and getattr(args, "only_link", False):
             service.link_only(cookie=cookie)
