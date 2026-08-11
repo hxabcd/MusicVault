@@ -1,6 +1,6 @@
 # SourceSnapshot 与 MediaResolver Spec
 
-状态：规划中
+状态：已完成（2026-08-12）
 范围：SourceSnapshot 属于本次基础能力，MediaResolver 先定义边界、按需生成延期
 
 ## Problem Statement

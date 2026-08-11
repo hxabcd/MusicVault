@@ -29,7 +29,7 @@
 - 内置 `playlist_links` 已通过最小 `prepare → sync_item → finalize` 生命周期运行。Manifest 尚未实现，因此当前采用安全的 `append` 策略，不执行删除。
 - `SourceSnapshot` 在一次 `target-sync` 中由同一 SQLite 连接读取并由所有启用 preset 共享；`MediaResolver` 当前只解析已有资产，按需生成延期。
 - 可验证 CLI 流程为：`msv migrate` → `msv presets` → `msv target-sync [--preset NAME] [--dry-run]`。
-- 新增契约测试覆盖 SQLite、迁移、Preset API、TargetSynchronizer 生命周期和 dry-run；当前完整测试集为 163 项通过。
+- 新增契约测试覆盖 SQLite、迁移、Preset API、TargetSynchronizer 生命周期和 dry-run；当前完整测试集为 204 项通过。
 
 后续提交继续打通旧流水线与新状态：`sync`/`process` 通过新增的 `SourceStateRecorder`（`application/source_state.py`）在单事务内把曲目、歌单关系、单独管理单曲和 canonical 媒体资产写入 SQLite，使 `msv sync` → `msv target-sync` 形成真实闭环；dry-run 不写库，陈旧单曲 id 不触发外键失败。
 
@@ -77,4 +77,4 @@
 
 ## Open tickets
 
-开放ticket快照位于 `tickets/`。其中 01–07 和 09 的核心决策已由实现和测试落地，但ticket文件与 GitHub Issue 状态尚未自动关闭；08 仍对应旧流水线迁移接缝。ticket通过 frontmatter 的 `depends_on` 表达前置决策，正式状态和执行跟踪以对应的 GitHub Issues 为准。
+01–07 与 09 的核心决策已由实现和测试落地，08（旧流水线迁移接缝）亦于 2026-08-12 完成（`sync`/`pull`/`process`/`reindex` 已迁为 application 用例，`services/` 已删除），全部 ticket 结项。ticket 通过 frontmatter 的 `depends_on` 表达前置决策；本仓库 GitHub Issues 中不存在对应条目，执行跟踪以本 map 与实现代码为准。

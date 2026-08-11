@@ -1,6 +1,6 @@
 # TargetSynchronizer Spec
 
-状态：规划中
+状态：已完成（2026-08-12）
 范围：本次先实现最小闭环，完整目标协调能力延期
 
 ## Problem Statement

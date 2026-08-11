@@ -1,6 +1,6 @@
 # Workspace 与 media_store 布局 Spec
 
-状态：规划中
+状态：已完成（2026-08-12）
 范围：本次工程重构
 
 ## Problem Statement
