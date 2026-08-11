@@ -5,16 +5,13 @@ from __future__ import annotations
 import logging
 import shutil
 
+from musicvault.adapters.filesystem.workspace import WorkspacePaths
 from musicvault.core.config import Config
 from musicvault.domain.models import Playlist, Track
 from musicvault.ports.state import StateRepository
 from musicvault.shared.utils import safe_filename
 
 logger = logging.getLogger(__name__)
-
-# canonical 文件扩展名（旧 downloads 布局，C 阶段迁移前保持不变）
-_CANONICAL_EXTS = (".flac", ".mp3", ".m4a", ".ogg", ".opus", ".wav", ".lrc")
-_SONG_REMOVE_EXTS = (".flac", ".mp3", ".lrc")
 
 
 class PlaylistUseCase:
@@ -23,6 +20,8 @@ class PlaylistUseCase:
     def __init__(self, cfg: Config, state: StateRepository) -> None:
         self.cfg = cfg
         self.state = state
+        # workspace 各生命周期区域路径的唯一来源（cache/media_store/library/logs）
+        self.paths = WorkspacePaths(cfg.workspace_path)
 
     # ------------------------------------------------------------------
     # 歌单
@@ -75,23 +74,23 @@ class PlaylistUseCase:
         # 记录 canonical 文件的 inode（删除前），用于后续匹配 未分类 中的硬链接
         canonical_inodes: set[tuple[int, int]] = set()
         for track_id in ids_to_remove:
-            for ext in (".flac", ".mp3", ".m4a", ".ogg", ".opus"):
-                p = self.cfg.downloads_dir / f"{track_id}{ext}"
-                if p.exists():
-                    try:
-                        st = p.stat()
-                        canonical_inodes.add((st.st_dev, st.st_ino))
-                    except OSError:
-                        pass
+            audio_dir = self.paths.media_store / str(track_id) / "audio"
+            if not audio_dir.is_dir():
+                continue
+            for f in list(audio_dir.iterdir()):
+                if not f.is_file():
+                    continue
+                try:
+                    st = f.stat()
+                    canonical_inodes.add((st.st_dev, st.st_ino))
+                except OSError:
+                    continue
 
-        # 删除无歌单归属的 canonical 文件（覆盖所有格式及 bitrate 后缀变体）
+        # 删除无歌单归属的 canonical 文件（audio 目录仅含本曲目资产，直接 rmtree）
         for track_id in ids_to_remove:
-            for ext in _CANONICAL_EXTS:
-                (self.cfg.downloads_dir / f"{track_id}{ext}").unlink(missing_ok=True)
-            if self.cfg.downloads_dir.is_dir():
-                for f in list(self.cfg.downloads_dir.iterdir()):
-                    if f.is_file() and f.stem.startswith(f"{track_id}_"):
-                        f.unlink(missing_ok=True)
+            audio_dir = self.paths.media_store / str(track_id) / "audio"
+            if audio_dir.is_dir():
+                shutil.rmtree(audio_dir)
             self.state.remove_track(track_id)
 
         # 删除 未分类 中对应的硬链接（它们指向同一 inode，unlink 不会自动消失）
@@ -143,5 +142,6 @@ class PlaylistUseCase:
     def remove_song(self, song_id: int) -> None:
         """移除单曲管理登记并删除其 canonical 文件。"""
         self.state.remove_managed_song(song_id)
-        for ext in _SONG_REMOVE_EXTS:
-            (self.cfg.downloads_dir / f"{song_id}{ext}").unlink(missing_ok=True)
+        audio_dir = self.paths.media_store / str(song_id) / "audio"
+        if audio_dir.is_dir():
+            shutil.rmtree(audio_dir)

@@ -4,6 +4,7 @@ import logging
 import os
 from pathlib import Path
 
+from musicvault.adapters.filesystem.workspace import WorkspacePaths
 from musicvault.adapters.processors.decryptor import Decryptor
 from musicvault.adapters.processors.downloader import Downloader
 from musicvault.adapters.processors.metadata_writer import MetadataWriter
@@ -38,6 +39,8 @@ class PipelineUseCase:
         self.cfg = cfg
         self.api = api
         self.dry_run = dry_run
+        # workspace 各生命周期区域路径的唯一来源（cache/media_store/library/logs）
+        self.paths = WorkspacePaths(cfg.workspace_path)
         # 把重建/处理的源侧状态写入 SQLite，供 target-sync 消费
         self.recorder = SourceStateRecorder(state)
 
@@ -222,19 +225,22 @@ class PipelineUseCase:
 
         # 构建 canonical 文件的 inode → track_id 映射
         inode_to_tid: dict[tuple[int, int], int] = {}
-        audio_exts = (".flac", ".mp3", ".m4a", ".ogg", ".opus")
-        for ext in audio_exts:
-            for f in self.cfg.downloads_dir.glob(f"*{ext}"):
-                if not f.is_file():
+        media_root = self.paths.media_store
+        if media_root.is_dir():
+            for track_dir in media_root.iterdir():
+                if not track_dir.is_dir() or not track_dir.name.isdigit():
                     continue
-                stem = f.stem.split("_")[0]
-                if not stem.isdigit():
+                audio_dir = track_dir / "audio"
+                if not audio_dir.is_dir():
                     continue
-                try:
-                    st = f.stat()
-                    inode_to_tid[(st.st_dev, st.st_ino)] = int(stem)
-                except OSError:
-                    continue
+                for f in audio_dir.iterdir():
+                    if not f.is_file():
+                        continue
+                    try:
+                        st = f.stat()
+                        inode_to_tid[(st.st_dev, st.st_ino)] = int(track_dir.name)
+                    except OSError:
+                        continue
 
         if not inode_to_tid:
             return

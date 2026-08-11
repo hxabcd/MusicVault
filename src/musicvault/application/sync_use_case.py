@@ -345,10 +345,13 @@ class SyncUseCase:
                 remove_link(p_dir / dirname / self._link_name(track, preset, ".lrc"))
 
     def find_canonical_for_spec(self, track_id: int, spec_key: str) -> Path | None:
-        """查找符合指定 spec_key 的 canonical 文件（downloads 目录中）。"""
+        """查找符合指定 spec_key 的 canonical 文件（media_store/<track_id>/audio/ 中）。"""
+        audio_dir = self.paths.media_store / str(track_id) / "audio"
+        if not audio_dir.is_dir():
+            return None
         if spec_key == "ORIGINAL":
             for ext in (".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav"):
-                p = self.cfg.downloads_dir / f"{track_id}{ext}"
+                p = audio_dir / f"{track_id}{ext}"
                 if p.exists():
                     return p
             return None
@@ -366,7 +369,7 @@ class SyncUseCase:
         candidates.append(f"{track_id}{ext}")
 
         for name in candidates:
-            p = self.cfg.downloads_dir / name
+            p = audio_dir / name
             if p.exists():
                 return p
         return None
@@ -462,23 +465,18 @@ class SyncUseCase:
         for track_id in stale_ids:
             # 收集 canonical 文件 inode（删除前）
             canonical_inodes: set[tuple[int, int]] = set()
-            for ext in (".flac", ".mp3", ".m4a", ".ogg", ".opus"):
-                p = self.cfg.downloads_dir / f"{track_id}{ext}"
-                if p.exists():
+            audio_dir = self.paths.media_store / str(track_id) / "audio"
+            if audio_dir.is_dir():
+                for f in list(audio_dir.iterdir()):
+                    if not f.is_file():
+                        continue
                     try:
-                        st = p.stat()
+                        st = f.stat()
                         canonical_inodes.add((st.st_dev, st.st_ino))
                     except OSError:
-                        pass
-
-            # 删除 canonical 文件
-            for ext in (".flac", ".mp3", ".m4a", ".ogg", ".opus", ".lrc"):
-                (self.cfg.downloads_dir / f"{track_id}{ext}").unlink(missing_ok=True)
-            # 删除带 bitrate 后缀的 canonical 文件（如 12345_192k.mp3）
-            if self.cfg.downloads_dir.is_dir():
-                for f in list(self.cfg.downloads_dir.iterdir()):
-                    if f.is_file() and f.stem.startswith(f"{track_id}_"):
-                        f.unlink(missing_ok=True)
+                        continue
+                # 删除 media_store/<tid>/audio/ 下全部文件（各格式、bitrate 变体、.lrc）
+                shutil.rmtree(audio_dir)
 
             # 通过 inode 匹配删除所有 preset 目录下的 library 链接
             if canonical_inodes:

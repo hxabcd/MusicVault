@@ -78,9 +78,6 @@ def _make_config(tmp_path: Path) -> Config:
     cfg.workspace_path = tmp_path
     cfg.state_db_file = tmp_path / "state.db"
     cfg.state_dir = tmp_path / "state"
-    # find_canonical_for_spec 在 Task 4 迁移前仍读 downloads_dir；
-    # 此处指向 123 的 audio 目录，使 canonical fixture 落 media_store 新布局
-    cfg.downloads_dir = tmp_path / "media_store" / "123" / "audio"
     cfg.media_store_dir = tmp_path / "media_store"
     cfg.library_dir = tmp_path / "library"
     cfg.preset_dir = lambda name: tmp_path / "library" / name

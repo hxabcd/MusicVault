@@ -46,10 +46,7 @@ def build_audio_asset_from_file(
     *,
     source: str = "pipeline:downloads",
 ) -> MediaAsset:
-    """读取 canonical 音频文件并构造媒体资产记录（路径、大小、SHA-256、来源、更新时间）。
-
-    当前流水线的 canonical 文件仍落在旧 downloads 布局；待流水线迁到 media_store 后再更新路径。
-    """
+    """读取 canonical 音频文件并构造媒体资产记录（路径、大小、SHA-256、来源、更新时间）。"""
     return MediaAsset(
         track_id=track_id,
         asset_type="audio",

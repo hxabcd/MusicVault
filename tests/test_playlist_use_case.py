@@ -60,8 +60,8 @@ class TestSongManagement:
 
     def test_remove_song(self, tmp_path: Path) -> None:
         cfg, repo, use_case = _use_case(tmp_path)
-        cfg.downloads_dir.mkdir(parents=True)
-        canonical = cfg.downloads_dir / "1.flac"
+        canonical = cfg.media_store_dir / "1" / "audio" / "1.flac"
+        canonical.parent.mkdir(parents=True, exist_ok=True)
         canonical.write_bytes(b"fake")
         use_case.add_song(1)
         use_case.add_song(2)
@@ -99,15 +99,16 @@ class TestPlaylistManagement:
         use_case.add_playlist(10, name="歌单A")
         repo.upsert_track(_make_track(111))
         repo.upsert_playlist(Playlist(10, "歌单A", (111,)))
-        cfg.downloads_dir.mkdir(parents=True)
-        (cfg.downloads_dir / "111.flac").write_bytes(b"fake")
+        canonical = cfg.media_store_dir / "111" / "audio" / "111.flac"
+        canonical.parent.mkdir(parents=True, exist_ok=True)
+        canonical.write_bytes(b"fake")
 
         use_case.remove_playlist(10)
 
         assert use_case.has_playlist(10) is False
         snapshot = repo.create_snapshot()
         assert snapshot.tracks == ()
-        assert not (cfg.downloads_dir / "111.flac").exists()
+        assert not canonical.exists()
 
 
 def _make_track(track_id: int):

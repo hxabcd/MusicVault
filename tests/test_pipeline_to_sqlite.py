@@ -190,7 +190,7 @@ def test_synced_state_feeds_target_sync_closed_loop(tmp_path: Path) -> None:
     downloader = MagicMock()
     downloader.download_track.return_value = DownloadedTrack(
         track=_make_track(111),
-        source_file=str(cfg.downloads_dir / "111.flac"),
+        source_file=str(cfg.cache_dir / "111.flac"),
         is_ncm=False,
         playlist_ids=[10],
     )

@@ -105,6 +105,26 @@ class TestSyncDryRun:
         state_map = svc.load_synced_state()
         assert 111 in state_map
 
+    def test_prune_deletes_canonical_from_media_store(self, tmp_path: Path) -> None:
+        """非 dry-run：远端已删除曲目的 canonical 从 media_store 删除，library 链接同步删除。"""
+        cfg = _make_cfg(tmp_path)
+        cfg.media_store_dir.mkdir(parents=True)
+        cfg.cache_dir.mkdir(parents=True)
+        _seed_synced(cfg, {111: [10]})
+        canonical = cfg.media_store_dir / "111" / "audio" / "111.flac"
+        canonical.parent.mkdir(parents=True, exist_ok=True)
+        canonical.write_bytes(b"fake flac")
+
+        api = MagicMock()
+        api.get_playlist_info.return_value = {"name": "歌单A", "track_count": 1}
+        api.get_playlist_tracks.return_value = []  # 远端已无 111
+
+        svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=False, state=_repository(cfg))
+        svc.run_sync("cookie", playlist_ids=[10])
+
+        assert not canonical.exists()
+        assert 111 not in svc.load_synced_state()
+
     def test_normal_mode_writes_to_sqlite(self, tmp_path: Path) -> None:
         """回归：dry_run=False 时下载并把状态写入 SQLite（不再写 JSON）。"""
         cfg = _make_cfg(tmp_path)

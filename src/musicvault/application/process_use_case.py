@@ -461,22 +461,28 @@ class ProcessUseCase:
                 yield file_path
 
     def _scan_canonical_files(self) -> list[tuple[Path, int]]:
-        downloads = self.cfg.downloads_dir
-        if not downloads.exists():
+        media_root = self.paths.media_store
+        if not media_root.is_dir():
             return []
         seen: set[int] = set()
         result: list[tuple[Path, int]] = []
-        for file_path in sorted(downloads.iterdir()):
-            if not file_path.is_file() or file_path.suffix.lower() not in (".flac", ".mp3"):
+        for track_dir in sorted(media_root.iterdir()):
+            if not track_dir.is_dir() or not track_dir.name.isdigit():
                 continue
-            stem = file_path.stem.split("_")[0]
-            if not stem.isdigit():
+            track_id = int(track_dir.name)
+            audio_dir = track_dir / "audio"
+            if not audio_dir.is_dir():
                 continue
-            track_id = int(stem)
-            if track_id in seen:
-                continue
-            result.append((file_path, track_id))
-            seen.add(track_id)
+            for file_path in sorted(audio_dir.iterdir()):
+                if not file_path.is_file() or file_path.suffix.lower() not in (".flac", ".mp3"):
+                    continue
+                stem = file_path.stem.split("_")[0]
+                if stem != track_dir.name:
+                    continue
+                if track_id in seen:
+                    continue
+                result.append((file_path, track_id))
+                seen.add(track_id)
         return result
 
     def _resolve_playlist_names(
