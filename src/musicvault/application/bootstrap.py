@@ -8,6 +8,7 @@ from musicvault.adapters.providers.netease_client import NeteaseClient
 from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
 from musicvault.adapters.targets.filesystem import FilesystemTarget
 from musicvault.application.pipeline_use_case import PipelineUseCase
+from musicvault.application.playlist_use_case import PlaylistUseCase
 from musicvault.application.sync_engine import SyncEngine, SyncRunResult
 from musicvault.core.config import Config
 from musicvault.ports.source import SourceClient
@@ -78,6 +79,14 @@ def build_workspace_migrator(config: Config) -> WorkspaceMigration:
     paths = WorkspacePaths(config.workspace_path)
     state = SQLiteStateRepository(SQLiteState(paths.state_db))
     return WorkspaceMigration(paths, state)
+
+
+def build_playlist_use_case(config: Config) -> PlaylistUseCase:
+    """组装歌单/单曲管理用例（add/remove/list 命令专用）。"""
+    return PlaylistUseCase(
+        cfg=config,
+        state=SQLiteStateRepository(SQLiteState(config.state_db_file)),
+    )
 
 
 @dataclass(frozen=True, slots=True)

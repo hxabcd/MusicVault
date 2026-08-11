@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
 from musicvault.core.config import Config
 from musicvault.application.pipeline_use_case import PipelineUseCase
-from musicvault.shared.utils import save_json
+from musicvault.domain.models import Playlist
 
 
 def _make_cfg(tmp_path: Path) -> Config:
@@ -24,9 +24,8 @@ def _setup_downloads(cfg: Config) -> None:
     (cfg.downloads_dir / "222.mp3").write_bytes(b"fake mp3 222")
 
 
-def _setup_playlists(cfg: Config) -> None:
-    cfg.state_dir.mkdir(parents=True)
-    save_json(cfg.state_dir / "playlists.json", {"10": {"name": "歌单A", "track_count": 1}})
+def _setup_playlists(cfg: Config, repo: SQLiteStateRepository) -> None:
+    repo.upsert_playlist(Playlist(10, "歌单A", ()))
 
 
 def _setup_library_links(cfg: Config) -> None:
@@ -39,9 +38,9 @@ def _setup_library_links(cfg: Config) -> None:
 def test_rebuild_index_records_tracks_playlists_and_assets(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     _setup_downloads(cfg)
-    _setup_playlists(cfg)
-    _setup_library_links(cfg)
     repo = _repository(cfg)
+    _setup_playlists(cfg, repo)
+    _setup_library_links(cfg)
 
     service = PipelineUseCase(cfg, api=MagicMock(), state=repo)
     track_count, playlist_count = service.rebuild_index()
@@ -63,9 +62,9 @@ def test_rebuild_index_records_tracks_playlists_and_assets(tmp_path: Path) -> No
 def test_rebuild_index_writes_sqlite_state(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     _setup_downloads(cfg)
-    _setup_playlists(cfg)
-    _setup_library_links(cfg)
     repo = _repository(cfg)
+    _setup_playlists(cfg, repo)
+    _setup_library_links(cfg)
 
     service = PipelineUseCase(cfg, api=MagicMock(), state=repo)
     track_count, playlist_count = service.rebuild_index()
@@ -82,9 +81,9 @@ def test_rebuild_index_does_not_overwrite_known_track_metadata(tmp_path: Path) -
 
     cfg = _make_cfg(tmp_path)
     _setup_downloads(cfg)
-    _setup_playlists(cfg)
-    _setup_library_links(cfg)
     repo = _repository(cfg)
+    _setup_playlists(cfg, repo)
+    _setup_library_links(cfg)
     # 先登记真实元数据（模拟 msv sync 写入）
     repo.upsert_track(Track(id=111, name="真实歌名", artists=["歌手"], album="真实专辑", raw={}))
 
@@ -103,9 +102,9 @@ def test_rebuild_index_skips_playlists_without_members(tmp_path: Path) -> None:
 
     cfg = _make_cfg(tmp_path)
     _setup_downloads(cfg)
-    _setup_playlists(cfg)
-    _setup_library_links(cfg)
     repo = _repository(cfg)
+    _setup_playlists(cfg, repo)
+    _setup_library_links(cfg)
     # 模拟 sync 已录：歌单 20 有真实曲目关系，但磁盘上无对应文件
     repo.upsert_track(Track(id=333, name="曲目", artists=[], album="专辑", raw={}))
     repo.upsert_playlist(Playlist(id=20, name="歌单B", track_ids=(333,)))

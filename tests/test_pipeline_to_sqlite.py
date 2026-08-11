@@ -60,12 +60,14 @@ def test_sync_records_tracks_and_playlists_to_sqlite(tmp_path: Path) -> None:
 
 
 def test_sync_records_managed_songs_to_sqlite(tmp_path: Path) -> None:
+    from musicvault.application.playlist_use_case import PlaylistUseCase
+
     cfg = _make_cfg(tmp_path)
     cfg.state_dir.mkdir(parents=True)
     cfg.downloads_dir.mkdir(parents=True)
     cfg.downloads_cache_dir.mkdir(parents=True)
-    cfg.add_song(999)
     repo = _repository(cfg)
+    PlaylistUseCase(cfg, repo).add_song(999)
 
     api = MagicMock()
     api.get_tracks_detail.return_value = {999: _make_track(999)}
@@ -108,9 +110,7 @@ def test_process_records_media_assets_to_sqlite(tmp_path: Path) -> None:
     api = MagicMock()
     api.get_track_lyrics.return_value = {}
     item = DownloadedTrack(track=_make_track(333), source_file=str(canonical), is_ncm=False, playlist_ids=[])
-    svc = ProcessUseCase(
-        cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=1, dry_run=False, state=repo
-    )
+    svc = ProcessUseCase(cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=1, dry_run=False, state=repo)
     svc.run_process(downloaded=[item], force=False)
 
     snapshot = repo.create_snapshot()
@@ -125,13 +125,15 @@ def test_process_records_media_assets_to_sqlite(tmp_path: Path) -> None:
 
 def test_sync_with_stale_song_id_does_not_crash(tmp_path: Path) -> None:
     """远端已删除的单曲不应触发 managed_songs 外键违反，sync 应正常完成。"""
+    from musicvault.application.playlist_use_case import PlaylistUseCase
+
     cfg = _make_cfg(tmp_path)
     cfg.state_dir.mkdir(parents=True)
     cfg.downloads_dir.mkdir(parents=True)
     cfg.downloads_cache_dir.mkdir(parents=True)
-    cfg.add_song(999)
-    cfg.add_song(1000)  # 该 id 已被远端删除
     repo = _repository(cfg)
+    PlaylistUseCase(cfg, repo).add_song(999)
+    PlaylistUseCase(cfg, repo).add_song(1000)  # 该 id 已被远端删除
 
     api = MagicMock()
     api.get_tracks_detail.return_value = {999: _make_track(999)}  # 1000 缺失
@@ -142,8 +144,8 @@ def test_sync_with_stale_song_id_does_not_crash(tmp_path: Path) -> None:
 
     snapshot = repo.create_snapshot()
     assert [track.id for track in snapshot.tracks] == [999]
-    # 陈旧 id 已从 songs.json 移除，且未写入 SQLite
-    assert cfg.get_song_ids() == [999]
+    # 陈旧 id 已从 managed_songs 移除
+    assert repo.list_managed_songs() == [999]
 
 
 def test_synced_state_feeds_target_sync_closed_loop(tmp_path: Path) -> None:

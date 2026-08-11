@@ -94,55 +94,9 @@ class Config:
         for preset in self.presets:
             self.preset_dir(preset.name).mkdir(parents=True, exist_ok=True)
 
-    # -- song management --
-    @property
-    def _songs_path(self) -> Path:
-        return self.state_dir / "songs.json"
-
-    def get_song_ids(self) -> list[int]:
-        data = load_json(self._songs_path, {})
-        ids = data.get("ids", [])
-        return sorted(int(x) for x in ids if isinstance(x, (int, str)))
-
-    def has_song(self, song_id: int) -> bool:
-        return song_id in self.get_song_ids()
-
-    def add_song(self, song_id: int) -> None:
-        self.ensure_dirs()
-        ids = set(self.get_song_ids())
-        ids.add(song_id)
-        save_json(self._songs_path, {"ids": sorted(ids)})
-
-    def remove_song(self, song_id: int) -> None:
-        ids = set(self.get_song_ids())
-        ids.discard(song_id)
-        if ids:
-            save_json(self._songs_path, {"ids": sorted(ids)})
-        elif self._songs_path.exists():
-            self._songs_path.unlink()
-
-    @property
-    def _playlist_index_path(self) -> Path:
-        return self.state_dir / "playlists.json"
-
-    def get_playlist_ids(self) -> list[int]:
-        index = load_json(self._playlist_index_path, {})
-        return sorted(int(k) for k in index if k.lstrip("-").isdigit())
-
-    def has_playlist(self, pid: int) -> bool:
-        index = load_json(self._playlist_index_path, {})
-        return str(pid) in index
-
-    def add_playlist(self, pid: int, name: str = "", track_count: int = 0) -> None:
-        self.ensure_dirs()
-        index = load_json(self._playlist_index_path, {})
-        index[str(pid)] = {"name": name, "track_count": track_count}
-        save_json(self._playlist_index_path, index)
-
-    def remove_playlist(self, pid: int) -> None:
-        index = load_json(self._playlist_index_path, {})
-        index.pop(str(pid), None)
-        save_json(self._playlist_index_path, index)
+    # 说明：歌单/单曲管理已迁往 StateRepository 端口与 PlaylistUseCase 用例
+    # （managed_songs / playlists 表）；state_dir 仅保留给一次性导入
+    # （WorkspaceMigration._import_legacy_state）与 legacy 配置迁移作中间态。
 
     # -- serialization --
 
@@ -265,13 +219,15 @@ class Config:
             raw = load_json(path, {})
             cfg = cls.from_dict(raw)
             if "playlist_ids" in raw or "playlist_id" in raw:
+                # 一次性迁移中间态：写入 state/playlists.json，由 msv migrate 导入 SQLite
                 legacy_ids = _extract_legacy_playlist_ids(raw)
                 if legacy_ids:
                     cfg.ensure_dirs()
-                    index = load_json(cfg._playlist_index_path, {})
+                    index_path = cfg.state_dir / "playlists.json"
+                    index = load_json(index_path, {})
                     for pid in legacy_ids:
                         index.setdefault(str(pid), {"name": "", "track_count": 0})
-                    save_json(cfg._playlist_index_path, index)
+                    save_json(index_path, index)
             cfg.save(path)
         else:
             cfg = cls()
@@ -357,13 +313,13 @@ class Config:
 
 # -- helpers --
 
+
 def _check_legacy_format(raw: dict[str, Any]) -> None:
     legacy_keys = {"lossy", "filenames", "cover", "lyrics"}
     found = legacy_keys & set(raw.keys())
     if found:
         raise RuntimeError(
-            f"旧版配置格式已不再支持。请手动迁移到 preset 格式。"
-            f"检测到旧字段：{sorted(found)}。参见文档。"
+            f"旧版配置格式已不再支持。请手动迁移到 preset 格式。检测到旧字段：{sorted(found)}。参见文档。"
         )
 
 

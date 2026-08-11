@@ -23,7 +23,6 @@ from musicvault.shared.tui_progress import BatchProgress, console
 from musicvault.shared.utils import (
     create_link,
     format_track_name,
-    load_json,
     safe_filename,
     workspace_rel_path,
 )
@@ -411,7 +410,10 @@ class ProcessUseCase:
             logger.info("下载目录中无待处理文件")
             return
 
-        playlist_index = load_json(self.cfg.state_dir / "playlists.json", {})
+        playlist_index = {
+            str(pl.id): {"name": pl.name, "track_count": len(pl.track_ids)}
+            for pl in self.recorder.state.list_playlists()
+        }
         logger.info("正在获取曲目详情与歌单数据...")
         detail_map = self.api.get_tracks_detail([track_id for _, track_id in pending])
         track_playlist_map = self._build_track_playlist_map()
@@ -426,7 +428,7 @@ class ProcessUseCase:
 
     def _build_track_playlist_map(self) -> dict[int, list[int]]:
         mapping: dict[int, list[int]] = {}
-        playlist_ids = self.cfg.get_playlist_ids()
+        playlist_ids = [pl.id for pl in self.recorder.state.list_playlists()]
         if playlist_ids:
             logger.info("正在获取 %s 个歌单的曲目列表...", len(playlist_ids))
         for pid in playlist_ids:

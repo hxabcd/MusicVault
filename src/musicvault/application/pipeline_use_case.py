@@ -21,7 +21,6 @@ from musicvault.shared.tui_progress import console, ok
 from musicvault.shared.utils import (
     create_link,
     format_track_name,
-    load_json,
     safe_filename,
     workspace_rel_path,
 )
@@ -102,7 +101,10 @@ class PipelineUseCase:
             return 0, 0
 
         # 2. 构建 playlist 目录名 → playlist_id 的反向映射
-        playlist_index = load_json(self.cfg.state_dir / "playlists.json", {})
+        playlist_index = {
+            str(pl.id): {"name": pl.name, "track_count": len(pl.track_ids)}
+            for pl in self.recorder.state.list_playlists()
+        }
         dirname_to_pid: dict[str, int] = {}
         for pid_str, entry in playlist_index.items():
             name = entry.get("name") if isinstance(entry, dict) else None
@@ -217,7 +219,7 @@ class PipelineUseCase:
             for tid_str, entry in processed.items()
             for spec_key, rel in (entry.get("audios") or {}).items()
         ]
-        managed = [song_id for song_id in self.cfg.get_song_ids() if song_id in track_ids]
+        managed = [song_id for song_id in self.recorder.state.list_managed_songs() if song_id in track_ids]
         self.recorder.record_source_state(tracks, playlists, managed, assets)
         # 重建即视为已处理（spec 已由 audios 覆盖），下次 process 跳过
         for tid_str, entry in processed.items():
@@ -244,7 +246,10 @@ class PipelineUseCase:
             return 0, 0
 
         # 2. 加载歌单索引
-        playlist_index = load_json(self.cfg.state_dir / "playlists.json", {})
+        playlist_index = {
+            str(pl.id): {"name": pl.name, "track_count": len(pl.track_ids)}
+            for pl in self.recorder.state.list_playlists()
+        }
         name_to_pid: dict[str, int] = {}
         for pid_str, entry in playlist_index.items():
             name = entry.get("name") if isinstance(entry, dict) else None
@@ -337,7 +342,10 @@ class PipelineUseCase:
         playlist_index: dict[str, dict[str, object]] = {}
         downloaded: list = []
         if not only_process:
-            downloaded = self.sync_service.run_sync(cookie=cookie, playlist_ids=self.cfg.get_playlist_ids())
+            downloaded = self.sync_service.run_sync(
+                cookie=cookie,
+                playlist_ids=[pl.id for pl in self.recorder.state.list_playlists()],
+            )
             playlist_index = self.sync_service.playlist_index
             if self.dry_run and not only_pull:
                 n_new = len(self.sync_service.plan.get("with_url") or [])

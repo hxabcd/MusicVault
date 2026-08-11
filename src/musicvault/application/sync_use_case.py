@@ -17,10 +17,8 @@ from musicvault.shared.tui_progress import BatchProgress, console
 from musicvault.shared.utils import (
     create_link,
     format_track_name,
-    load_json,
     remove_link,
     safe_filename,
-    save_json,
     workspace_rel_path,
 )
 
@@ -70,13 +68,16 @@ class SyncUseCase:
 
     def run_sync(self, cookie: str, playlist_ids: list[int]) -> list[DownloadedTrack]:
         stale_index = self._cleanup_stale_state()
-        song_ids = self.cfg.get_song_ids()
+        song_ids = self.recorder.state.list_managed_songs()
         if not playlist_ids and not song_ids:
             output_warn("未配置任何歌单或单曲，请先执行 msv add 添加歌单或 msv add --song <ID> 添加单曲")
             return []
 
         self.api.login_with_cookie(cookie)
-        playlist_index = load_json(self.cfg.state_dir / "playlists.json", {})
+        playlist_index = {
+            str(pl.id): {"name": pl.name, "track_count": len(pl.track_ids)}
+            for pl in self.recorder.state.list_playlists()
+        }
         track_playlists: dict[int, list[int]] = {}
         all_tracks: dict[int, Track] = {}
         pending_renames: list[tuple[int, str, str]] = []
@@ -110,15 +111,13 @@ class SyncUseCase:
                 if track.id not in all_tracks:
                     all_tracks[track.id] = track
                     track_playlists.setdefault(track.id, [])
-                # 过滤本地已删除但仍在 songs.json 中的旧 ID
+                # 过滤本地已删除但仍在 managed_songs 中的旧 ID
                 missing = sorted(set(song_ids) - set(song_details.keys()))
                 if missing:
                     for mid in missing:
-                        self.cfg.remove_song(mid)
+                        self.recorder.state.remove_managed_song(mid)
                     logger.info("清理无效单曲 ID：%s", missing)
 
-        if not self.dry_run:
-            save_json(self.cfg.state_dir / "playlists.json", playlist_index)
         self.playlist_index = playlist_index
 
         unique = list(all_tracks.values())

@@ -145,19 +145,25 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_args(reindex, include_dry_run=False)
 
     presets = sub.add_parser("presets", help="列出可用 preset", description="发现并列出内置和外部 Python preset")
-    presets.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）")
+    presets.add_argument(
+        "--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）"
+    )
     presets.add_argument("--workspace", default=None, help="工作目录")
     presets.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
 
     migrate = sub.add_parser("migrate", help="迁移 workspace", description="将旧 downloads 音频安全复制到 media_store")
-    migrate.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）")
+    migrate.add_argument(
+        "--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）"
+    )
     migrate.add_argument("--workspace", default=None, help="工作目录")
     migrate.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
 
     target_sync = sub.add_parser(
         "target-sync", help="运行本地目标同步", description="从 SQLite 源快照执行已发现 preset 的目标同步"
     )
-    target_sync.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）")
+    target_sync.add_argument(
+        "--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）"
+    )
     target_sync.add_argument("--workspace", default=None, help="工作目录")
     target_sync.add_argument("--preset", action="append", default=None, help="只执行指定 preset，可重复指定")
     target_sync.add_argument("--dry-run", action="store_true", help="只展示操作计划，不产生目标端副作用")
@@ -290,7 +296,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # sync / pull 首次登录后退出，让用户有机会配置歌单
     if args.command in ("sync", "pull") and just_logged_in:
-        if not cfg.get_playlist_ids():
+        from musicvault.application.bootstrap import build_playlist_use_case
+
+        if not build_playlist_use_case(cfg).list_playlists():
             console.print(
                 """
   [bold]下一步操作：[/bold]

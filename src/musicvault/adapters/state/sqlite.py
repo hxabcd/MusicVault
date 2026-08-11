@@ -234,12 +234,37 @@ class SQLiteStateRepository:
                 result.append(Playlist(row["id"], row["name"], tuple(item["track_id"] for item in track_rows)))
         return result
 
+    def get_playlist(self, playlist_id: int) -> Playlist | None:
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT id, name FROM playlists WHERE id = ?", (playlist_id,)).fetchone()
+            if row is None:
+                return None
+            track_rows = connection.execute(
+                "SELECT track_id FROM playlist_tracks WHERE playlist_id = ? ORDER BY position",
+                (playlist_id,),
+            ).fetchall()
+        return Playlist(row["id"], row["name"], tuple(item["track_id"] for item in track_rows))
+
     def add_managed_song(self, track_id: int, *, connection: sqlite3.Connection | None = None) -> None:
         if connection is None:
             with self.transaction() as owned:
                 owned.execute("INSERT OR IGNORE INTO managed_songs(track_id) VALUES (?)", (track_id,))
         else:
             connection.execute("INSERT OR IGNORE INTO managed_songs(track_id) VALUES (?)", (track_id,))
+
+    def has_managed_song(self, track_id: int) -> bool:
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT 1 FROM managed_songs WHERE track_id = ?", (track_id,)).fetchone()
+        return row is not None
+
+    def list_managed_songs(self) -> list[int]:
+        with self.database.connect() as connection:
+            rows = connection.execute("SELECT track_id FROM managed_songs ORDER BY track_id").fetchall()
+        return [int(row["track_id"]) for row in rows]
+
+    def remove_managed_song(self, track_id: int) -> None:
+        with self.transaction() as connection:
+            connection.execute("DELETE FROM managed_songs WHERE track_id = ?", (track_id,))
 
     def remove_track(self, track_id: int, *, connection: sqlite3.Connection | None = None) -> None:
         """删除曲目及其级联关系（playlist_tracks / managed_songs / media_assets）。"""
