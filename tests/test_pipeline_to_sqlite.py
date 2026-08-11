@@ -9,7 +9,7 @@ from musicvault.application.bootstrap import build_runtime
 from musicvault.application.source_state import SourceStateRecorder, build_audio_asset_from_file
 from musicvault.application.sync_engine import SyncEngine
 from musicvault.core.config import Config
-from musicvault.core.models import DownloadedTrack, Track
+from musicvault.domain.models import DownloadedTrack, Track
 from musicvault.services.process_service import ProcessService
 from musicvault.services.sync_service import SyncService
 

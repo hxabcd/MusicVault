@@ -13,7 +13,7 @@ warnings.filterwarnings("ignore", category=SyntaxWarning, module=r"MusicLibrary"
 
 from MusicLibrary.neteaseCloudMusicApi import NeteaseCloudMusicApi, NcmProcessEnv  # noqa: E402
 
-from musicvault.core.models import Track  # noqa: E402
+from musicvault.domain.models import Track  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

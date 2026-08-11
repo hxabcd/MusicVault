@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
 
-from musicvault.core.models import Track
+from musicvault.domain.models import Track
 from musicvault.domain.models import MediaAsset, Playlist, SourceSnapshot, TargetDescriptor
 from musicvault.domain.operations import Operation, OperationResult
 from musicvault.ports.media import MediaRequest, MediaResolver

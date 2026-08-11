@@ -4,7 +4,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from musicvault.core.models import Track
+from musicvault.domain.models import Track
 from musicvault.shared.output import warn as output_warn
 
 _LOSSY_SUFFIX_MAP = {"mp3": ".mp3", "aac": ".m4a", "ogg": ".ogg", "opus": ".opus"}

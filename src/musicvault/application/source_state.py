@@ -4,7 +4,7 @@ import time
 from collections.abc import Iterable
 from pathlib import Path
 
-from musicvault.core.models import Track
+from musicvault.domain.models import Track
 from musicvault.domain.models import MediaAsset, Playlist
 from musicvault.ports.state import StateRepository
 from musicvault.shared.utils import sha256_file

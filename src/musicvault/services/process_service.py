@@ -16,7 +16,7 @@ from musicvault.adapters.processors.organizer import Organizer
 from musicvault.adapters.providers.netease_client import NeteaseClient
 from musicvault.application.source_state import SourceStateRecorder, build_audio_asset_from_file
 from musicvault.core.config import Config
-from musicvault.core.models import DownloadedTrack, Track
+from musicvault.domain.models import DownloadedTrack, Track
 from musicvault.core.preset import Preset, audio_spec_key, build_audio_specs, compute_preset_hash
 from musicvault.domain.models import MediaAsset
 from musicvault.ports.state import StateRepository

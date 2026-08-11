@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from musicvault.adapters.state.sqlite import SCHEMA_VERSION, SQLiteState, SQLiteStateRepository
-from musicvault.core.models import Track
+from musicvault.domain.models import Track
 from musicvault.domain.models import MediaAsset, Playlist
 
 

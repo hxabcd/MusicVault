@@ -30,7 +30,7 @@ from mutagen.id3 import (
 )
 from mutagen.mp3 import MP3
 
-from musicvault.core.models import Track
+from musicvault.domain.models import Track
 
 
 class MetadataWriter:

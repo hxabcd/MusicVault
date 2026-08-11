@@ -78,7 +78,7 @@ def test_rebuild_index_writes_sqlite_state(tmp_path: Path) -> None:
 
 
 def test_rebuild_index_does_not_overwrite_known_track_metadata(tmp_path: Path) -> None:
-    from musicvault.core.models import Track
+    from musicvault.domain.models import Track
 
     cfg = _make_cfg(tmp_path)
     _setup_downloads(cfg)
@@ -98,7 +98,7 @@ def test_rebuild_index_does_not_overwrite_known_track_metadata(tmp_path: Path) -
 
 
 def test_rebuild_index_skips_playlists_without_members(tmp_path: Path) -> None:
-    from musicvault.core.models import Track
+    from musicvault.domain.models import Track
     from musicvault.domain.models import Playlist
 
     cfg = _make_cfg(tmp_path)

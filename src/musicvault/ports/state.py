@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import AbstractContextManager
 from typing import Any, Protocol
 
-from musicvault.core.models import Track
+from musicvault.domain.models import Track
 from musicvault.domain.models import MediaAsset, Playlist, SourceSnapshot
 
 

@@ -9,7 +9,7 @@ from musicvault.adapters.processors.downloader import Downloader
 from musicvault.adapters.providers.netease_client import NeteaseClient
 from musicvault.application.source_state import SourceStateRecorder
 from musicvault.core.config import Config
-from musicvault.core.models import DownloadedTrack, Track
+from musicvault.domain.models import DownloadedTrack, Track
 from musicvault.core.preset import Preset, audio_spec_key
 from musicvault.domain.models import Playlist
 from musicvault.ports.state import StateRepository

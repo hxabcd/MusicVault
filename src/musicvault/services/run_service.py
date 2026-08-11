@@ -12,7 +12,7 @@ from musicvault.adapters.processors.organizer import Organizer
 from musicvault.adapters.providers.netease_client import NeteaseClient
 from musicvault.application.source_state import SourceStateRecorder, build_audio_asset_from_file
 from musicvault.core.config import Config
-from musicvault.core.models import Track
+from musicvault.domain.models import Track
 from musicvault.core.preset import audio_spec_key, compute_preset_hash
 from musicvault.domain.models import Playlist
 from musicvault.ports.state import StateRepository
@@ -231,7 +231,7 @@ class RunService:
 
         返回 (linked_tracks, playlist_count)。dry-run 模式下只统计将创建的链接，不落盘。
         """
-        from musicvault.core.models import Track
+        from musicvault.domain.models import Track
 
         if not self.dry_run:
             self.cfg.ensure_dirs()

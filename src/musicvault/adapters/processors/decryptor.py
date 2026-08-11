@@ -4,7 +4,7 @@ from pathlib import Path
 
 from ncmdump import NeteaseCloudMusicFile
 
-from musicvault.core.models import DownloadedTrack
+from musicvault.domain.models import DownloadedTrack
 
 
 class Decryptor:

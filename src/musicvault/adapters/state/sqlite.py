@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from musicvault.core.models import Track
+from musicvault.domain.models import Track
 from musicvault.domain.models import MediaAsset, Playlist, SourceSnapshot
 
 SCHEMA_VERSION = 1

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from musicvault.core.models import Track
+    from musicvault.domain.models import Track
 
 INVALID_FILENAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1F]')
 _FILENAME_TEMPLATE_RE = re.compile(r"\{(\w+)\}")

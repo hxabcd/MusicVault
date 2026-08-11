@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
 from musicvault.application.source_state import SourceStateRecorder
 from musicvault.core.config import Config
-from musicvault.core.models import DownloadedTrack, Track
+from musicvault.domain.models import DownloadedTrack, Track
 from musicvault.domain.models import Playlist
 from musicvault.services.process_service import ProcessService
 from musicvault.services.sync_service import SyncService

@@ -6,7 +6,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
-from musicvault.core.models import DownloadedTrack, Track
+from musicvault.domain.models import DownloadedTrack, Track
 from musicvault.shared.utils import format_track_name
 
 _DOWNLOAD_TIMEOUT = 30

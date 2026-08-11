@@ -4,7 +4,7 @@ from pathlib import Path
 
 from musicvault.adapters.targets.filesystem import FilesystemTarget
 from musicvault.application.sync_engine import SyncEngine
-from musicvault.core.models import Track
+from musicvault.domain.models import Track
 from musicvault.domain.models import SourceSnapshot
 from musicvault.preset_api.v1 import PresetRegistration
 

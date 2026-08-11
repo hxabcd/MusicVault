@@ -6,7 +6,7 @@ import pytest
 
 from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
 from musicvault.application.source_state import SourceStateRecorder, build_audio_asset_from_file
-from musicvault.core.models import Track
+from musicvault.domain.models import Track
 from musicvault.domain.models import Playlist
 
 

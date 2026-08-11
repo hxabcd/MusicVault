@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from musicvault.adapters.processors.organizer import Organizer
-from musicvault.core.models import Track
+from musicvault.domain.models import Track
 
 
 def _make_track(track_id: int) -> Track:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from musicvault.core.models import Track, DownloadedTrack
+from musicvault.domain.models import Track, DownloadedTrack
 from musicvault.shared.utils import format_track_name
 
 
