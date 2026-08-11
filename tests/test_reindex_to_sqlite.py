@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
 from musicvault.core.config import Config
-from musicvault.services.run_service import RunService
+from musicvault.application.pipeline_use_case import PipelineUseCase
 from musicvault.shared.utils import save_json
 
 
@@ -43,7 +43,7 @@ def test_rebuild_index_records_tracks_playlists_and_assets(tmp_path: Path) -> No
     _setup_library_links(cfg)
     repo = _repository(cfg)
 
-    service = RunService(cfg, api=MagicMock(), state=repo)
+    service = PipelineUseCase(cfg, api=MagicMock(), state=repo)
     track_count, playlist_count = service.rebuild_index()
 
     assert track_count == 2
@@ -67,7 +67,7 @@ def test_rebuild_index_writes_sqlite_state(tmp_path: Path) -> None:
     _setup_library_links(cfg)
     repo = _repository(cfg)
 
-    service = RunService(cfg, api=MagicMock(), state=repo)
+    service = PipelineUseCase(cfg, api=MagicMock(), state=repo)
     track_count, playlist_count = service.rebuild_index()
 
     assert track_count == 2
@@ -88,7 +88,7 @@ def test_rebuild_index_does_not_overwrite_known_track_metadata(tmp_path: Path) -
     # 先登记真实元数据（模拟 msv sync 写入）
     repo.upsert_track(Track(id=111, name="真实歌名", artists=["歌手"], album="真实专辑", raw={}))
 
-    RunService(cfg, api=MagicMock(), state=repo).rebuild_index()
+    PipelineUseCase(cfg, api=MagicMock(), state=repo).rebuild_index()
 
     snapshot = repo.create_snapshot()
     track = snapshot.track(111)
@@ -110,7 +110,7 @@ def test_rebuild_index_skips_playlists_without_members(tmp_path: Path) -> None:
     repo.upsert_track(Track(id=333, name="曲目", artists=[], album="专辑", raw={}))
     repo.upsert_playlist(Playlist(id=20, name="歌单B", track_ids=(333,)))
 
-    RunService(cfg, api=MagicMock(), state=repo).rebuild_index()
+    PipelineUseCase(cfg, api=MagicMock(), state=repo).rebuild_index()
 
     snapshot = repo.create_snapshot()
     playlist_b = snapshot.playlist(20)

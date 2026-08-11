@@ -291,9 +291,9 @@ def main(argv: list[str] | None = None) -> int:
             cfg.workspace = workspace
         from musicvault.adapters.providers.netease_client import NeteaseClient
         from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
-        from musicvault.services.run_service import RunService
+        from musicvault.application.pipeline_use_case import PipelineUseCase
 
-        service = RunService(
+        service = PipelineUseCase(
             cfg=cfg,
             dry_run=getattr(args, "dry_run", False),
             api=NeteaseClient(
@@ -350,9 +350,9 @@ def main(argv: list[str] | None = None) -> int:
 
     from musicvault.adapters.providers.netease_client import NeteaseClient
     from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
-    from musicvault.services.run_service import RunService
+    from musicvault.application.pipeline_use_case import PipelineUseCase
 
-    service = RunService(
+    service = PipelineUseCase(
         cfg=cfg,
         api=NeteaseClient(
             text_cleaning_enabled=cfg.text_cleaning_enabled,

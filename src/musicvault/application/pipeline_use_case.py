@@ -9,15 +9,14 @@ from musicvault.adapters.processors.decryptor import Decryptor
 from musicvault.adapters.processors.downloader import Downloader
 from musicvault.adapters.processors.metadata_writer import MetadataWriter
 from musicvault.adapters.processors.organizer import Organizer
-from musicvault.adapters.providers.netease_client import NeteaseClient
-from musicvault.application.source_state import SourceStateRecorder, build_audio_asset_from_file
-from musicvault.core.config import Config
-from musicvault.domain.models import Track
-from musicvault.domain.preset import audio_spec_key, compute_preset_hash
-from musicvault.domain.models import Playlist
-from musicvault.ports.state import StateRepository
 from musicvault.application.process_use_case import ProcessUseCase
+from musicvault.application.source_state import SourceStateRecorder, build_audio_asset_from_file
 from musicvault.application.sync_use_case import SyncUseCase
+from musicvault.core.config import Config
+from musicvault.domain.models import Playlist, Track
+from musicvault.domain.preset import audio_spec_key, compute_preset_hash
+from musicvault.ports.source import SourceClient
+from musicvault.ports.state import StateRepository
 from musicvault.shared.tui_progress import console, ok
 from musicvault.shared.utils import (
     create_link,
@@ -30,11 +29,13 @@ from musicvault.shared.utils import (
 logger = logging.getLogger(__name__)
 
 
-class RunService:
+class PipelineUseCase:
+    """流水线用例：sync/pull/process/reindex 的编排与源侧状态登记"""
+
     def __init__(
         self,
         cfg: Config,
-        api: NeteaseClient,
+        api: SourceClient,
         state: StateRepository,
         dry_run: bool = False,
     ) -> None:
