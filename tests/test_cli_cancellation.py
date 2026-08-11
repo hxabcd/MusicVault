@@ -85,3 +85,18 @@ def test_interactive_login_keyboard_interrupt_cancels_with_exit_code_2(tmp_path:
     code = main(["sync", "--config", str(tmp_path / "config.json")])
 
     assert code == 2
+
+
+def test_interactive_login_menu_keyboard_interrupt_returns_2(tmp_path: Path, monkeypatch) -> None:
+    # 登录菜单（首个 input）处 Ctrl+C → 优雅取消登录并返回退出码 2，不抛裸异常
+    monkeypatch.setattr("musicvault.cli.main.signal", _fake_signal_module())
+
+    def _interrupt(_prompt: str) -> str:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("builtins.input", _interrupt)
+    monkeypatch.setattr("musicvault.application.bootstrap.build_source_client", lambda cfg: object())
+
+    code = main(["sync", "--config", str(tmp_path / "config.json")])
+
+    assert code == 2

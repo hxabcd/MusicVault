@@ -388,15 +388,19 @@ def _interactive_login(api: object) -> str | None:
     max_attempts = 3
 
     for attempt in range(max_attempts):
-        with transient_section():
+        try:
+            with transient_section():
+                console.print()
+                console.print("  选择登录方式：")
+                console.print("    [1] 二维码登录（推荐）")
+                console.print("    [2] 密码登录")
+                console.print("    [3] 验证码登录")
+                console.print("    [q] 退出")
+                console.print()
+                choice = input("  请输入选项 [1/2/3/q]：").strip()
+        except KeyboardInterrupt:
             console.print()
-            console.print("  选择登录方式：")
-            console.print("    [1] 二维码登录（推荐）")
-            console.print("    [2] 密码登录")
-            console.print("    [3] 验证码登录")
-            console.print("    [q] 退出")
-            console.print()
-            choice = input("  请输入选项 [1/2/3/q]：").strip()
+            return None
 
         if choice.lower() == "q":
             return None

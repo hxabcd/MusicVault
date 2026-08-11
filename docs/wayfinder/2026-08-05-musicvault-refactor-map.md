@@ -29,9 +29,9 @@
 - 内置 `playlist_links` 已通过最小 `prepare → sync_item → finalize` 生命周期运行。Manifest 尚未实现，因此当前采用安全的 `append` 策略，不执行删除。
 - `SourceSnapshot` 在一次 `target-sync` 中由同一 SQLite 连接读取并由所有启用 preset 共享；`MediaResolver` 当前只解析已有资产，按需生成延期。
 - 可验证 CLI 流程为：`msv migrate` → `msv presets` → `msv target-sync [--preset NAME] [--dry-run]`。
-- 新增契约测试覆盖 SQLite、迁移、Preset API、TargetSynchronizer 生命周期和 dry-run；当前完整测试集为 204 项通过。
+- 新增契约测试覆盖 SQLite、迁移、Preset API、TargetSynchronizer 生命周期和 dry-run；当前完整测试集为 242 项通过。
 
-后续提交继续打通旧流水线与新状态：`sync`/`process` 通过新增的 `SourceStateRecorder`（`application/source_state.py`）在单事务内把曲目、歌单关系、单独管理单曲和 canonical 媒体资产写入 SQLite，使 `msv sync` → `msv target-sync` 形成真实闭环；dry-run 不写库，陈旧单曲 id 不触发外键失败。
+后续提交继续打通旧流水线与新状态：`sync`/`process` 通过新增的 `SourceStateRecorder`（`application/source_state.py`）在单事务内把曲目、歌单关系、单独管理单曲和 canonical 媒体资产写入 SQLite，使 `msv sync` → `msv target-sync` 形成真实闭环；dry-run 不写库，陈旧单曲 id 不触发外键失败。2026-08-12 收尾：songs.json/playlists.json 全部退役（歌单/单曲管理迁往 `PlaylistUseCase` + SQLite），`cli/` 不再自行组装具体依赖（migrate/target-sync/登录/管理命令全部经 bootstrap），架构约束检查测试（tests/test_architecture.py）已固化依赖方向。
 
 ## Decisions so far
 
