@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Iterable, Mapping
 
+from musicvault.adapters.filesystem.workspace import WorkspacePaths
 from musicvault.adapters.processors.decryptor import Decryptor
 from musicvault.adapters.processors.lyrics import (
     KaraokeLyrics,
@@ -51,6 +52,8 @@ class ProcessUseCase:
         self.metadata = metadata
         self.workers = max(1, workers)
         self.dry_run = dry_run
+        # workspace 各生命周期区域路径的唯一来源（cache/media_store/library/logs）
+        self.paths = WorkspacePaths(cfg.workspace_path)
         # 把本次处理产出的媒体资产登记到 SQLite，供 target-sync 消费
         self.recorder = SourceStateRecorder(state)
 
@@ -211,7 +214,7 @@ class ProcessUseCase:
                 source_file=str(raw_file),
                 is_ncm=raw_file.suffix.lower() == ".ncm",
             )
-            decoded = self.decryptor.decrypt_if_needed(downloaded, self.cfg.workspace_path / "decoded")
+            decoded = self.decryptor.decrypt_if_needed(downloaded, self.paths.cache / "decoded")
             raw_result = self.organizer.route_audio(
                 decoded, track_info, self.cfg.downloads_dir, audio_specs, force=force
             )
@@ -443,9 +446,9 @@ class ProcessUseCase:
 
     def _iter_downloads(self) -> Iterable[Path]:
         allowed = {".ncm", ".flac", ".mp3", ".m4a", ".aac", ".wav"}
-        if not self.cfg.downloads_cache_dir.exists():
+        if not self.paths.cache.exists():
             return
-        for file_path in self.cfg.downloads_cache_dir.iterdir():
+        for file_path in self.paths.cache.iterdir():
             if file_path.is_file() and file_path.suffix.lower() in allowed:
                 yield file_path
 

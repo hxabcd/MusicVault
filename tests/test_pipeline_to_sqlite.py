@@ -36,7 +36,7 @@ def test_sync_records_tracks_and_playlists_to_sqlite(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     cfg.state_dir.mkdir(parents=True)
     cfg.downloads_dir.mkdir(parents=True)
-    cfg.downloads_cache_dir.mkdir(parents=True)
+    cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
 
     api = MagicMock()
@@ -46,7 +46,7 @@ def test_sync_records_tracks_and_playlists_to_sqlite(tmp_path: Path) -> None:
     downloader = MagicMock()
     downloader.download_track.return_value = DownloadedTrack(
         track=_make_track(111),
-        source_file=str(cfg.downloads_cache_dir / "111.mp3"),
+        source_file=str(cfg.cache_dir / "111.mp3"),
         is_ncm=False,
         playlist_ids=[10],
     )
@@ -65,7 +65,7 @@ def test_sync_records_managed_songs_to_sqlite(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     cfg.state_dir.mkdir(parents=True)
     cfg.downloads_dir.mkdir(parents=True)
-    cfg.downloads_cache_dir.mkdir(parents=True)
+    cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
     PlaylistUseCase(cfg, repo).add_song(999)
 
@@ -84,7 +84,7 @@ def test_dry_run_sync_does_not_write_sqlite(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     cfg.state_dir.mkdir(parents=True)
     cfg.downloads_dir.mkdir(parents=True)
-    cfg.downloads_cache_dir.mkdir(parents=True)
+    cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
 
     api = MagicMock()
@@ -101,7 +101,7 @@ def test_process_records_media_assets_to_sqlite(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     cfg.state_dir.mkdir(parents=True)
     cfg.downloads_dir.mkdir(parents=True)
-    cfg.downloads_cache_dir.mkdir(parents=True)
+    cfg.cache_dir.mkdir(parents=True)
     cfg.presets = []  # 简化：只把 canonical 文件本身登记为媒体资产
     canonical = cfg.downloads_dir / "333.flac"
     canonical.write_bytes(b"fake flac")
@@ -130,7 +130,7 @@ def test_sync_with_stale_song_id_does_not_crash(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     cfg.state_dir.mkdir(parents=True)
     cfg.downloads_dir.mkdir(parents=True)
-    cfg.downloads_cache_dir.mkdir(parents=True)
+    cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
     PlaylistUseCase(cfg, repo).add_song(999)
     PlaylistUseCase(cfg, repo).add_song(1000)  # 该 id 已被远端删除
@@ -153,7 +153,7 @@ def test_synced_state_feeds_target_sync_closed_loop(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     cfg.state_dir.mkdir(parents=True)
     cfg.downloads_dir.mkdir(parents=True)
-    cfg.downloads_cache_dir.mkdir(parents=True)
+    cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
 
     # 1) sync 写入曲目与歌单
@@ -194,7 +194,7 @@ def test_sync_no_longer_writes_synced_tracks_json(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     cfg.state_dir.mkdir(parents=True)
     cfg.downloads_dir.mkdir(parents=True)
-    cfg.downloads_cache_dir.mkdir(parents=True)
+    cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
 
     api = MagicMock()
@@ -204,7 +204,7 @@ def test_sync_no_longer_writes_synced_tracks_json(tmp_path: Path) -> None:
     downloader = MagicMock()
     downloader.download_track.return_value = DownloadedTrack(
         track=_make_track(111),
-        source_file=str(cfg.downloads_cache_dir / "111.mp3"),
+        source_file=str(cfg.cache_dir / "111.mp3"),
         is_ncm=False,
         playlist_ids=[10],
     )
@@ -219,7 +219,7 @@ def test_second_sync_reads_synced_state_from_sqlite(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     cfg.state_dir.mkdir(parents=True)
     cfg.downloads_dir.mkdir(parents=True)
-    cfg.downloads_cache_dir.mkdir(parents=True)
+    cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
 
     def _api() -> MagicMock:
@@ -259,7 +259,7 @@ def test_process_no_longer_writes_processed_json(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     cfg.state_dir.mkdir(parents=True)
     cfg.downloads_dir.mkdir(parents=True)
-    cfg.downloads_cache_dir.mkdir(parents=True)
+    cfg.cache_dir.mkdir(parents=True)
     cfg.presets = []  # 简化：只把 canonical 文件本身登记为媒体资产
     canonical = cfg.downloads_dir / "333.flac"
     canonical.write_bytes(b"fake flac")
@@ -281,7 +281,7 @@ def test_second_process_skips_when_specs_covered(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     cfg.state_dir.mkdir(parents=True)
     cfg.downloads_dir.mkdir(parents=True)
-    cfg.downloads_cache_dir.mkdir(parents=True)
+    cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
     # 预置：track 333 的 media_assets 覆盖默认 presets 的全部 spec（FLAC + MP3-192k）
     flac = cfg.downloads_dir / "333.flac"
@@ -314,10 +314,10 @@ def test_guess_track_id_reads_pending_files(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     cfg.state_dir.mkdir(parents=True)
     cfg.downloads_dir.mkdir(parents=True)
-    cfg.downloads_cache_dir.mkdir(parents=True)
+    cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
     repo.upsert_track(_make_track(333))
-    raw = cfg.downloads_cache_dir / "Artist - Song.mp3"
+    raw = cfg.cache_dir / "Artist - Song.mp3"
     raw.parent.mkdir(parents=True, exist_ok=True)
     rel = workspace_rel_path(raw, cfg.workspace_path)
     repo.add_pending_file(rel, 333)

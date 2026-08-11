@@ -53,7 +53,7 @@ class TestSyncDryRun:
         cfg = _make_cfg(tmp_path)
         cfg.state_dir.mkdir(parents=True)
         cfg.downloads_dir.mkdir(parents=True)
-        cfg.downloads_cache_dir.mkdir(parents=True)
+        cfg.cache_dir.mkdir(parents=True)
         # 已有 1 首已同步，playlists.json 索引已存在
         _seed_synced(cfg, {111: [10]})
         save_json(cfg.state_dir / "playlists.json", {"10": {"name": "歌单A", "track_count": 2}})
@@ -85,7 +85,7 @@ class TestSyncDryRun:
         cfg = _make_cfg(tmp_path)
         cfg.state_dir.mkdir(parents=True)
         cfg.downloads_dir.mkdir(parents=True)
-        cfg.downloads_cache_dir.mkdir(parents=True)
+        cfg.cache_dir.mkdir(parents=True)
         # 本地有 111（远端已删除）和 222（远端仍在）
         _seed_synced(cfg, {111: [10], 222: [10]})
         canonical = cfg.downloads_dir / "111.flac"
@@ -109,7 +109,7 @@ class TestSyncDryRun:
         cfg = _make_cfg(tmp_path)
         cfg.state_dir.mkdir(parents=True)
         cfg.downloads_dir.mkdir(parents=True)
-        cfg.downloads_cache_dir.mkdir(parents=True)
+        cfg.cache_dir.mkdir(parents=True)
         repo = _repository(cfg)
 
         api = MagicMock()
@@ -120,7 +120,7 @@ class TestSyncDryRun:
         downloader = MagicMock()
         downloader.download_track.return_value = DownloadedTrack(
             track=_make_track(111),
-            source_file=str(cfg.downloads_cache_dir / "111.mp3"),
+            source_file=str(cfg.cache_dir / "111.mp3"),
             is_ncm=False,
             playlist_ids=[10],
         )
@@ -130,6 +130,9 @@ class TestSyncDryRun:
 
         assert len(downloaded) == 1
         downloader.download_track.assert_called_once()
+        # 下载缓存落在新 cache/ 目录（不再写 downloads/cache/）
+        call_args = downloader.download_track.call_args
+        assert call_args.args[2] == cfg.cache_dir
         assert 111 in svc.load_synced_state()
         assert not (cfg.state_dir / "synced_tracks.json").exists()
 
@@ -139,7 +142,7 @@ class TestProcessDryRun:
         cfg = _make_cfg(tmp_path)
         cfg.state_dir.mkdir(parents=True)
         cfg.downloads_dir.mkdir(parents=True)
-        cfg.downloads_cache_dir.mkdir(parents=True)
+        cfg.cache_dir.mkdir(parents=True)
         # 本地 canonical 文件，不在 processed 索引中 → 待处理
         (cfg.downloads_dir / "333.flac").write_text("fake flac")
         save_json(cfg.state_dir / "playlists.json", {"10": {"name": "歌单A", "track_count": 1}})
@@ -168,7 +171,7 @@ class TestProcessDryRun:
         cfg = _make_cfg(tmp_path)
         cfg.state_dir.mkdir(parents=True)
         cfg.downloads_dir.mkdir(parents=True)
-        cfg.downloads_cache_dir.mkdir(parents=True)
+        cfg.cache_dir.mkdir(parents=True)
         canonical = cfg.downloads_dir / "333.flac"
         canonical.write_text("fake flac")
 

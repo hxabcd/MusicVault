@@ -5,6 +5,7 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from musicvault.adapters.filesystem.workspace import WorkspacePaths
 from musicvault.adapters.processors.downloader import Downloader
 from musicvault.application.source_state import SourceStateRecorder
 from musicvault.core.config import Config
@@ -42,6 +43,8 @@ class SyncUseCase:
         self.downloader = downloader
         self.workers = max(1, workers)
         self.dry_run = dry_run
+        # workspace 各生命周期区域路径的唯一来源（cache/media_store/library/logs）
+        self.paths = WorkspacePaths(cfg.workspace_path)
         # 把本次 sync 的源侧状态写入 SQLite，供 target-sync 消费
         self.recorder = SourceStateRecorder(state)
         # dry-run 计划（仅 dry_run 模式下填充）：with_url / no_url / pruned / moves / renames / stale_index
@@ -545,7 +548,7 @@ class SyncUseCase:
 
         with ThreadPoolExecutor(max_workers=workers) as pool, BatchProgress(total=total, phase="下载中") as bp:
             future_map = {
-                pool.submit(self.downloader.download_track, track, url, self.cfg.downloads_cache_dir): (idx, track)
+                pool.submit(self.downloader.download_track, track, url, self.paths.cache): (idx, track)
                 for idx, (track, url) in enumerate(tasks, start=1)
             }
             try:
