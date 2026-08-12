@@ -2,8 +2,9 @@
 
 覆盖 AGENTS.md 的依赖规则：
 - application 不直接 import sqlite3 / rich（具体依赖由 composition root 组装）
-- adapters 不依赖 application / preset_api / ports（依赖方向 adapters → domain）
-- preset_api 顶层不重导出 v1 符号（脚本只能走版本化公开 API）
+- adapters 不依赖 application / ports（依赖方向 adapters → domain）
+- preset_api 是版本化公开 API：顶层不重导出 v1 符号，脚本只能走版本化命名空间；
+  adapters 允许消费其枚举（Quality/AudioFormat 等，见 Task 8/12）
 """
 
 from __future__ import annotations
@@ -45,8 +46,8 @@ def test_application_does_not_import_sqlite_or_rich() -> None:
     assert not offenders, f"application 违规 import：{offenders}"
 
 
-def test_adapters_do_not_import_application_preset_api_or_ports() -> None:
-    forbidden_prefixes = ("musicvault.application", "musicvault.preset_api", "musicvault.ports")
+def test_adapters_do_not_import_application_or_ports() -> None:
+    forbidden_prefixes = ("musicvault.application", "musicvault.ports")
     offenders: list[tuple[Path, str]] = []
     for path in _py_files(ADAPTERS):
         for module in _top_level_imports(path):

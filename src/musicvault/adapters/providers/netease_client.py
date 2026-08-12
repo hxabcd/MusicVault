@@ -14,6 +14,7 @@ warnings.filterwarnings("ignore", category=SyntaxWarning, module=r"MusicLibrary"
 from MusicLibrary.neteaseCloudMusicApi import NeteaseCloudMusicApi, NcmProcessEnv  # noqa: E402
 
 from musicvault.domain.models import Track  # noqa: E402
+from musicvault.preset_api.v1 import Quality  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ class NeteaseClient:
     def __init__(
         self,
         text_cleaning_enabled: bool = True,
-        download_quality: str = "hires",
+        download_quality: Quality = Quality.HIRES,
         api_download_url_chunk_size: int = 200,
         api_track_detail_chunk_size: int = 500,
         alias_split_separators: str = "/、;；",
@@ -263,7 +264,7 @@ class NeteaseClient:
 
         for chunk in self._chunk_ids(track_ids, chunk_size=self.api_download_url_chunk_size):
             ids_csv = ",".join(str(tid) for tid in chunk)
-            resp = _retry_api(self._api().song_url_v1, id=ids_csv, level=self.download_quality)
+            resp = _retry_api(self._api().song_url_v1, id=ids_csv, level=self.download_quality.value)
             body = self._check(resp)
             data = body.get("data") or []
             if isinstance(data, dict):

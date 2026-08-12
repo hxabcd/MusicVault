@@ -11,6 +11,7 @@ from musicvault.adapters.providers.netease_client import (
     NeteaseClient,
     _parse_cookie_str,
 )
+from musicvault.preset_api.v1 import Quality
 
 
 class FakeResponse:
@@ -35,6 +36,7 @@ class FakeNeteaseCloudMusicApi:
         self.env = env
         self.cookie: dict | None = None
         self.calls: list[tuple[str, dict]] = []
+        self.last_level: str | None = None
         type(self).instances.append(self)
 
     def set_cookie(self, cookie: dict) -> None:
@@ -75,6 +77,7 @@ class FakeNeteaseCloudMusicApi:
         return self._respond("playlist_track_all", **kwargs)
 
     def song_url_v1(self, **kwargs):
+        self.last_level = kwargs.get("level")
         return self._respond("song_url_v1", **kwargs)
 
     def song_detail(self, **kwargs):
@@ -87,6 +90,16 @@ class FakeNeteaseCloudMusicApi:
         return self._respond("lyric_new", **kwargs)
 
 
+class FakeSdkRecorder:
+    """fixture 返回的断言入口：读取最近一次 SDK 实例的调用记录。"""
+
+    @property
+    def last_level(self) -> str | None:
+        if FakeNeteaseCloudMusicApi.instances:
+            return FakeNeteaseCloudMusicApi.instances[-1].last_level
+        return None
+
+
 @pytest.fixture(autouse=True)
 def fake_sdk(monkeypatch):
     FakeNeteaseCloudMusicApi.responses = {}
@@ -95,7 +108,7 @@ def fake_sdk(monkeypatch):
         "musicvault.adapters.providers.netease_client.NeteaseCloudMusicApi",
         FakeNeteaseCloudMusicApi,
     )
-    yield
+    yield FakeSdkRecorder()
 
 
 def test_parse_cookie_str():
@@ -218,6 +231,13 @@ def test_get_tracks_download_urls_chunks_and_joins():
     calls = FakeNeteaseCloudMusicApi.instances[0].calls
     assert calls[0][1] == {"id": "1,2", "level": "hires"}
     assert calls[1][1] == {"id": "3", "level": "hires"}
+
+
+def test_download_quality_enum_value_passed_to_sdk(fake_sdk):
+    client = NeteaseClient(download_quality=Quality.LOSSLESS)
+    # fake_sdk 记录 song_url_v1 调用的 level 参数
+    client.get_tracks_download_urls([1])
+    assert fake_sdk.last_level == "lossless"
 
 
 def test_get_tracks_detail_comma_join_and_track():
