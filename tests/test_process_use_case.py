@@ -234,6 +234,86 @@ def test_run_process_without_downloads_returns_empty(tmp_path: Path) -> None:
     organizer.route_audio.assert_not_called()
 
 
+def test_run_process_reprocesses_canonical_for_new_spec(tmp_path: Path) -> None:
+    """preset 声明变更（新增规格）传播到存量 canonical：run_process 扫描 media_store 并补产新规格。"""
+    from musicvault.application.source_state import build_audio_asset_from_file
+
+    cfg = _make_cfg(tmp_path)
+    cfg.media_store_dir.mkdir(parents=True)
+    repo = _repository(cfg)
+    repo.save_lyrics(333, lyrics_to_json((LyricLine(1000, 0, "hello"),)), 0.0)
+
+    canonical = cfg.media_store_dir / "333" / "333.flac"
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_bytes(b"fake flac")
+
+    # 模拟此前用 FLAC-only preset 处理过：spec 覆盖不足（缺 MP3-192k），非 force 也应重处理
+    repo.upsert_track(_make_track(333))
+    repo.upsert_media_asset(build_audio_asset_from_file(333, "FLAC", canonical))
+    repo.record_processed(333, "preset-script", 0.0)
+
+    class _Mp3Preset(BasePreset):
+        format = AudioFormat.MP3
+        bitrate = "192k"
+
+    def _route(src, track, output_dir, audio_specs, force=False):
+        out = output_dir / "333_192k.mp3"
+        out.write_bytes(b"fake mp3")
+        return {(AudioFormat.MP3, "192k"): out}
+
+    organizer = MagicMock()
+    organizer.route_audio.side_effect = _route
+    api = MagicMock()
+    api.get_track_detail.return_value = None  # 走 fallback Track
+    svc = _process_svc(cfg, repo, organizer=organizer, api=api, presets={"mp3": _Mp3Preset()})
+    result = svc.run_process(downloaded=[], force=False)
+
+    assert result.processed == 1
+    assert (cfg.media_store_dir / "333" / "333_192k.mp3").exists()
+    # 新规格产物登记进 media_assets，此后再次运行跳过
+    assert repo.is_processed(333, {"MP3-192k"})
+    again = svc.run_process(downloaded=[], force=False)
+    assert again.processed == 0
+
+
+def test_run_process_force_reprocesses_covered_canonical(tmp_path: Path) -> None:
+    """force 重处理语义：spec 已覆盖的存量 canonical 非 force 跳过，force 时无条件重处理。"""
+    from musicvault.application.source_state import build_audio_asset_from_file
+
+    cfg = _make_cfg(tmp_path)
+    cfg.media_store_dir.mkdir(parents=True)
+    repo = _repository(cfg)
+    repo.save_lyrics(333, lyrics_to_json((LyricLine(1000, 0, "hello"),)), 0.0)
+
+    canonical = cfg.media_store_dir / "333" / "333.flac"
+    mp3 = cfg.media_store_dir / "333" / "333_192k.mp3"
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_bytes(b"fake flac")
+    mp3.write_bytes(b"fake mp3")
+    repo.upsert_track(_make_track(333))
+    repo.upsert_media_asset(build_audio_asset_from_file(333, "FLAC", canonical))
+    repo.upsert_media_asset(build_audio_asset_from_file(333, "MP3-192k", mp3))
+    repo.record_processed(333, "preset-script", 0.0)
+
+    class _Mp3Preset(BasePreset):
+        format = AudioFormat.MP3
+        bitrate = "192k"
+
+    organizer = MagicMock()
+    api = MagicMock()
+    api.get_track_detail.return_value = None
+    svc = _process_svc(cfg, repo, organizer=organizer, api=api, presets={"mp3": _Mp3Preset()})
+
+    result = svc.run_process(downloaded=[], force=False)
+    assert result.processed == 0
+    assert result.skipped == 1
+    organizer.route_audio.assert_not_called()
+
+    result = svc.run_process(downloaded=[], force=True)
+    assert result.processed == 1
+    organizer.route_audio.assert_called()
+
+
 def test_preset_dict_key_must_match_preset_name(tmp_path: Path) -> None:
     """presets 注入键必须与 preset.name 一致：LRC 文件名与分发按注册名对应，键名漂移会静默失配。"""
     from musicvault.preset_api.v1 import PresetLoadError

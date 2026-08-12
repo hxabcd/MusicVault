@@ -97,10 +97,45 @@ class ProcessUseCase:
         *,
         progress: ProgressReporter | None = None,
     ) -> ProcessResult:
-        if not downloaded:
-            return ProcessResult()
         tasks: list[tuple[Path, Track]] = [(Path(item.source_file), item.track) for item in downloaded]
-        return self._run_process_batch(tasks, "处理中", force, progress)
+        # 补充扫描 media_store 中已存在的 canonical 曲目：preset 声明变更（新增规格）后，
+        # 存量曲目按新 required_specs 重新处理；force 时无条件全部加入。
+        required_specs = {audio_spec_key(p.format, p.bitrate) for p in self.presets.values()}
+        seen_ids = {item.track.id for item in downloaded}
+        scan_skipped = 0
+        for canon_path, track_id in self._scan_canonical_files():
+            if track_id in seen_ids:
+                continue
+            if not force and self.recorder.state.is_processed(track_id, required_specs):
+                scan_skipped += 1
+                continue
+            track_info = self._safe_track(track_id, canon_path.stem)
+            tasks.append((canon_path, track_info))
+            seen_ids.add(track_id)
+        result = self._run_process_batch(tasks, "处理中", force, progress)
+        return ProcessResult(
+            processed=result.processed,
+            skipped=result.skipped + scan_skipped,
+            failed=result.failed,
+        )
+
+    def _scan_canonical_files(self) -> list[tuple[Path, int]]:
+        """扫描 media_store/<tid>/ 下的 canonical 音频文件（扁平布局，每曲目取一个代表文件）。"""
+        if not self.paths.media_store.is_dir():
+            return []
+        audio_exts = {".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".wav"}
+        result: list[tuple[Path, int]] = []
+        for track_dir in sorted(self.paths.media_store.iterdir()):
+            if not track_dir.is_dir() or not track_dir.name.isdigit():
+                continue
+            for f in sorted(track_dir.iterdir()):
+                if not f.is_file() or f.suffix.lower() not in audio_exts:
+                    continue
+                if f.stem.split("_", 1)[0] != track_dir.name:
+                    continue
+                result.append((f, int(track_dir.name)))
+                break
+        return result
 
     # ------------------------------------------------------------------
     # 处理管线
