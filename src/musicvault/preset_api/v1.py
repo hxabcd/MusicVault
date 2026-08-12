@@ -6,9 +6,11 @@ import re
 import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
+from enum import Enum
 from pathlib import Path
 from typing import Any, Protocol
 
+from musicvault.domain.lyrics import LyricLine
 from musicvault.domain.models import Track
 from musicvault.domain.models import MediaAsset, Playlist, SourceSnapshot, TargetDescriptor
 from musicvault.domain.operations import Operation, OperationResult
@@ -21,12 +23,19 @@ API_VERSION = "v1"
 _NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
 __all__ = [
     "API_VERSION",
+    "AudioFormat",
+    "BasePreset",
+    "LyricEncoding",
+    "MetadataSpec",
     "Operation",
     "PresetContext",
     "PresetLoadError",
     "PresetRegistration",
     "PresetRegistry",
+    "Quality",
+    "TargetRegistration",
     "TargetSynchronizer",
+    "audio_spec_key",
 ]
 
 
@@ -221,3 +230,125 @@ class PresetRegistry:
             raise PresetLoadError(f"preset 脚本加载失败：{script}：{error}") from error
         finally:
             self._loading_source = None
+
+
+class Quality(Enum):
+    """下载音质等级（按声明顺序从低到高）。"""
+
+    STANDARD = "standard"
+    HIGHER = "higher"
+    EXHIGH = "exhigh"
+    HIRES = "hires"
+    LOSSLESS = "lossless"
+
+    @classmethod
+    def maximum(cls, items: Iterable["Quality"]) -> "Quality":
+        """取列表中的最高音质，空输入回退 HIRES。"""
+        ordered = [cls.STANDARD, cls.HIGHER, cls.EXHIGH, cls.HIRES, cls.LOSSLESS]
+        candidates = [item for item in items if isinstance(item, Quality)]
+        if not candidates:
+            return cls.HIRES
+        return max(candidates, key=ordered.index)
+
+
+class AudioFormat(Enum):
+    """音频容器格式。"""
+
+    FLAC = "flac"
+    MP3 = "mp3"
+    AAC = "aac"
+    OGG = "ogg"
+    OPUS = "opus"
+
+
+class LyricEncoding(Enum):
+    """歌词文件编码。"""
+
+    UTF_8 = "utf-8"
+    GB18030 = "gb18030"
+
+
+_FULL_FIELDS = ("year", "track_number", "disc_number", "genre", "album_artist", "composer", "lyricist")
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataSpec:
+    """元数据写入规格：封面嵌入与额外字段粒度。"""
+
+    embed_cover: bool = True
+    cover_max_size: int = 0
+    fields: tuple[str, ...] = _FULL_FIELDS
+
+    @classmethod
+    def full(cls, **kwargs) -> "MetadataSpec":
+        """全部额外字段 + 嵌入封面；构造函数可覆盖任意项。"""
+        return cls(
+            embed_cover=kwargs.pop("embed_cover", True),
+            cover_max_size=kwargs.pop("cover_max_size", 0),
+            fields=kwargs.pop("fields", _FULL_FIELDS),
+            **kwargs,
+        )
+
+    @classmethod
+    def basic(cls, **kwargs) -> "MetadataSpec":
+        """基础元数据：嵌入封面但不写额外字段；构造函数可覆盖任意项。"""
+        return cls(
+            embed_cover=kwargs.pop("embed_cover", True),
+            cover_max_size=kwargs.pop("cover_max_size", 0),
+            fields=kwargs.pop("fields", ()),
+            **kwargs,
+        )
+
+    @classmethod
+    def none(cls, **kwargs) -> "MetadataSpec":
+        """不嵌入封面、不写额外字段；构造函数可覆盖任意项。"""
+        return cls(
+            embed_cover=kwargs.pop("embed_cover", False),
+            cover_max_size=kwargs.pop("cover_max_size", 0),
+            fields=kwargs.pop("fields", ()),
+            **kwargs,
+        )
+
+
+class BasePreset:
+    """preset 声明基类：音频规格、歌词编码与元数据粒度。"""
+
+    quality: Quality = Quality.HIRES
+    format: AudioFormat | None = None
+    bitrate: str | None = None
+    lyrics_encodings: tuple[LyricEncoding, ...] = (LyricEncoding.UTF_8,)
+    metadata: MetadataSpec = MetadataSpec.basic()
+
+    def build_lyrics(self, lines: tuple[LyricLine, ...]) -> str:
+        from musicvault.preset_api.render import standard_lrc
+
+        return standard_lrc(lines)
+
+
+@dataclass(frozen=True, slots=True)
+class TargetRegistration:
+    """sync_target 分发声明：工厂按 depends_on 注入 preset 实例。"""
+
+    name: str
+    factory: Any
+    depends_on: tuple[str, ...] = ()
+    api_version: str = API_VERSION
+    enabled: bool = True
+    source: str = "<runtime>"
+    target: TargetDescriptor | None = None
+
+    def __post_init__(self) -> None:
+        if not _NAME_RE.match(self.name):
+            raise PresetLoadError(f"sync_target 名称非法：{self.name}")
+        if self.target is None:
+            object.__setattr__(self, "target", TargetDescriptor(identifier=self.name))
+
+
+def audio_spec_key(fmt: AudioFormat | None, bitrate: str | None) -> str:
+    """音频规格标识：None → ORIGINAL；枚举按 .value.upper()，bitrate 拼后缀。"""
+    if fmt is None:
+        return "ORIGINAL"
+    fmt_upper = fmt.value.upper()
+    if bitrate:
+        return f"{fmt_upper}-{bitrate}"
+    return fmt_upper
