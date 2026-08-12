@@ -6,7 +6,7 @@ from musicvault.adapters.targets.filesystem import FilesystemTarget
 from musicvault.application.sync_engine import SyncEngine
 from musicvault.domain.models import Track
 from musicvault.domain.models import SourceSnapshot
-from musicvault.preset_api.v1 import PresetRegistration
+from musicvault.preset_api.v1 import TargetRegistration
 
 
 def _snapshot() -> SourceSnapshot:
@@ -49,7 +49,7 @@ class PrepareFailureSynchronizer:
 
 def test_engine_shares_snapshot_and_isolates_item_failures(tmp_path: Path) -> None:
     target = FilesystemTarget(tmp_path)
-    registration = PresetRegistration("writer", WritingSynchronizer, source="test")
+    registration = TargetRegistration("writer", lambda presets: WritingSynchronizer(), source="test")
 
     result = SyncEngine(target=target).run(_snapshot(), [registration])
 
@@ -63,8 +63,8 @@ def test_engine_shares_snapshot_and_isolates_item_failures(tmp_path: Path) -> No
 
 def test_engine_prepare_failure_does_not_run_items_but_other_presets_continue(tmp_path: Path) -> None:
     registrations = [
-        PresetRegistration("broken", PrepareFailureSynchronizer, source="broken"),
-        PresetRegistration("writer", WritingSynchronizer, source="writer"),
+        TargetRegistration("broken", lambda presets: PrepareFailureSynchronizer(), source="broken"),
+        TargetRegistration("writer", lambda presets: WritingSynchronizer(), source="writer"),
     ]
 
     result = SyncEngine(target=FilesystemTarget(tmp_path)).run(_snapshot(), registrations)
@@ -76,7 +76,7 @@ def test_engine_prepare_failure_does_not_run_items_but_other_presets_continue(tm
 
 def test_dry_run_does_not_run_standard_or_custom_side_effects(tmp_path: Path) -> None:
     result = SyncEngine(target=FilesystemTarget(tmp_path), dry_run=True).run(
-        _snapshot(), [PresetRegistration("writer", WritingSynchronizer, source="test")]
+        _snapshot(), [TargetRegistration("writer", lambda presets: WritingSynchronizer(), source="test")]
     )
 
     assert not (tmp_path / "output.txt").exists()
@@ -121,8 +121,8 @@ class MarkerSynchronizer:
 
 def test_engine_one_preset_failure_does_not_stop_others_and_overall_is_failed(tmp_path: Path) -> None:
     registrations = [
-        PresetRegistration("broken", PrepareFailureSynchronizer, source="broken"),
-        PresetRegistration("good", SucceedingSynchronizer, source="good"),
+        TargetRegistration("broken", lambda presets: PrepareFailureSynchronizer(), source="broken"),
+        TargetRegistration("good", lambda presets: SucceedingSynchronizer(), source="good"),
     ]
 
     result = SyncEngine(target=FilesystemTarget(tmp_path)).run(_snapshot(), registrations)
@@ -137,7 +137,8 @@ def test_engine_one_preset_failure_does_not_stop_others_and_overall_is_failed(tm
 
 def test_engine_finalize_failure_keeps_successful_items_and_marks_failed(tmp_path: Path) -> None:
     result = SyncEngine(target=FilesystemTarget(tmp_path)).run(
-        _snapshot(), [PresetRegistration("finalize-broken", FinalizeFailureSynchronizer, source="test")]
+        _snapshot(),
+        [TargetRegistration("finalize-broken", lambda presets: FinalizeFailureSynchronizer(), source="test")],
     )
 
     preset_result = result.presets[0]
@@ -151,7 +152,7 @@ def test_engine_finalize_failure_keeps_successful_items_and_marks_failed(tmp_pat
 def test_engine_disabled_preset_is_skipped_without_running(tmp_path: Path) -> None:
     result = SyncEngine(target=FilesystemTarget(tmp_path)).run(
         _snapshot(),
-        [PresetRegistration("disabled", SucceedingSynchronizer, source="test", enabled=False)],
+        [TargetRegistration("disabled", lambda presets: SucceedingSynchronizer(), source="test", enabled=False)],
     )
 
     preset_result = result.presets[0]
@@ -163,8 +164,8 @@ def test_engine_disabled_preset_is_skipped_without_running(tmp_path: Path) -> No
 
 def test_engine_selected_subset_runs_only_requested_presets(tmp_path: Path) -> None:
     registrations = [
-        PresetRegistration("alpha", lambda: MarkerSynchronizer("alpha"), source="test"),
-        PresetRegistration("beta", lambda: MarkerSynchronizer("beta"), source="test"),
+        TargetRegistration("alpha", lambda presets: MarkerSynchronizer("alpha"), source="test"),
+        TargetRegistration("beta", lambda presets: MarkerSynchronizer("beta"), source="test"),
     ]
 
     result = SyncEngine(target=FilesystemTarget(tmp_path)).run(_snapshot(), registrations, selected={"alpha"})
@@ -172,3 +173,62 @@ def test_engine_selected_subset_runs_only_requested_presets(tmp_path: Path) -> N
     assert [item.name for item in result.presets] == ["alpha"]
     assert (tmp_path / "alpha.txt").exists()
     assert not (tmp_path / "beta.txt").exists()
+
+
+def test_engine_injects_presets_into_factory(tmp_path: Path) -> None:
+    """presets 索引按 depends_on 声明注入 target factory（Task 13 核心）。"""
+    received: dict[str, object] = {}
+
+    def factory(presets):
+        received.update(presets)
+        return SucceedingSynchronizer()
+
+    registration = TargetRegistration(name="injector", factory=factory, depends_on=("a",))
+    preset_object = object()
+
+    result = SyncEngine(target=FilesystemTarget(tmp_path)).run(
+        _snapshot(), [registration], presets={"a": preset_object}
+    )
+
+    assert received == {"a": preset_object}
+    assert result.status == "succeeded"
+
+
+def test_engine_missing_preset_dependency_marks_failed_without_calling_factory(tmp_path: Path) -> None:
+    """depends_on 未在 presets 索引中提供 → 该 target FAILED，factory 不被调用。"""
+    called = False
+
+    def factory(presets):
+        nonlocal called
+        called = True
+        return SucceedingSynchronizer()
+
+    registration = TargetRegistration(name="dep", factory=factory, depends_on=("missing",))
+    result = SyncEngine(target=FilesystemTarget(tmp_path)).run(_snapshot(), [registration], presets={})
+
+    preset_result = result.presets[0]
+    assert preset_result.status == "failed"
+    assert "依赖的 preset 未提供" in (preset_result.error or "")
+    assert result.status == "failed"
+    assert called is False
+
+
+def test_engine_media_store_root_reaches_context(tmp_path: Path) -> None:
+    """SyncEngine.media_store_root 透传到 PresetContext（内置 hardlink 的歌词文件依赖）。"""
+    seen: list[Path | None] = []
+
+    class CapturingSynchronizer:
+        def prepare(self, context) -> None:
+            seen.append(context.media_store_root)
+
+        def sync_item(self, track, context) -> None:
+            pass
+
+        def finalize(self, context) -> None:
+            pass
+
+    registration = TargetRegistration("capture", lambda presets: CapturingSynchronizer(), source="test")
+    engine = SyncEngine(target=FilesystemTarget(tmp_path), media_store_root=Path("media_root"))
+    engine.run(_snapshot(), [registration])
+
+    assert seen == [Path("media_root")]

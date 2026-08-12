@@ -23,6 +23,7 @@ from musicvault.preset_api.v1 import (
     BasePreset,
     LyricEncoding,
     MetadataSpec,
+    PresetLoadError,
     audio_spec_key,
 )
 from musicvault.ports.source import SourceClient
@@ -67,8 +68,19 @@ class ProcessUseCase:
         self.paths = WorkspacePaths(cfg.workspace_path)
         # 把本次处理产出的媒体资产登记到 SQLite，供 target-sync 消费
         self.recorder = SourceStateRecorder(state)
-        # 歌词/元数据/音频规格按 preset 声明执行；None 时从 cfg.presets 兼容回退（Task 17 移除）
-        self.presets: Mapping[str, BasePreset] = presets if presets is not None else {p.name: p for p in cfg.presets}
+        # 歌词/元数据/音频规格按 preset 声明执行；None 时从 cfg.presets 兼容回退（Task 17 移除）。
+        # cfg.presets 是领域 Preset（无 build_lyrics/metadata），无法驱动 preset 脚本行为，
+        # 直接回退会在处理深处 AttributeError 崩溃——这里尽早抛出清晰错误。
+        if presets is not None:
+            self.presets: Mapping[str, BasePreset] = presets
+        else:
+            legacy = {p.name: p for p in cfg.presets}
+            if not all(isinstance(p, BasePreset) for p in legacy.values()):
+                raise PresetLoadError(
+                    "ProcessUseCase 缺少 preset 实例索引（presets 参数）：cfg.presets 是领域 Preset，"
+                    "无法驱动 preset 脚本（build_lyrics/metadata）；请经 build_pipeline 组装注入"
+                )
+            self.presets = legacy
 
     # ------------------------------------------------------------------
     # 公开入口

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 from musicvault.domain.models import SourceSnapshot
 from musicvault.domain.operations import OperationResult, OperationStatus
 from musicvault.ports.target import TargetOperations
-from musicvault.preset_api.v1 import PresetContext, PresetRegistration
+from musicvault.preset_api.v1 import PresetContext, TargetRegistration
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,16 +53,24 @@ class SyncRunResult:
 class SyncEngine:
     """运行 TargetSynchronizer 生命周期并隔离 preset 失败。"""
 
-    def __init__(self, target: TargetOperations, *, dry_run: bool = False) -> None:
+    def __init__(
+        self,
+        target: TargetOperations,
+        *,
+        dry_run: bool = False,
+        media_store_root: Path | None = None,
+    ) -> None:
         self.target = target
         self.dry_run = dry_run
+        self.media_store_root = media_store_root
 
     def run(
         self,
         snapshot: SourceSnapshot,
-        registrations: Iterable[PresetRegistration],
+        registrations: Iterable[TargetRegistration],
         *,
         selected: set[str] | None = None,
+        presets: Mapping[str, object] | None = None,
     ) -> SyncRunResult:
         results: list[PresetRunResult] = []
         for registration in registrations:
@@ -77,7 +86,7 @@ class SyncEngine:
                     )
                 )
                 continue
-            results.append(self._run_preset(snapshot, registration))
+            results.append(self._run_preset(snapshot, registration, presets or {}))
         status = (
             OperationStatus.SUCCEEDED
             if all(result.status != OperationStatus.FAILED for result in results)
@@ -85,14 +94,25 @@ class SyncEngine:
         )
         return SyncRunResult(snapshot_hash=snapshot.snapshot_hash, presets=tuple(results), status=status)
 
-    def _run_preset(self, snapshot: SourceSnapshot, registration: PresetRegistration) -> PresetRunResult:
+    def _run_preset(
+        self, snapshot: SourceSnapshot, registration: TargetRegistration, presets: Mapping[str, object]
+    ) -> PresetRunResult:
         try:
-            synchronizer = registration.create()
+            missing = [dep for dep in registration.depends_on if dep not in presets]
+            if missing:
+                return PresetRunResult(
+                    name=registration.name,
+                    source=registration.source,
+                    status=OperationStatus.FAILED,
+                    error=f"sync_target '{registration.name}' 依赖的 preset 未提供：{', '.join(missing)}",
+                )
+            synchronizer = registration.factory({dep: presets[dep] for dep in registration.depends_on})
             context = PresetContext(
                 snapshot=snapshot,
                 target=self.target,
                 dry_run=self.dry_run,
                 target_descriptor=registration.target,
+                media_store_root=self.media_store_root,
             )
             prepare_operation_start = len(context.operations)
             prepare_result = synchronizer.prepare(context)

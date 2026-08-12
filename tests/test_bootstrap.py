@@ -1,0 +1,138 @@
+"""bootstrap composition root 测试：preset 注入、音质推导、内置注册（Task 13）。"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import MagicMock
+
+from musicvault.application import bootstrap
+from musicvault.application.bootstrap import (
+    build_distribute_pipeline,
+    build_pipeline,
+    build_runtime,
+    build_source_client,
+    build_target_sync_pipeline,
+)
+from musicvault.core.config import Config
+from musicvault.domain.operations import OperationStatus
+from musicvault.preset_api.builtins import ArchivePreset
+from musicvault.preset_api.v1 import Quality
+
+
+class _FakeSdkResponse:
+    status = 200
+
+    def __init__(self, body: dict) -> None:
+        self.body = body
+
+
+class _FakeSdk:
+    """极简 fake：记录 song_url_v1 收到的 level 参数，供音质断言。"""
+
+    last_level: str | None = None
+
+    def __init__(self, env=None) -> None:
+        self.calls: list[dict] = []
+
+    def song_url_v1(self, **kwargs):
+        type(self).last_level = kwargs.get("level")
+        self.calls.append(kwargs)
+        return _FakeSdkResponse({"data": [{"id": 1, "url": None}]})
+
+
+def _fake_sdk(monkeypatch) -> None:
+    _FakeSdk.last_level = None
+    monkeypatch.setattr("musicvault.adapters.providers.netease_client.NeteaseCloudMusicApi", _FakeSdk)
+
+
+# -- build_source_client：config 字符串 → Quality 枚举（Task 8 修复） -------------------
+
+
+def test_build_source_client_converts_config_quality_to_enum(monkeypatch) -> None:
+    """真实路径：config.download_quality 字符串转 Quality 枚举后构造 NeteaseClient，
+    调用 get_tracks_download_urls 不再抛 AttributeError。"""
+    _fake_sdk(monkeypatch)
+    cfg = Config(workspace="ws", download_quality="lossless")
+
+    client = build_source_client(cfg)
+    urls = client.get_tracks_download_urls([1])
+
+    assert urls == {1: None}
+    assert _FakeSdk.last_level == "lossless"
+
+
+def test_build_source_client_falls_back_to_hires_on_unknown_quality(monkeypatch) -> None:
+    """非法音质字符串回退 Quality.HIRES，不向 SDK 传 str。"""
+    _fake_sdk(monkeypatch)
+    cfg = Config(workspace="ws", download_quality="ultra")
+
+    client = build_source_client(cfg)
+    client.get_tracks_download_urls([1])
+
+    assert _FakeSdk.last_level == "hires"
+
+
+def test_build_source_client_accepts_explicit_quality(monkeypatch) -> None:
+    """显式传入的 Quality 覆盖 config 字符串。"""
+    _fake_sdk(monkeypatch)
+    cfg = Config(workspace="ws", download_quality="hires")
+
+    client = build_source_client(cfg, download_quality=Quality.LOSSLESS)
+    client.get_tracks_download_urls([1])
+
+    assert _FakeSdk.last_level == "lossless"
+
+
+# -- build_pipeline：注册表 preset 实例索引注入（Task 12 修复） -------------------------
+
+
+def test_build_pipeline_injects_registry_preset_instances(tmp_path: Path) -> None:
+    """build_pipeline 从注册表构造 BasePreset 实例索引并注入 ProcessUseCase，
+    不再回退 cfg.presets 的领域 Preset（回退会 AttributeError 崩溃）。"""
+    cfg = Config(workspace=str(tmp_path / "ws"))
+
+    service = build_pipeline(cfg, source=MagicMock(), dry_run=True)
+
+    assert set(service.process_service.presets) == {"archive"}
+    assert isinstance(service.process_service.presets["archive"], ArchivePreset)
+    assert service.process_service.presets["archive"] is not cfg.presets[0]
+
+
+# -- build_runtime / build_distribute_pipeline：内置注册与 preset 索引传递 ----------------
+
+
+def test_build_runtime_builtin_target_root_is_library_dir(tmp_path: Path) -> None:
+    """Task 7 遗留修复：内置 hardlink target 的目标根 = library/（不再嵌套 playlist_links/），
+    default_playlist_name 透传。"""
+    cfg = Config(workspace=str(tmp_path / "ws"), default_playlist_name="其他")
+
+    runtime = build_runtime(cfg)
+    distributor = runtime.presets.create_target("hardlink")
+
+    assert distributor.target_root == cfg.library_dir
+    assert distributor.default_name == "其他"
+
+
+def test_build_distribute_pipeline_passes_preset_instances_to_engine(tmp_path: Path, monkeypatch) -> None:
+    """distribute 链路：TargetSyncPipeline.run 从注册表构造 presets 索引并注入 SyncEngine.run。"""
+    cfg = Config(workspace=str(tmp_path / "ws"))
+    captured: dict = {}
+
+    def fake_run(self, snapshot, registrations, *, selected=None, presets=None):
+        captured["presets"] = presets
+        from musicvault.application.sync_engine import SyncRunResult
+
+        return SyncRunResult(snapshot_hash="a" * 64, presets=(), status=OperationStatus.SUCCEEDED)
+
+    monkeypatch.setattr(bootstrap.SyncEngine, "run", fake_run)
+
+    pipeline = build_distribute_pipeline(cfg)
+    pipeline.run()
+
+    assert set(captured["presets"]) == {"archive"}
+    assert isinstance(captured["presets"]["archive"], ArchivePreset)
+
+
+def test_build_target_sync_pipeline_alias_kept_for_cli() -> None:
+    """旧名别名保留：cli/main.py 在 Task 15 前仍引用 build_target_sync_pipeline。"""
+    assert build_target_sync_pipeline is build_distribute_pipeline

@@ -167,7 +167,9 @@ class TestProcessDryRun:
         decryptor = MagicMock()
         organizer = MagicMock()
         metadata = MagicMock()
-        svc = ProcessUseCase(cfg, api, decryptor, organizer, metadata, workers=2, dry_run=True, state=_repository(cfg))
+        svc = ProcessUseCase(
+            cfg, api, decryptor, organizer, metadata, workers=2, dry_run=True, state=_repository(cfg), presets={}
+        )
         result = svc.run_process(downloaded=[item], force=False)
 
         # 只计计划不执行：不写索引、不触任何管线组件
@@ -199,7 +201,9 @@ class TestProcessDryRun:
         api = MagicMock()
         item = DownloadedTrack(track=_make_track(333), source_file=str(canonical), is_ncm=False, playlist_ids=[])
 
-        svc = ProcessUseCase(cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=2, dry_run=True, state=repo)
+        svc = ProcessUseCase(
+            cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=2, dry_run=True, state=repo, presets={}
+        )
         result = svc.run_process(downloaded=[item], force=False)
 
         # spec 已覆盖：不产生待处理项，计入 skipped

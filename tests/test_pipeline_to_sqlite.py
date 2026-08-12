@@ -221,15 +221,21 @@ def test_synced_state_feeds_target_sync_closed_loop(tmp_path: Path) -> None:
         [], [], media_assets=[build_audio_asset_from_file(111, "FLAC", canonical)]
     )
 
-    # 3) target-sync 消费 SQLite 快照
+    # 3) target-sync 消费 SQLite 快照（注入注册表 preset 实例索引，hardlink 依赖 archive）
     runtime = build_runtime(cfg)
-    result = SyncEngine(FilesystemTarget(runtime.paths.library), dry_run=False).run(
+    presets = {
+        r.name: runtime.presets.create_preset(r.name) for r in runtime.presets.preset_registrations(enabled_only=True)
+    }
+    result = SyncEngine(
+        FilesystemTarget(runtime.paths.library), dry_run=False, media_store_root=runtime.paths.media_store
+    ).run(
         repo.create_snapshot(),
         runtime.presets.registrations(enabled_only=True),
+        presets=presets,
     )
 
     assert result.status == "succeeded"
-    link = runtime.paths.library / "playlist_links" / "歌单A" / "Artist - Song 111.flac"
+    link = runtime.paths.library / "歌单A" / "Artist - Song 111.flac"
     assert link.exists()
 
 
@@ -341,7 +347,9 @@ def test_second_process_skips_when_specs_covered(tmp_path: Path) -> None:
     api = MagicMock()
     organizer = MagicMock()
     item = DownloadedTrack(track=_make_track(333), source_file=str(flac), is_ncm=False, playlist_ids=[])
-    svc = ProcessUseCase(cfg, api, MagicMock(), organizer, MagicMock(), workers=1, dry_run=False, state=repo)
+    svc = ProcessUseCase(
+        cfg, api, MagicMock(), organizer, MagicMock(), workers=1, dry_run=False, state=repo, presets={}
+    )
     svc.run_process(downloaded=[item], force=False)
 
     organizer.route_audio.assert_not_called()
@@ -361,5 +369,5 @@ def test_guess_track_id_reads_pending_files(tmp_path: Path) -> None:
     rel = workspace_rel_path(raw, cfg.workspace_path)
     repo.add_pending_file(rel, 333)
 
-    svc = ProcessUseCase(cfg, MagicMock(), MagicMock(), MagicMock(), MagicMock(), workers=1, state=repo)
+    svc = ProcessUseCase(cfg, MagicMock(), MagicMock(), MagicMock(), MagicMock(), workers=1, state=repo, presets={})
     assert svc._guess_track_id(raw) == 333

@@ -14,7 +14,7 @@ from musicvault.application.sync_engine import PresetRunResult, SyncEngine, Sync
 from musicvault.cli.main import main
 from musicvault.domain.models import SourceSnapshot, Track
 from musicvault.domain.operations import OperationStatus
-from musicvault.preset_api.v1 import PresetRegistration
+from musicvault.preset_api.v1 import TargetRegistration
 
 
 def _snapshot() -> SourceSnapshot:
@@ -95,7 +95,7 @@ def test_repeated_sync_to_same_target_is_idempotent(tmp_path: Path) -> None:
     target = FilesystemTarget(tmp_path / "root")
     source = tmp_path / "source.txt"
     source.write_text("内容", encoding="utf-8")
-    registration = PresetRegistration("linker", lambda: _LinkingSynchronizer(source), source="test")
+    registration = TargetRegistration("linker", lambda presets: _LinkingSynchronizer(source), source="test")
 
     first = SyncEngine(target=target).run(_snapshot(), [registration])
     second = SyncEngine(target=target).run(_snapshot(), [registration])

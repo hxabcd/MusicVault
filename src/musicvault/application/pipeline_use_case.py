@@ -4,6 +4,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 
 from musicvault.adapters.filesystem.workspace import WorkspacePaths
 from musicvault.adapters.processors.decryptor import Decryptor
@@ -18,6 +19,8 @@ from musicvault.core.config import Config
 from musicvault.domain.preset import audio_spec_key
 from musicvault.ports.source import SourceClient
 from musicvault.ports.state import StateRepository
+from musicvault.ports.target import TargetOperations
+from musicvault.preset_api.v1 import BasePreset, PresetRegistry
 from musicvault.shared.utils import (
     create_link,
     format_track_name,
@@ -48,10 +51,15 @@ class PipelineUseCase:
         api: SourceClient,
         state: StateRepository,
         dry_run: bool = False,
+        presets: Mapping[str, BasePreset] | None = None,
+        registry: PresetRegistry | None = None,
+        target: TargetOperations | None = None,
     ) -> None:
         self.cfg = cfg
         self.api = api
         self.dry_run = dry_run
+        self.registry = registry
+        self.target = target
         # workspace 各生命周期区域路径的唯一来源（cache/media_store/library/logs）
         self.paths = WorkspacePaths(cfg.workspace_path)
         # 把同步/处理的源侧状态写入 SQLite，供 target-sync 消费
@@ -66,11 +74,10 @@ class PipelineUseCase:
         process_workers = cfg.process_workers or auto_process
         ffmpeg_threads = cfg.ffmpeg_threads or auto_ffmpeg
 
-        first_template = cfg.presets[0].filename_template if cfg.presets else "{artist} - {name}"
         self.sync_service = SyncUseCase(
             cfg=cfg,
             api=api,
-            downloader=Downloader(filename_template=first_template),
+            downloader=Downloader(),
             workers=max(1, download_workers),
             dry_run=dry_run,
             state=state,
@@ -87,6 +94,7 @@ class PipelineUseCase:
             workers=max(1, process_workers),
             dry_run=dry_run,
             state=state,
+            presets=presets,
         )
 
     def link_only(self, cookie: str) -> tuple[int, int]:
