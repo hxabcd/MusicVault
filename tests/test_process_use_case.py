@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
+from musicvault.adapters.state.sqlite import SQLiteProcessStateRepository, SQLiteSourceStateRepository, SQLiteState
 from musicvault.application.process_use_case import ProcessUseCase
 from musicvault.core.config import Config
 from musicvault.domain.lyrics import LyricLine, lyrics_to_json
@@ -24,8 +24,12 @@ def _make_track(track_id: int) -> Track:
     return Track(id=track_id, name=f"Song {track_id}", artists=["Artist"], album="Album", raw={})
 
 
-def _repository(cfg: Config) -> SQLiteStateRepository:
-    return SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+def _repository(cfg: Config) -> SQLiteSourceStateRepository:
+    return SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file))
+
+
+def _process_repository(cfg: Config) -> SQLiteProcessStateRepository:
+    return SQLiteProcessStateRepository(SQLiteState(cfg.state_db_file))
 
 
 def _downloaded(track_id: int, source_file: Path) -> DownloadedTrack:
@@ -65,7 +69,7 @@ class _RecordingMetadata:
 
 def _process_svc(
     cfg: Config,
-    repo: SQLiteStateRepository,
+    repo: SQLiteSourceStateRepository,
     *,
     organizer: MagicMock,
     metadata=None,
@@ -80,6 +84,7 @@ def _process_svc(
         metadata=metadata if metadata is not None else MagicMock(),
         workers=1,
         state=repo,
+        process_state=_process_repository(cfg),
         presets=presets,
     )
 
@@ -89,6 +94,7 @@ def test_process_writes_lyrics_file_from_preset(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
+    repo.upsert_track(_make_track(333))
     repo.save_lyrics(333, lyrics_to_json((LyricLine(1000, 0, "hello"),)), 0.0)
 
     raw = cfg.cache_dir / "333.mp3"
@@ -137,6 +143,7 @@ def test_process_metadata_spec_union(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
+    repo.upsert_track(_make_track(333))
     repo.save_lyrics(333, lyrics_to_json(()), 0.0)
 
     raw = cfg.cache_dir / "333.mp3"
@@ -168,6 +175,7 @@ def test_process_writes_lrc_with_preset_encodings(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
+    repo.upsert_track(_make_track(333))
     repo.save_lyrics(333, lyrics_to_json((LyricLine(1000, 0, "中文歌词"),)), 0.0)
 
     raw = cfg.cache_dir / "333.mp3"
@@ -206,7 +214,7 @@ def test_filter_pending_uses_preset_param_specs(tmp_path: Path) -> None:
     repo = _repository(cfg)
     repo.upsert_track(_make_track(333))
     repo.upsert_media_asset(build_audio_asset_from_file(333, "MP3-192k", canonical))
-    repo.record_processed(333, "preset-script", 0.0)
+    _process_repository(cfg).mark_processed(333, 0.0)
 
     class _Mp3Preset(BasePreset):
         format = AudioFormat.MP3
@@ -243,6 +251,7 @@ def test_run_process_reprocesses_canonical_for_new_spec(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     cfg.media_store_dir.mkdir(parents=True)
     repo = _repository(cfg)
+    repo.upsert_track(_make_track(333))
     repo.save_lyrics(333, lyrics_to_json((LyricLine(1000, 0, "hello"),)), 0.0)
 
     canonical = cfg.media_store_dir / "333" / "333.flac"
@@ -252,7 +261,7 @@ def test_run_process_reprocesses_canonical_for_new_spec(tmp_path: Path) -> None:
     # 模拟此前用 FLAC-only preset 处理过：spec 覆盖不足（缺 MP3-192k），非 force 也应重处理
     repo.upsert_track(_make_track(333))
     repo.upsert_media_asset(build_audio_asset_from_file(333, "FLAC", canonical))
-    repo.record_processed(333, "preset-script", 0.0)
+    _process_repository(cfg).mark_processed(333, 0.0)
 
     class _Mp3Preset(BasePreset):
         format = AudioFormat.MP3
@@ -274,7 +283,7 @@ def test_run_process_reprocesses_canonical_for_new_spec(tmp_path: Path) -> None:
     assert result.processed == 1
     assert (cfg.media_store_dir / "333" / "333_192k.mp3").exists()
     # 新规格产物登记进 media_assets，此后再次运行跳过
-    assert repo.is_processed(333, {"MP3-192k"})
+    assert _process_repository(cfg).is_processed(333, {"MP3-192k"})
     again = svc.run_process(downloaded=[], force=False)
     assert again.processed == 0
 
@@ -290,6 +299,7 @@ def test_run_process_scan_survives_track_detail_api_failure(tmp_path: Path) -> N
     cfg = _make_cfg(tmp_path)
     cfg.media_store_dir.mkdir(parents=True)
     repo = _repository(cfg)
+    repo.upsert_track(_make_track(333))
     repo.save_lyrics(333, lyrics_to_json((LyricLine(1000, 0, "hello"),)), 0.0)
 
     # 曲目 333：详情 API 抛异常（类似 _retry_api 重试耗尽后重新抛出）
@@ -298,7 +308,7 @@ def test_run_process_scan_survives_track_detail_api_failure(tmp_path: Path) -> N
     bad.write_bytes(b"fake flac")
     repo.upsert_track(_make_track(333))
     repo.upsert_media_asset(build_audio_asset_from_file(333, "FLAC", bad))
-    repo.record_processed(333, "preset-script", 0.0)
+    _process_repository(cfg).mark_processed(333, 0.0)
 
     # 曲目 999：详情 API 正常（返回 None 走 fallback Track），应被正常处理
     good = cfg.media_store_dir / "999" / "999.flac"
@@ -306,7 +316,7 @@ def test_run_process_scan_survives_track_detail_api_failure(tmp_path: Path) -> N
     good.write_bytes(b"fake flac")
     repo.upsert_track(_make_track(999))
     repo.upsert_media_asset(build_audio_asset_from_file(999, "FLAC", good))
-    repo.record_processed(999, "preset-script", 0.0)
+    _process_repository(cfg).mark_processed(999, 0.0)
 
     class _Mp3Preset(BasePreset):
         format = AudioFormat.MP3
@@ -350,6 +360,7 @@ def test_run_process_force_reprocesses_covered_canonical(tmp_path: Path) -> None
     cfg = _make_cfg(tmp_path)
     cfg.media_store_dir.mkdir(parents=True)
     repo = _repository(cfg)
+    repo.upsert_track(_make_track(333))
     repo.save_lyrics(333, lyrics_to_json((LyricLine(1000, 0, "hello"),)), 0.0)
 
     canonical = cfg.media_store_dir / "333" / "333.flac"
@@ -360,7 +371,7 @@ def test_run_process_force_reprocesses_covered_canonical(tmp_path: Path) -> None
     repo.upsert_track(_make_track(333))
     repo.upsert_media_asset(build_audio_asset_from_file(333, "FLAC", canonical))
     repo.upsert_media_asset(build_audio_asset_from_file(333, "MP3-192k", mp3))
-    repo.record_processed(333, "preset-script", 0.0)
+    _process_repository(cfg).mark_processed(333, 0.0)
 
     class _Mp3Preset(BasePreset):
         format = AudioFormat.MP3
@@ -405,6 +416,7 @@ def test_process_build_lyrics_error_isolates_preset(tmp_path: Path, caplog) -> N
     cfg = _make_cfg(tmp_path)
     cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
+    repo.upsert_track(_make_track(333))
     repo.save_lyrics(333, lyrics_to_json((LyricLine(1000, 0, "hello"),)), 0.0)
 
     raw = cfg.cache_dir / "333.mp3"
@@ -450,6 +462,7 @@ def test_safe_track_detail_cached_within_instance(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     cfg.media_store_dir.mkdir(parents=True)
     repo = _repository(cfg)
+    repo.upsert_track(_make_track(333))
     repo.save_lyrics(333, lyrics_to_json((LyricLine(1000, 0, "hello"),)), 0.0)
 
     canonical = cfg.media_store_dir / "333" / "333.flac"
@@ -457,7 +470,7 @@ def test_safe_track_detail_cached_within_instance(tmp_path: Path) -> None:
     canonical.write_bytes(b"fake flac")
     repo.upsert_track(_make_track(333))
     repo.upsert_media_asset(build_audio_asset_from_file(333, "FLAC", canonical))
-    repo.record_processed(333, "preset-script", 0.0)
+    _process_repository(cfg).mark_processed(333, 0.0)
 
     class _Mp3Preset(BasePreset):
         format = AudioFormat.MP3
@@ -481,6 +494,6 @@ def test_safe_track_detail_cached_within_instance(tmp_path: Path) -> None:
 
     # process 路径（_process_file 无 prefetched 时再走 _safe_track）：缓存命中不再打详情 API
     rel = workspace_rel_path(canonical, cfg.workspace_path)
-    repo.add_pending_file(rel, 333)
+    _process_repository(cfg).mark_downloaded(rel, 333)
     svc._process_file(canonical)
     assert api.get_track_detail.call_count == 1

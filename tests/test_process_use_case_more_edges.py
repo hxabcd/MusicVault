@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
+from musicvault.adapters.state.sqlite import SQLiteProcessStateRepository, SQLiteSourceStateRepository, SQLiteState
 from musicvault.application.process_use_case import ProcessUseCase, _write_lrc
 from musicvault.core.config import Config
 from musicvault.domain.models import DownloadedTrack, Track
@@ -28,15 +28,19 @@ def _make_track(track_id: int) -> Track:
     return Track(id=track_id, name=f"Song {track_id}", artists=["Artist"], album="Album", raw={})
 
 
-def _repository(cfg: Config) -> SQLiteStateRepository:
-    return SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+def _repository(cfg: Config) -> SQLiteSourceStateRepository:
+    return SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file))
+
+
+def _process_repository(cfg: Config) -> SQLiteProcessStateRepository:
+    return SQLiteProcessStateRepository(SQLiteState(cfg.state_db_file))
 
 
 def _downloaded(track_id: int, source_file: Path) -> DownloadedTrack:
     return DownloadedTrack(track=_make_track(track_id), source_file=str(source_file), is_ncm=False, playlist_ids=[])
 
 
-def _process_svc(cfg: Config, repo: SQLiteStateRepository, *, organizer=None, metadata=None, api=None, presets=None):
+def _process_svc(cfg: Config, repo: SQLiteSourceStateRepository, *, organizer=None, metadata=None, api=None, presets=None):
     return ProcessUseCase(
         cfg=cfg,
         api=api or MagicMock(),
@@ -45,6 +49,7 @@ def _process_svc(cfg: Config, repo: SQLiteStateRepository, *, organizer=None, me
         metadata=metadata if metadata is not None else MagicMock(),
         workers=1,
         state=repo,
+        process_state=_process_repository(cfg),
         presets=presets if presets is not None else {},
     )
 
@@ -79,7 +84,10 @@ class TestPresetInjection:
         repo = _repository(cfg)
 
         with pytest.raises(PresetLoadError, match="presets"):
-            ProcessUseCase(cfg, MagicMock(), MagicMock(), MagicMock(), MagicMock(), workers=1, state=repo)
+            ProcessUseCase(
+                cfg, MagicMock(), MagicMock(), MagicMock(), MagicMock(), workers=1, state=repo,
+                process_state=_process_repository(cfg),
+            )
 
 
 class TestScanCanonicalFiles:
@@ -145,8 +153,8 @@ class TestProcessFailureIsolation:
         assert result.processed == 1
         assert result.failed == 1
         assert result.skipped == 0
-        assert repo.is_processed(333, {"FLAC"})
-        assert not repo.is_processed(444, {"FLAC"})
+        assert _process_repository(cfg).is_processed(333, {"FLAC"})
+        assert not _process_repository(cfg).is_processed(444, {"FLAC"})
         assert ("begin", 2, "处理中") in progress.events
         assert sum(1 for e in progress.events if e[0] == "advance" and e[1] is True) == 1
         assert sum(1 for e in progress.events if e[0] == "advance" and e[1] is False) == 1
@@ -167,7 +175,7 @@ class TestProcessFailureIsolation:
         with pytest.raises(KeyboardInterrupt):
             svc.run_process(downloaded=[_downloaded(333, raw)], force=False)
 
-        assert not repo.is_processed(333, {"FLAC"})
+        assert not _process_repository(cfg).is_processed(333, {"FLAC"})
 
 
 class TestProcessFileTrackIdInference:
@@ -271,7 +279,7 @@ class TestMarkProcessed:
 
         svc._mark_processed({})
 
-        assert not repo.is_processed(333, {"FLAC"})
+        assert not _process_repository(cfg).is_processed(333, {"FLAC"})
 
 
 class TestSafeTrack:

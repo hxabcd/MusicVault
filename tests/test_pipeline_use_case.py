@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
+from musicvault.adapters.state.sqlite import SQLiteProcessStateRepository, SQLiteSourceStateRepository, SQLiteState
 from musicvault.application.pipeline_use_case import PipelineUseCase
 from musicvault.core.config import Config
 from musicvault.domain.models import DownloadedTrack, Playlist, Track
@@ -26,8 +26,12 @@ def _make_track(track_id: int) -> Track:
     return Track(id=track_id, name=f"Song {track_id}", artists=["Artist"], album="Album", raw={})
 
 
-def _repository(cfg: Config) -> SQLiteStateRepository:
-    return SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+def _repository(cfg: Config) -> SQLiteSourceStateRepository:
+    return SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file))
+
+
+def _process_repository(cfg: Config) -> SQLiteProcessStateRepository:
+    return SQLiteProcessStateRepository(SQLiteState(cfg.state_db_file))
 
 
 class _Mp3Preset(BasePreset):
@@ -122,6 +126,7 @@ def _pipeline(
         cfg=cfg,
         api=api or _api(),
         state=repo,
+        process_state=_process_repository(cfg),
         dry_run=dry_run,
         presets={"mp3": _Mp3Preset()},
         registry=registry,

@@ -15,8 +15,9 @@ from musicvault.application.source_state import SourceStateRecorder
 from musicvault.core.config import Config
 from musicvault.domain.lyrics import lyrics_to_json
 from musicvault.domain.models import DownloadedTrack, Playlist, Track
+from musicvault.ports.process_state import ProcessStateRepository
 from musicvault.ports.source import SourceClient
-from musicvault.ports.state import StateRepository
+from musicvault.ports.source_state import SourceStateRepository
 from musicvault.shared.output import warn as output_warn
 from musicvault.shared.utils import workspace_rel_path
 
@@ -56,7 +57,8 @@ class SyncUseCase:
         api: SourceClient,
         downloader: Downloader,
         workers: int,
-        state: StateRepository,
+        state: SourceStateRepository,
+        process_state: ProcessStateRepository,
         dry_run: bool = False,
     ) -> None:
         self.cfg = cfg
@@ -64,6 +66,7 @@ class SyncUseCase:
         self.downloader = downloader
         self.workers = max(1, workers)
         self.dry_run = dry_run
+        self.process_state = process_state
         # workspace 各生命周期区域路径的唯一来源（cache/media_store/library/logs）
         self.paths = WorkspacePaths(cfg.workspace_path)
         # 把本次 sync 的源侧状态写入 SQLite，供 distribute 阶段消费
@@ -95,7 +98,7 @@ class SyncUseCase:
         library 目录迁移由 distribute 幂等重建覆盖。纯元数据写 SQLite，
         无 dry-run 分支（dry-run 下本阶段由 PipelineUseCase 跳过）。
         """
-        song_ids = self.recorder.state.list_managed_songs()
+        song_ids = self.recorder.state.list_managed_tracks()
         if not playlist_ids and not song_ids:
             output_warn("未配置任何歌单或单曲，请先执行 msv add 添加歌单或 msv add --song <ID> 添加单曲")
             return
@@ -119,7 +122,7 @@ class SyncUseCase:
     ) -> SyncResult:
         """pull 阶段：对比并下载新增曲目、歌词统一格式入库、清理远端已删曲目。"""
         stale_index = self._cleanup_stale_state()
-        song_ids = self.recorder.state.list_managed_songs()
+        song_ids = self.recorder.state.list_managed_tracks()
         if not playlist_ids and not song_ids:
             return SyncResult()
 
@@ -168,7 +171,7 @@ class SyncUseCase:
 
     def _fetch_remote(self, playlist_ids: list[int]) -> _RemoteState:
         """拉取远端歌单曲目与单独管理单曲详情（fetch/pull 共用，纯 API 读取）。"""
-        song_ids = self.recorder.state.list_managed_songs()
+        song_ids = self.recorder.state.list_managed_tracks()
         playlist_index = {
             str(pl.id): {"name": pl.name, "track_count": len(pl.track_ids)}
             for pl in self.recorder.state.list_playlists()
@@ -198,14 +201,14 @@ class SyncUseCase:
             for _, track in song_details.items():
                 if track.id not in all_tracks:
                     all_tracks[track.id] = track
-            # 过滤本地已删除但仍在 managed_songs 中的旧 ID（dry-run 不写 SQLite）
+            # 过滤本地已删除但仍在 managed_tracks 中的旧 ID（dry-run 不写 SQLite）
             missing = sorted(set(song_ids) - set(song_details.keys()))
             if missing:
                 if self.dry_run:
                     logger.info("dry-run：将清理无效单曲 ID %s（不写库）", missing)
                 else:
                     for mid in missing:
-                        self.recorder.state.remove_managed_song(mid)
+                        self.recorder.state.remove_managed_track(mid)
                     logger.info("清理无效单曲 ID：%s", missing)
 
         return _RemoteState(
@@ -239,7 +242,7 @@ class SyncUseCase:
         """清理 canonical 文件已不存在的过期状态，避免阻止重新下载。
 
         检查 SQLite media_assets 中每个 audio 资产的 canonical 文件是否仍存在，
-        不存在则删除该曲目（级联清理 processed_tracks / pending_files / 关系）。
+        不存在则删除该曲目（级联清理 processing_state / media_assets / 关系）。
         返回过期曲目数量；dry-run 模式下只计算并上报，不写入任何数据。
         """
         snapshot = self.recorder.state.create_snapshot()
@@ -303,11 +306,11 @@ class SyncUseCase:
         """返回 (新增曲目, 已下载的 track_id 集合)。
 
         fetch 阶段只登记元数据、不下载，因此「已同步」以实际下载产物为准：
-        存在媒体资产或待处理 raw 文件（pending_files）的曲目视为已下载。
+        存在媒体资产或待处理 raw 文件（processing_state.downloaded）的曲目视为已下载。
         """
         snapshot = self.recorder.state.create_snapshot()
         downloaded_ids = {asset.track_id for asset in snapshot.media_assets if asset.asset_type == "audio"}
-        downloaded_ids.update(self.recorder.state.list_pending_track_ids())
+        downloaded_ids.update(self.process_state.list_downloaded_track_ids())
         new_tracks = [track for track in tracks if track.id not in downloaded_ids]
         return new_tracks, downloaded_ids
 
@@ -422,7 +425,7 @@ class SyncUseCase:
         for item in downloaded:
             self.recorder.state.upsert_track(item.track)
             rel = workspace_rel_path(Path(item.source_file), self.cfg.workspace_path)
-            self.recorder.state.add_pending_file(rel, item.track.id)
+            self.process_state.mark_downloaded(rel, item.track.id)
         return downloaded, skipped
 
     def _run_download_batch(
@@ -475,7 +478,7 @@ class SyncUseCase:
         for item in results:
             self.recorder.state.upsert_track(item.track)
             rel = workspace_rel_path(Path(item.source_file), self.cfg.workspace_path)
-            self.recorder.state.add_pending_file(rel, item.track.id)
+            self.process_state.mark_downloaded(rel, item.track.id)
 
     def _save_lyrics(self, track_id: int) -> None:
         """拉取曲目歌词并转统一格式入库；失败降级为空行，不阻塞下载。"""

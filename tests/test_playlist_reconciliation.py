@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
+from musicvault.adapters.state.sqlite import SQLiteProcessStateRepository, SQLiteSourceStateRepository, SQLiteState
 from musicvault.application.source_state import SourceStateRecorder
 from musicvault.core.config import Config
 from musicvault.domain.models import Track
@@ -17,7 +17,7 @@ from musicvault.application.sync_use_case import SyncUseCase
 
 def _seed_state(cfg: Config, state_map: dict[int, list[int]]) -> None:
     """把 {track_id: [playlist_ids]} 写入 SQLite，供 load_synced_state 派生。"""
-    repo = SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+    repo = SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file))
     playlists: dict[int, Playlist] = {}
     tracks = [Track(id=tid, name=f"曲目 {tid}", artists=[], album="专辑", raw={}) for tid in state_map]
     for _, pids in state_map.items():
@@ -38,7 +38,8 @@ class TestLoadSyncedState:
         _seed_state(cfg, {123: [10, 20], 456: [10]})
 
         svc = SyncUseCase(
-            cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+            cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file)),
+            process_state=SQLiteProcessStateRepository(SQLiteState(cfg.state_db_file)),
         )
         result = svc.load_synced_state()
         assert result == {123: [10, 20], 456: [10]}
@@ -49,17 +50,19 @@ class TestLoadSyncedState:
         _seed_state(cfg, {789: []})
 
         svc = SyncUseCase(
-            cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+            cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file)),
+            process_state=SQLiteProcessStateRepository(SQLiteState(cfg.state_db_file)),
         )
         result = svc.load_synced_state()
         assert result == {789: []}
 
     def test_empty_snapshot_returns_empty(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
-        SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+        SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file))
 
         svc = SyncUseCase(
-            cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+            cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file)),
+            process_state=SQLiteProcessStateRepository(SQLiteState(cfg.state_db_file)),
         )
         result = svc.load_synced_state()
         assert result == {}

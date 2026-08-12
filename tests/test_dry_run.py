@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
+from musicvault.adapters.state.sqlite import SQLiteProcessStateRepository, SQLiteSourceStateRepository, SQLiteState
 from musicvault.application.source_state import SourceStateRecorder
 from musicvault.core.config import Config
 from musicvault.domain.models import DownloadedTrack, Track
@@ -29,8 +29,12 @@ def _make_track(track_id: int) -> Track:
     )
 
 
-def _repository(cfg: Config) -> SQLiteStateRepository:
-    return SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+def _repository(cfg: Config) -> SQLiteSourceStateRepository:
+    return SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file))
+
+
+def _process_repository(cfg: Config) -> SQLiteProcessStateRepository:
+    return SQLiteProcessStateRepository(SQLiteState(cfg.state_db_file))
 
 
 def _seed_synced(cfg: Config, state_map: dict[int, list[int]]) -> SQLiteStateRepository:
@@ -52,9 +56,9 @@ class TestSyncDryRun:
         cfg = _make_cfg(tmp_path)
         cfg.media_store_dir.mkdir(parents=True)
         cfg.cache_dir.mkdir(parents=True)
-        # 已有 1 首已下载（状态经 SQLite 预置，pending_files 标记下载产物）
+        # 已有 1 首已下载（状态经 SQLite 预置，processing_state 标记下载产物）
         repo = _seed_synced(cfg, {111: [10]})
-        repo.add_pending_file("cache/111.mp3", 111)
+        _process_repository(cfg).mark_downloaded("cache/111.mp3", 111)
 
         # API：歌单信息变化、曲目新增 222
         api = MagicMock()
@@ -63,7 +67,7 @@ class TestSyncDryRun:
         api.get_tracks_download_urls.return_value = {222: "http://example.com/222.mp3"}
 
         downloader = MagicMock()
-        svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=True, state=_repository(cfg))
+        svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=True, state=_repository(cfg), process_state=_process_repository(cfg))
         result = svc.run_pull("cookie", playlist_ids=[10])
 
         # 不下载、不写状态（dry-run 下 fetch 由 Pipeline 层跳过）
@@ -90,7 +94,7 @@ class TestSyncDryRun:
         api.get_playlist_info.return_value = {"name": "歌单A", "track_count": 1}
         api.get_playlist_tracks.return_value = [_make_track(222)]
 
-        svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=True, state=_repository(cfg))
+        svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=True, state=_repository(cfg), process_state=_process_repository(cfg))
         result = svc.run_pull("cookie", playlist_ids=[10])
 
         # 111 列入清理计划，但文件与状态均保留
@@ -114,7 +118,7 @@ class TestSyncDryRun:
         api.get_playlist_info.return_value = {"name": "歌单A", "track_count": 1}
         api.get_playlist_tracks.return_value = []  # 远端已无 111
 
-        svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=False, state=_repository(cfg))
+        svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=False, state=_repository(cfg), process_state=_process_repository(cfg))
         svc.run_fetch("cookie", playlist_ids=[10])
         svc.run_pull("cookie", playlist_ids=[10])
 
@@ -135,11 +139,11 @@ class TestSyncDryRun:
         api = MagicMock()
         api.get_tracks_detail.return_value = {999: _make_track(999)}  # 1000 缺失
 
-        svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=True, state=repo)
+        svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=True, state=repo, process_state=_process_repository(cfg))
         svc.run_pull("cookie", playlist_ids=[])
 
         # dry-run 不写 SQLite：无效单曲 ID 保留，等待真实运行再清理
-        assert repo.list_managed_songs() == [999, 1000]
+        assert repo.list_managed_tracks() == [999, 1000]
 
     def test_normal_mode_writes_to_sqlite(self, tmp_path: Path) -> None:
         """回归：dry_run=False 时下载并把状态写入 SQLite（不再写 JSON）。"""
@@ -161,7 +165,7 @@ class TestSyncDryRun:
             playlist_ids=[10],
         )
 
-        svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo)
+        svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
         svc.run_fetch("cookie", playlist_ids=[10])
         result = svc.run_pull("cookie", playlist_ids=[10])
 
@@ -190,7 +194,8 @@ class TestProcessDryRun:
         organizer = MagicMock()
         metadata = MagicMock()
         svc = ProcessUseCase(
-            cfg, api, decryptor, organizer, metadata, workers=2, dry_run=True, state=_repository(cfg), presets={}
+            cfg, api, decryptor, organizer, metadata, workers=2, dry_run=True, state=_repository(cfg),
+            process_state=_process_repository(cfg), presets={},
         )
         result = svc.run_process(downloaded=[item], force=False)
 
@@ -199,7 +204,7 @@ class TestProcessDryRun:
         organizer.route_audio.assert_not_called()
         decryptor.decrypt_if_needed.assert_not_called()
         metadata.write.assert_not_called()
-        assert not _repository(cfg).is_processed(333, {"FLAC"})
+        assert not _process_repository(cfg).is_processed(333, {"FLAC"})
 
     def test_processed_track_skipped(self, tmp_path: Path) -> None:
         """media_assets 已覆盖 spec 且 processed_tracks 有记录 → 跳过（计入 skipped）。"""
@@ -218,17 +223,18 @@ class TestProcessDryRun:
         repo.upsert_track(_make_track(333))
         repo.upsert_media_asset(build_audio_asset_from_file(333, "FLAC", canonical))
         repo.upsert_media_asset(build_audio_asset_from_file(333, "MP3-192k", mp3))
-        repo.record_processed(333, "preset-script", 0.0)
+        _process_repository(cfg).mark_processed(333, 0.0)
 
         api = MagicMock()
         item = DownloadedTrack(track=_make_track(333), source_file=str(canonical), is_ncm=False, playlist_ids=[])
 
         svc = ProcessUseCase(
-            cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=2, dry_run=True, state=repo, presets={}
+            cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=2, dry_run=True, state=repo,
+            process_state=_process_repository(cfg), presets={},
         )
         result = svc.run_process(downloaded=[item], force=False)
 
         # spec 已覆盖：不产生待处理项，计入 skipped
         assert result.processed == 0
         assert result.skipped == 1
-        assert repo.is_processed(333, {"FLAC"})
+        assert _process_repository(cfg).is_processed(333, {"FLAC"})

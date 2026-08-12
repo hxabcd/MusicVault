@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
+from musicvault.adapters.state.sqlite import SQLiteProcessStateRepository, SQLiteSourceStateRepository, SQLiteState
 from musicvault.adapters.targets.filesystem import FilesystemTarget
 from musicvault.application.bootstrap import build_runtime
 from musicvault.application.source_state import SourceStateRecorder, build_audio_asset_from_file
@@ -28,8 +28,12 @@ def _make_track(track_id: int) -> Track:
     )
 
 
-def _repository(cfg: Config) -> SQLiteStateRepository:
-    return SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+def _repository(cfg: Config) -> SQLiteSourceStateRepository:
+    return SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file))
+
+
+def _process_repository(cfg: Config) -> SQLiteProcessStateRepository:
+    return SQLiteProcessStateRepository(SQLiteState(cfg.state_db_file))
 
 
 def test_sync_records_tracks_and_playlists_to_sqlite(tmp_path: Path) -> None:
@@ -50,7 +54,7 @@ def test_sync_records_tracks_and_playlists_to_sqlite(tmp_path: Path) -> None:
         playlist_ids=[10],
     )
 
-    svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo)
+    svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
     svc.run_fetch("cookie", playlist_ids=[10])
     svc.run_pull("cookie", playlist_ids=[10])
 
@@ -74,7 +78,7 @@ def test_sync_records_managed_songs_to_sqlite(tmp_path: Path) -> None:
     api.get_tracks_download_urls.return_value = {}
     downloader = MagicMock()
 
-    svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo)
+    svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
     svc.run_fetch("cookie", playlist_ids=[])
     svc.run_pull("cookie", playlist_ids=[])
 
@@ -94,7 +98,9 @@ def test_dry_run_sync_does_not_write_sqlite(tmp_path: Path) -> None:
     api.get_tracks_download_urls.return_value = {111: "http://example.com/111.mp3"}
 
     # dry-run 下 fetch 不执行（写 SQLite 有副作用），pull 只计算计划
-    SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=True, state=repo).run_pull("cookie", playlist_ids=[10])
+    SyncUseCase(
+        cfg, api, MagicMock(), workers=2, dry_run=True, state=repo, process_state=_process_repository(cfg)
+    ).run_pull("cookie", playlist_ids=[10])
 
     assert repo.create_snapshot().tracks == ()
 
@@ -112,7 +118,8 @@ def test_process_records_media_assets_to_sqlite(tmp_path: Path) -> None:
     item = DownloadedTrack(track=_make_track(333), source_file=str(canonical), is_ncm=False, playlist_ids=[])
     # 无 preset 声明：只把 canonical 文件本身登记为媒体资产
     svc = ProcessUseCase(
-        cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=1, dry_run=False, state=repo, presets={}
+        cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=1, dry_run=False, state=repo,
+        process_state=_process_repository(cfg), presets={},
     )
     svc.run_process(downloaded=[item], force=False)
 
@@ -159,6 +166,7 @@ def test_process_routes_audio_to_media_store_dir(tmp_path: Path) -> None:
         workers=1,
         dry_run=False,
         state=repo,
+        process_state=_process_repository(cfg),
         presets={"portable": _Mp3Preset()},
     )
     svc.run_process(downloaded=[item], force=False)
@@ -182,14 +190,14 @@ def test_sync_with_stale_song_id_does_not_crash(tmp_path: Path) -> None:
     api.get_tracks_download_urls.return_value = {}
     downloader = MagicMock()
 
-    svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo)
+    svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
     svc.run_fetch("cookie", playlist_ids=[])
     svc.run_pull("cookie", playlist_ids=[])
 
     snapshot = repo.create_snapshot()
     assert [track.id for track in snapshot.tracks] == [999]
-    # 陈旧 id 已从 managed_songs 移除
-    assert repo.list_managed_songs() == [999]
+    # 陈旧 id 已从 managed_tracks 移除
+    assert repo.list_managed_tracks() == [999]
 
 
 def test_synced_state_feeds_target_sync_closed_loop(tmp_path: Path) -> None:
@@ -211,7 +219,7 @@ def test_synced_state_feeds_target_sync_closed_loop(tmp_path: Path) -> None:
         is_ncm=False,
         playlist_ids=[10],
     )
-    svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo)
+    svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
     svc.run_fetch("cookie", playlist_ids=[10])
     svc.run_pull("cookie", playlist_ids=[10])
 
@@ -260,7 +268,7 @@ def test_sync_no_longer_writes_synced_tracks_json(tmp_path: Path) -> None:
         playlist_ids=[10],
     )
 
-    svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo)
+    svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
     svc.run_fetch("cookie", playlist_ids=[10])
     svc.run_pull("cookie", playlist_ids=[10])
 
@@ -294,12 +302,12 @@ def test_second_sync_reads_synced_state_from_sqlite(tmp_path: Path) -> None:
         downloader.download_track.side_effect = _download
         return downloader
 
-    svc = SyncUseCase(cfg, _api(), _real_downloader(), workers=2, dry_run=False, state=repo)
+    svc = SyncUseCase(cfg, _api(), _real_downloader(), workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
     svc.run_fetch("cookie", playlist_ids=[10])
     svc.run_pull("cookie", playlist_ids=[10])
 
     second_downloader = _real_downloader()
-    svc = SyncUseCase(cfg, _api(), second_downloader, workers=2, dry_run=False, state=repo)
+    svc = SyncUseCase(cfg, _api(), second_downloader, workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
     svc.run_fetch("cookie", playlist_ids=[10])
     svc.run_pull("cookie", playlist_ids=[10])
 
@@ -319,7 +327,8 @@ def test_process_no_longer_writes_processed_json(tmp_path: Path) -> None:
     api = MagicMock()
     item = DownloadedTrack(track=_make_track(333), source_file=str(canonical), is_ncm=False, playlist_ids=[])
     svc = ProcessUseCase(
-        cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=1, dry_run=False, state=repo, presets={}
+        cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=1, dry_run=False, state=repo,
+        process_state=_process_repository(cfg), presets={},
     )
     svc.run_process(downloaded=[item], force=False)
 
@@ -345,13 +354,14 @@ def test_second_process_skips_when_specs_covered(tmp_path: Path) -> None:
             build_audio_asset_from_file(333, "MP3-192k", mp3),
         ],
     )
-    repo.record_processed(333, "preset-script", 0.0)
+    _process_repository(cfg).mark_processed(333, 0.0)
 
     api = MagicMock()
     organizer = MagicMock()
     item = DownloadedTrack(track=_make_track(333), source_file=str(flac), is_ncm=False, playlist_ids=[])
     svc = ProcessUseCase(
-        cfg, api, MagicMock(), organizer, MagicMock(), workers=1, dry_run=False, state=repo, presets={}
+        cfg, api, MagicMock(), organizer, MagicMock(), workers=1, dry_run=False, state=repo,
+        process_state=_process_repository(cfg), presets={},
     )
     svc.run_process(downloaded=[item], force=False)
 
@@ -359,7 +369,7 @@ def test_second_process_skips_when_specs_covered(tmp_path: Path) -> None:
 
 
 def test_guess_track_id_reads_pending_files(tmp_path: Path) -> None:
-    """raw→track 映射存 SQLite：_guess_track_id 从 pending_files 反查。"""
+    """raw→track 映射存 SQLite：_guess_track_id 从 processing_state 反查。"""
     from musicvault.shared.utils import workspace_rel_path
 
     cfg = _make_cfg(tmp_path)
@@ -370,7 +380,10 @@ def test_guess_track_id_reads_pending_files(tmp_path: Path) -> None:
     raw = cfg.cache_dir / "Artist - Song.mp3"
     raw.parent.mkdir(parents=True, exist_ok=True)
     rel = workspace_rel_path(raw, cfg.workspace_path)
-    repo.add_pending_file(rel, 333)
+    _process_repository(cfg).mark_downloaded(rel, 333)
 
-    svc = ProcessUseCase(cfg, MagicMock(), MagicMock(), MagicMock(), MagicMock(), workers=1, state=repo, presets={})
+    svc = ProcessUseCase(
+        cfg, MagicMock(), MagicMock(), MagicMock(), MagicMock(), workers=1, state=repo,
+        process_state=_process_repository(cfg), presets={},
+    )
     assert svc._guess_track_id(raw) == 333

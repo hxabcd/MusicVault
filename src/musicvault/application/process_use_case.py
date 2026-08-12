@@ -24,8 +24,9 @@ from musicvault.preset_api.v1 import (
     PresetLoadError,
     audio_spec_key,
 )
+from musicvault.ports.process_state import ProcessStateRepository
 from musicvault.ports.source import SourceClient
-from musicvault.ports.state import StateRepository
+from musicvault.ports.source_state import SourceStateRepository
 from musicvault.shared.utils import workspace_rel_path
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,8 @@ class ProcessUseCase:
         organizer: Organizer,
         metadata: MetadataWriter,
         workers: int,
-        state: StateRepository,
+        state: SourceStateRepository,
+        process_state: ProcessStateRepository,
         dry_run: bool = False,
         presets: Mapping[str, BasePreset] | None = None,
     ) -> None:
@@ -66,6 +68,7 @@ class ProcessUseCase:
         self.paths = WorkspacePaths(cfg.workspace_path)
         # 把本次处理产出的媒体资产登记到 SQLite，供 distribute 阶段消费
         self.recorder = SourceStateRecorder(state)
+        self.process_state = process_state
         # 歌词/元数据/音频规格只按注入的 preset 实例（v1 脚本）执行，无领域 Preset 回退
         if presets is None:
             raise PresetLoadError("ProcessUseCase 缺少 preset 实例索引（presets 参数）：请经 build_pipeline 组装注入")
@@ -110,7 +113,7 @@ class ProcessUseCase:
         for canon_path, track_id in self._scan_canonical_files():
             if track_id in seen_ids:
                 continue
-            if not force and self.recorder.state.is_processed(track_id, required_specs):
+            if not force and self.process_state.is_processed(track_id, required_specs):
                 scan_skipped += 1
                 continue
             try:
@@ -376,7 +379,7 @@ class ProcessUseCase:
         pending: list[tuple[Path, Track]] = []
         skipped = 0
         for raw_file, track in tasks:
-            if self.recorder.state.is_processed(track.id, required_specs):
+            if self.process_state.is_processed(track.id, required_specs):
                 skipped += 1
                 logger.info("跳过已处理文件（spec 已覆盖）：track_id=%s", track.id)
                 continue
@@ -389,16 +392,15 @@ class ProcessUseCase:
         first_path = next(iter(audio_map.values()))
         track_id = int(first_path.stem.split("_")[0])
         if track is not None:
-            # processed_tracks 外键引用 tracks，先确保曲目存在
+            # processing_state 外键引用 tracks，先确保曲目存在
             self.recorder.state.upsert_track(track)
-        # 固定标记（不再依赖 domain/preset.py 的 compute_preset_hash）
-        self.recorder.state.record_processed(track_id, "preset-script", time.time())
+        self.process_state.mark_processed(track_id, time.time())
 
     def _guess_track_id(self, file_path: Path, index: Mapping[str, object] | None = None) -> int | None:
-        """从 SQLite pending_files 反查 raw 文件所属 track_id。"""
+        """从 processing_state 反查 raw 文件所属 track_id。"""
         del index  # 旧 JSON 索引参数已废弃，保留签名兼容调用方
         rel = workspace_rel_path(file_path, self.cfg.workspace_path)
-        return self.recorder.state.find_track_id_by_path(rel)
+        return self.process_state.find_track_id_by_path(rel)
 
     def _safe_track(self, track_id: int, fallback_name: str) -> Track:
         """按需获取曲目详情，实例内单次缓存：同一曲目重复处理不再打详情 API。

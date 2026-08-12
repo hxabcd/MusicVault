@@ -15,8 +15,9 @@ from musicvault.application.source_state import SourceStateRecorder
 from musicvault.application.sync_engine import SyncEngine, SyncRunResult
 from musicvault.application.sync_use_case import SyncUseCase
 from musicvault.core.config import Config
+from musicvault.ports.process_state import ProcessStateRepository
 from musicvault.ports.source import SourceClient
-from musicvault.ports.state import StateRepository
+from musicvault.ports.source_state import SourceStateRepository
 from musicvault.ports.target import TargetOperations
 from musicvault.preset_api.v1 import BasePreset, PresetRegistry
 
@@ -41,7 +42,8 @@ class PipelineUseCase:
         self,
         cfg: Config,
         api: SourceClient,
-        state: StateRepository,
+        state: SourceStateRepository,
+        process_state: ProcessStateRepository,
         dry_run: bool = False,
         presets: Mapping[str, BasePreset] | None = None,
         registry: PresetRegistry | None = None,
@@ -75,6 +77,7 @@ class PipelineUseCase:
             workers=max(1, download_workers),
             dry_run=dry_run,
             state=state,
+            process_state=process_state,
         )
         self.process_service = ProcessUseCase(
             cfg=cfg,
@@ -88,6 +91,7 @@ class PipelineUseCase:
             workers=max(1, process_workers),
             dry_run=dry_run,
             state=state,
+            process_state=process_state,
             presets=presets,
         )
 

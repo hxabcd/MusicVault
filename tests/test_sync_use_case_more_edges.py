@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
+from musicvault.adapters.state.sqlite import SQLiteProcessStateRepository, SQLiteSourceStateRepository, SQLiteState
 from musicvault.application.source_state import build_audio_asset_from_file
 from musicvault.application.sync_use_case import SyncResult, SyncUseCase
 from musicvault.core.config import Config
@@ -38,12 +38,19 @@ def _make_track(track_id: int) -> Track:
     )
 
 
-def _repository(cfg: Config) -> SQLiteStateRepository:
-    return SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+def _repository(cfg: Config) -> SQLiteSourceStateRepository:
+    return SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file))
+
+
+def _process_repository(cfg: Config) -> SQLiteProcessStateRepository:
+    return SQLiteProcessStateRepository(SQLiteState(cfg.state_db_file))
 
 
 def _svc(cfg: Config, api: MagicMock | None = None, *, dry_run: bool = False) -> SyncUseCase:
-    return SyncUseCase(cfg, api or MagicMock(), MagicMock(), workers=2, dry_run=dry_run, state=_repository(cfg))
+    return SyncUseCase(
+        cfg, api or MagicMock(), MagicMock(), workers=2, dry_run=dry_run, state=_repository(cfg),
+        process_state=_process_repository(cfg),
+    )
 
 
 def _make_api(track_ids: list[int]) -> MagicMock:
@@ -97,7 +104,7 @@ class TestEmptyConfiguration:
         monkeypatch.setattr("musicvault.application.sync_use_case.output_warn", lambda msg: captured.append(msg))
         api = MagicMock()
 
-        svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=False, state=_repository(cfg))
+        svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=False, state=_repository(cfg), process_state=_process_repository(cfg))
         svc.run_fetch("cookie", playlist_ids=[])
 
         assert captured and "未配置" in captured[0]
@@ -110,7 +117,7 @@ class TestEmptyConfiguration:
         cfg.cache_dir.mkdir(parents=True)
         api = MagicMock()
 
-        svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=False, state=_repository(cfg))
+        svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=False, state=_repository(cfg), process_state=_process_repository(cfg))
         result = svc.run_pull("cookie", playlist_ids=[])
 
         assert result == SyncResult()
@@ -125,7 +132,7 @@ class TestRecordSourceState:
         cfg.cache_dir.mkdir(parents=True)
         repo = _repository(cfg)
 
-        svc = SyncUseCase(cfg, MagicMock(), MagicMock(), workers=2, dry_run=False, state=repo)
+        svc = SyncUseCase(cfg, MagicMock(), MagicMock(), workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
         svc._record_source_state({}, {}, {"abc": {"name": "x", "track_count": 1}, "10": "not-dict"}, [])
 
         assert repo.list_playlists() == []
@@ -137,7 +144,7 @@ class TestRecordSourceState:
         cfg.cache_dir.mkdir(parents=True)
         repo = _repository(cfg)
 
-        svc = SyncUseCase(cfg, MagicMock(), MagicMock(), workers=2, dry_run=False, state=repo)
+        svc = SyncUseCase(cfg, MagicMock(), MagicMock(), workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
         svc._record_source_state({}, {}, {"10": {"name": "歌单A", "track_count": 1}}, [])
 
         playlists = repo.list_playlists()
@@ -161,7 +168,7 @@ class TestCleanupStaleState:
             MediaAsset(track_id=222, asset_type="cover", spec="cover", path=cfg.media_store_dir / "222" / "cover.jpg")
         )
 
-        svc = SyncUseCase(cfg, MagicMock(), MagicMock(), workers=2, dry_run=False, state=repo)
+        svc = SyncUseCase(cfg, MagicMock(), MagicMock(), workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
         assert svc._cleanup_stale_state() == 1
         # 非 audio 资产及其曲目不受影响
         assert repo.list_media_assets(222)
@@ -178,7 +185,7 @@ class TestCleanupStaleState:
         canonical.write_bytes(b"fake flac")
         repo.upsert_media_asset(build_audio_asset_from_file(111, "FLAC", canonical))
 
-        svc = SyncUseCase(cfg, MagicMock(), MagicMock(), workers=2, dry_run=False, state=repo)
+        svc = SyncUseCase(cfg, MagicMock(), MagicMock(), workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
         assert svc._cleanup_stale_state() == 0
 
     def test_dry_run_reports_without_removing(self, tmp_path: Path) -> None:
@@ -192,7 +199,7 @@ class TestCleanupStaleState:
             MediaAsset(track_id=111, asset_type="audio", spec="FLAC", path=cfg.media_store_dir / "111" / "111.flac")
         )
 
-        svc = SyncUseCase(cfg, MagicMock(), MagicMock(), workers=2, dry_run=True, state=repo)
+        svc = SyncUseCase(cfg, MagicMock(), MagicMock(), workers=2, dry_run=True, state=repo, process_state=_process_repository(cfg))
         assert svc._cleanup_stale_state() == 1
         assert repo.get_track(111) is not None
 
@@ -369,7 +376,7 @@ class TestPullWithProgress:
         api = _make_api([111])
         progress = _FakeProgress()
 
-        svc = SyncUseCase(cfg, api, _make_downloader(cfg), workers=2, dry_run=False, state=_repository(cfg))
+        svc = SyncUseCase(cfg, api, _make_downloader(cfg), workers=2, dry_run=False, state=_repository(cfg), process_state=_process_repository(cfg))
         result = svc.run_pull("cookie", playlist_ids=[10], progress=progress)
 
         assert len(result.downloaded) == 1
@@ -399,7 +406,7 @@ class TestDownloadFailureDegradation:
         repo = _repository(cfg)
         progress = _FakeProgress()
 
-        svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo)
+        svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
         with caplog.at_level(logging.ERROR, logger="musicvault.application.sync_use_case"):
             result = svc.run_pull("cookie", playlist_ids=[10], progress=progress)
 
@@ -407,7 +414,7 @@ class TestDownloadFailureDegradation:
         assert len(result.downloaded) == 1
         assert result.downloaded[0].track.id == 111
         assert result.added == 1
-        assert repo.list_pending_track_ids() == [111]
+        assert _process_repository(cfg).list_downloaded_track_ids() == [111]
         # 进度与日志：失败曲目上报 advance(False) 与错误日志
         assert ("advance", False, 2, "Song 222") in progress.events
         assert any("下载失败" in record.message and "222" in record.message for record in caplog.records)
@@ -434,11 +441,11 @@ class TestDownloadInterrupt:
         downloader.download_track.side_effect = _download
         repo = _repository(cfg)
 
-        svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo)
+        svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
         with pytest.raises(KeyboardInterrupt):
             svc.run_pull("cookie", playlist_ids=[10], progress=_FakeProgress())
 
         # 部分保存：已成功的 111 登记 pending 与 track，失败的 222 不登记
-        assert repo.list_pending_track_ids() == [111]
+        assert _process_repository(cfg).list_downloaded_track_ids() == [111]
         assert repo.get_track(111) is not None
         assert repo.get_track(222) is None
