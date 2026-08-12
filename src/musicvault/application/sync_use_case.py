@@ -2,27 +2,23 @@ from __future__ import annotations
 
 import logging
 import shutil
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
 from musicvault.adapters.filesystem.workspace import WorkspacePaths
 from musicvault.adapters.processors.downloader import Downloader
+from musicvault.adapters.processors.lyrics import convert_lyrics_payload
 from musicvault.application.progress import ProgressReporter
 from musicvault.application.source_state import SourceStateRecorder
 from musicvault.core.config import Config
+from musicvault.domain.lyrics import lyrics_to_json
 from musicvault.domain.models import DownloadedTrack, Playlist, Track
-from musicvault.domain.preset import Preset, audio_spec_key
 from musicvault.ports.source import SourceClient
 from musicvault.ports.state import StateRepository
 from musicvault.shared.output import warn as output_warn
-from musicvault.shared.utils import (
-    create_link,
-    format_track_name,
-    remove_link,
-    safe_filename,
-    workspace_rel_path,
-)
+from musicvault.shared.utils import workspace_rel_path
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +36,19 @@ class SyncResult:
     dry_run_plan: dict | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _RemoteState:
+    """fetch/pull 共享的远端拉取结果（纯 API 读取，不落库）。"""
+
+    all_tracks: dict[int, Track]
+    playlist_track_order: dict[int, list[int]]
+    playlist_index: dict[str, dict[str, object]]
+    pending_renames: list[tuple[int, str, str]]
+    song_ids: list[int]
+
+
 class SyncUseCase:
-    """同步应用用例：拉取源端曲目、下载与源侧状态登记"""
+    """同步应用用例：fetch 拉取元数据、pull 下载曲目与歌词入库、源侧状态登记"""
 
     def __init__(
         self,
@@ -61,7 +68,7 @@ class SyncUseCase:
         self.paths = WorkspacePaths(cfg.workspace_path)
         # 把本次 sync 的源侧状态写入 SQLite，供 target-sync 消费
         self.recorder = SourceStateRecorder(state)
-        # 歌单索引：run_sync 正常路径末尾填充；无歌单早退时保持空（run_pipeline 直接消费）
+        # 歌单索引：run_fetch 正常路径末尾填充；无歌单早退时保持空（run_pipeline 直接消费）
         self.playlist_index: dict[str, dict[str, object]] = {}
 
     def load_synced_state(self) -> dict[int, list[int]]:
@@ -83,28 +90,96 @@ class SyncUseCase:
     # 主流程
     # ------------------------------------------------------------------
 
-    def run_sync(
+    def run_fetch(self, cookie: str, playlist_ids: list[int]) -> None:
+        """fetch 阶段：拉取歌单元数据并登记 SQLite（不下载、不碰 library）。
+
+        改名/删除/分配变化只更新 SQLite 关系（rename 走 upsert_playlist），
+        library 目录迁移由 distribute 幂等重建覆盖。纯元数据写 SQLite，
+        无 dry-run 分支（dry-run 下本阶段由 PipelineUseCase 跳过）。
+        """
+        song_ids = self.recorder.state.list_managed_songs()
+        if not playlist_ids and not song_ids:
+            output_warn("未配置任何歌单或单曲，请先执行 msv add 添加歌单或 msv add --song <ID> 添加单曲")
+            return
+
+        self.api.login_with_cookie(cookie)
+        remote = self._fetch_remote(playlist_ids)
+        for pid, _old_name, new_name in remote.pending_renames:
+            self.recorder.state.upsert_playlist(Playlist(pid, new_name, ()))
+            logger.info("歌单 %s 已改名为 '%s'（仅登记 SQLite，library 由 distribute 幂等重建）", pid, new_name)
+
+        self.playlist_index = remote.playlist_index
+        self._record_source_state(
+            remote.all_tracks, remote.playlist_track_order, remote.playlist_index, remote.song_ids
+        )
+
+    def run_pull(
         self,
         cookie: str,
         playlist_ids: list[int],
         *,
         progress: ProgressReporter | None = None,
     ) -> SyncResult:
+        """pull 阶段：对比并下载新增曲目、歌词统一格式入库、清理远端已删曲目。"""
         stale_index = self._cleanup_stale_state()
         song_ids = self.recorder.state.list_managed_songs()
         if not playlist_ids and not song_ids:
-            output_warn("未配置任何歌单或单曲，请先执行 msv add 添加歌单或 msv add --song <ID> 添加单曲")
             return SyncResult()
 
         self.api.login_with_cookie(cookie)
+        remote = self._fetch_remote(playlist_ids)
+        self.playlist_index = remote.playlist_index
+        unique = list(remote.all_tracks.values())
+        logger.info("歌单曲目合计：%s 首（去重后）", len(unique))
+
+        new_tracks, _ = self._diff_tracks(unique)
+
+        if self.dry_run:
+            with_url, no_url = self._resolve_dry_urls(new_tracks)
+            pruned_ids = self._prune_stale_tracks(remote.all_tracks)[1]
+            plan = {
+                "with_url": with_url,
+                "no_url": no_url,
+                "pruned": pruned_ids,
+                "stale_index": stale_index,
+                "track_count": len(unique),
+                "playlist_count": len(playlist_ids) + (1 if song_ids else 0),
+            }
+            return SyncResult(
+                downloaded=(),
+                dry_run_plan=plan,
+                track_count=len(unique),
+                playlist_count=len(playlist_ids) + (1 if song_ids else 0),
+            )
+
+        downloaded, no_url = self._sync_tracks(new_tracks, progress)
+        for item in downloaded:
+            self._save_lyrics(item.track.id)
+        pruned_count, _ = self._prune_stale_tracks(remote.all_tracks)
+        self._record_source_state(
+            remote.all_tracks, remote.playlist_track_order, remote.playlist_index, remote.song_ids
+        )
+
+        n_playlists = len(playlist_ids) + (1 if song_ids else 0)
+        return SyncResult(
+            downloaded=tuple(downloaded),
+            added=len(downloaded),
+            no_url=no_url,
+            pruned=pruned_count,
+            track_count=len(unique),
+            playlist_count=n_playlists,
+        )
+
+    def _fetch_remote(self, playlist_ids: list[int]) -> _RemoteState:
+        """拉取远端歌单曲目与单独管理单曲详情（fetch/pull 共用，纯 API 读取）。"""
+        song_ids = self.recorder.state.list_managed_songs()
         playlist_index = {
             str(pl.id): {"name": pl.name, "track_count": len(pl.track_ids)}
             for pl in self.recorder.state.list_playlists()
         }
-        track_playlists: dict[int, list[int]] = {}
         all_tracks: dict[int, Track] = {}
-        pending_renames: list[tuple[int, str, str]] = []
         playlist_track_order: dict[int, list[int]] = {}
+        pending_renames: list[tuple[int, str, str]] = []
 
         if playlist_ids:
             logger.info("将同步 %s 个歌单", len(playlist_ids))
@@ -120,69 +195,26 @@ class SyncUseCase:
                 playlist_track_order[pid] = [track.id for track in tracks]
                 for track in tracks:
                     all_tracks[track.id] = track
-                    track_playlists.setdefault(track.id, []).append(pid)
 
-        if pending_renames and not self.dry_run:
-            for pid, old_name, new_name in pending_renames:
-                self._handle_playlist_rename(pid, old_name, new_name, all_tracks)
-
-        # 获取单独管理的单曲
         if song_ids:
             logger.info("将同步 %s 首单独管理的单曲", len(song_ids))
             song_details = self.api.get_tracks_detail(song_ids)
-            for sid, track in song_details.items():
+            for _sid, track in song_details.items():
                 if track.id not in all_tracks:
                     all_tracks[track.id] = track
-                    track_playlists.setdefault(track.id, [])
-                # 过滤本地已删除但仍在 managed_songs 中的旧 ID
-                missing = sorted(set(song_ids) - set(song_details.keys()))
-                if missing:
-                    for mid in missing:
-                        self.recorder.state.remove_managed_song(mid)
-                    logger.info("清理无效单曲 ID：%s", missing)
+            # 过滤本地已删除但仍在 managed_songs 中的旧 ID
+            missing = sorted(set(song_ids) - set(song_details.keys()))
+            if missing:
+                for mid in missing:
+                    self.recorder.state.remove_managed_song(mid)
+                logger.info("清理无效单曲 ID：%s", missing)
 
-        self.playlist_index = playlist_index
-
-        unique = list(all_tracks.values())
-        logger.info("歌单曲目合计：%s 首（去重后）", len(unique))
-
-        # 协调已有曲目的歌单分配变化（移动/链接文件），dry-run 下仅计算不执行
-        moves = self._reconcile_playlist_assignments(track_playlists, playlist_index, all_tracks)
-
-        pruned_count, pruned_ids = self._prune_stale_tracks(all_tracks)
-        new_tracks, synced_ids = self._diff_tracks(unique)
-
-        if self.dry_run:
-            with_url, no_url = self._resolve_dry_urls(new_tracks)
-            plan = {
-                "with_url": with_url,
-                "no_url": no_url,
-                "pruned": pruned_ids,
-                "moves": moves,
-                "renames": pending_renames,
-                "stale_index": stale_index,
-                "track_count": len(unique),
-                "playlist_count": len(playlist_ids) + (1 if song_ids else 0),
-            }
-            return SyncResult(
-                downloaded=(),
-                dry_run_plan=plan,
-                track_count=len(unique),
-                playlist_count=len(playlist_ids) + (1 if song_ids else 0),
-            )
-
-        downloaded, no_url = self._sync_tracks(new_tracks, track_playlists, progress)
-        self._record_source_state(all_tracks, playlist_track_order, playlist_index, song_ids)
-
-        added = len(downloaded)
-        n_playlists = len(playlist_ids) + (1 if song_ids else 0)
-        return SyncResult(
-            downloaded=tuple(downloaded),
-            added=added,
-            no_url=no_url,
-            pruned=pruned_count,
-            track_count=len(unique),
-            playlist_count=n_playlists,
+        return _RemoteState(
+            all_tracks=all_tracks,
+            playlist_track_order=playlist_track_order,
+            playlist_index=playlist_index,
+            pending_renames=pending_renames,
+            song_ids=song_ids,
         )
 
     def _record_source_state(
@@ -234,143 +266,9 @@ class SyncUseCase:
         logger.info("清理过期状态：%s 个文件已不存在，已从索引中移除", len(stale_ids))
         return len(stale_ids)
 
-    def _handle_playlist_rename(self, pid: int, old_name: str, new_name: str, all_tracks: dict[int, Track]) -> None:
-        old_safe = safe_filename(old_name)
-        new_safe = safe_filename(new_name)
-        if old_safe == new_safe:
-            return
-
-        # 删除旧 library 目录（仅含硬链接，直接 rmtree）
-        for preset in self.cfg.presets:
-            old_dir = self.cfg.preset_dir(preset.name) / old_safe
-            if old_dir.is_dir():
-                shutil.rmtree(old_dir)
-
-        # 重建新目录中的硬链接
-        state_map = self.load_synced_state()
-        for track_id, pids in state_map.items():
-            if pid not in pids:
-                continue
-            track = all_tracks.get(track_id)
-            if track is None:
-                continue
-
-            for preset in self.cfg.presets:
-                spec_key = audio_spec_key(preset.format, preset.bitrate)
-                audio_src = self.find_canonical_for_spec(track_id, spec_key)
-                if not audio_src:
-                    continue
-                dst = self.cfg.preset_dir(preset.name) / new_safe / self._link_name(track, preset, audio_src.suffix)
-                create_link(audio_src, dst)
-
-                if preset.write_lrc_file:
-                    lrc_src = audio_src.with_name(f"{track_id}.{preset.name}.lrc")
-                    if lrc_src.exists():
-                        create_link(lrc_src, dst.with_suffix(".lrc"))
-
-        logger.info("歌单 '%s' 已重命名为 '%s'，已迁移本地目录", old_name, new_name)
-
-    # ------------------------------------------------------------------
-    # 歌单分配协调
-    # ------------------------------------------------------------------
-
-    def _reconcile_playlist_assignments(
-        self,
-        track_playlists: dict[int, list[int]],
-        playlist_index: dict[str, dict[str, object]],
-        all_tracks: dict[int, Track],
-    ) -> list[tuple[Track, set[str], set[str]]]:
-        """对比 API 返回的歌单分配与本地存储，删旧链接 + 建新链接。
-
-        返回需要调整的曲目列表 [(track, 需删除的目录, 需新增的目录)]；
-        dry-run 模式下只计算并返回，不执行任何文件操作、不写状态。
-        """
-        old_map = self.load_synced_state()
-        if not old_map:
-            return []
-
-        moves: list[tuple[Track, set[str], set[str]]] = []
-        audio_maps: dict[int, dict[str, Path]] = {}
-
-        for track_id, old_pids in old_map.items():
-            new_pids = track_playlists.get(track_id, [])
-            if not new_pids or old_pids == new_pids:
-                continue
-
-            old_names = {self._pid_to_dirname(pid, playlist_index) for pid in old_pids}
-            new_names = {self._pid_to_dirname(pid, playlist_index) for pid in new_pids}
-            if old_names == new_names:
-                continue
-
-            track = all_tracks.get(track_id)
-            if track is None:
-                continue
-
-            rm_names, add_names = old_names - new_names, new_names - old_names
-
-            # 需要新建链接时必须存在 canonical 源文件，否则整条跳过（与旧行为一致）
-            if add_names:
-                audio_map: dict[str, Path] = {}
-                for preset in self.cfg.presets:
-                    spec_key = audio_spec_key(preset.format, preset.bitrate)
-                    if spec_key not in audio_map:
-                        src = self.find_canonical_for_spec(track_id, spec_key)
-                        if src:
-                            audio_map[spec_key] = src
-                if not audio_map:
-                    continue
-                audio_maps[track_id] = audio_map
-
-            moves.append((track, rm_names, add_names))
-
-        if not self.dry_run:
-            for track, rm_names, add_names in moves:
-                # 删除已移除歌单的链接
-                for name in rm_names:
-                    self._remove_track_links(track, name)
-                # 创建新增歌单的链接
-                if add_names:
-                    for name in add_names:
-                        self._create_track_links(audio_maps[track.id], track, name)
-
-            # 歌单分配以 run_sync 末尾的 _record_source_state（playlist_track_order）为准，
-            # 这里无需再写回旧 JSON 状态。
-
-        return moves
-
-    def _create_track_links(self, audio_map: dict[str, Path], track: Track, dirname: str) -> None:
-        """在 library 中各 preset 目录下创建硬链接（人类可读文件名）。"""
-        for preset in self.cfg.presets:
-            spec_key = audio_spec_key(preset.format, preset.bitrate)
-            audio_src = audio_map.get(spec_key)
-            if not audio_src:
-                continue
-            dst_dir = self.cfg.preset_dir(preset.name) / dirname
-            dst_dir.mkdir(parents=True, exist_ok=True)
-            create_link(audio_src, dst_dir / self._link_name(track, preset, audio_src.suffix))
-            if preset.write_lrc_file:
-                lrc_src = audio_src.with_name(f"{track.id}.{preset.name}.lrc")
-                if lrc_src.exists():
-                    create_link(lrc_src, dst_dir / self._link_name(track, preset, ".lrc"))
-
-    def _remove_track_links(self, track: Track, dirname: str) -> None:
-        """删除 library 中各 preset 目录下的硬链接。"""
-        for preset in self.cfg.presets:
-            p_dir = self.cfg.preset_dir(preset.name)
-            if preset.format:
-                ext_map = {"flac": ".flac", "mp3": ".mp3", "aac": ".m4a", "ogg": ".ogg", "opus": ".opus"}
-                ext = ext_map.get(preset.format, f".{preset.format}")
-                remove_link(p_dir / dirname / self._link_name(track, preset, ext))
-            else:
-                # ORIGINAL spec：不确定扩展名，尝试常见格式
-                for ext in (".flac", ".mp3", ".m4a", ".ogg", ".opus"):
-                    remove_link(p_dir / dirname / self._link_name(track, preset, ext))
-            if preset.write_lrc_file:
-                remove_link(p_dir / dirname / self._link_name(track, preset, ".lrc"))
-
     def find_canonical_for_spec(self, track_id: int, spec_key: str) -> Path | None:
-        """查找符合指定 spec_key 的 canonical 文件（media_store/<track_id>/audio/ 中）。"""
-        audio_dir = self.paths.media_store / str(track_id) / "audio"
+        """查找符合指定 spec_key 的 canonical 文件（media_store/<track_id>/ 扁平布局）。"""
+        audio_dir = self.paths.media_store / str(track_id)
         if not audio_dir.is_dir():
             return None
         if spec_key == "ORIGINAL":
@@ -398,26 +296,17 @@ class SyncUseCase:
                 return p
         return None
 
-    # ------------------------------------------------------------------
-    # 链接文件名（与 ProcessUseCase 保持一致）
-    # ------------------------------------------------------------------
-
-    def _link_name(self, track: Track, preset: Preset, suffix: str = "") -> str:
-        stem = format_track_name(preset.filename_template, track)
-        return stem + suffix
-
-    def _pid_to_dirname(self, pid: int, playlist_index: dict[str, dict[str, object]]) -> str:
-        """将 playlist_id 映射为安全的目录名。"""
-        entry = playlist_index.get(str(pid))
-        name = str(entry["name"]) if entry and entry.get("name") else str(pid)
-        return safe_filename(name)
-
     def _diff_tracks(self, tracks: list[Track]) -> tuple[list[Track], set[int]]:
-        """返回 (新增曲目, 已同步的 track_id 集合)，已同步集合来自 SQLite 快照。"""
-        state_map = self.load_synced_state()
-        synced_ids = set(state_map.keys())
-        new_tracks = [track for track in tracks if track.id not in synced_ids]
-        return new_tracks, synced_ids
+        """返回 (新增曲目, 已下载的 track_id 集合)。
+
+        fetch 阶段只登记元数据、不下载，因此「已同步」以实际下载产物为准：
+        存在媒体资产或待处理 raw 文件（pending_files）的曲目视为已下载。
+        """
+        snapshot = self.recorder.state.create_snapshot()
+        downloaded_ids = {asset.track_id for asset in snapshot.media_assets if asset.asset_type == "audio"}
+        downloaded_ids.update(self.recorder.state.list_pending_track_ids())
+        new_tracks = [track for track in tracks if track.id not in downloaded_ids]
+        return new_tracks, downloaded_ids
 
     def _resolve_dry_urls(self, tracks: list[Track]) -> tuple[list[Track], list[Track]]:
         """dry-run：批量查询直链，返回 (可下载, 无直链) 两组曲目。"""
@@ -429,9 +318,10 @@ class SyncUseCase:
         return with_url, no_url
 
     def _prune_stale_tracks(self, remote_tracks: dict[int, Track]) -> tuple[int, list[int]]:
-        """删除远端已不存在的本地曲目（canonical 文件 + library 链接）。
+        """删除远端已不存在的本地曲目（canonical 文件 + SQLite 状态）。
 
         返回 (清理数量, stale_ids)；dry-run 模式下只计算并上报，不删除文件、不写状态。
+        library 链接由 distribute 幂等重建覆盖，这里不再遍历 library。
         """
         state_map = self.load_synced_state()
         synced_ids = set(state_map.keys())
@@ -445,11 +335,11 @@ class SyncUseCase:
 
         removed_count = 0
         for track_id in stale_ids:
-            # 收集 canonical 文件 inode（删除前）
+            # 收集 canonical 文件 inode（保留供扩展；library 链接清理已移交 distribute）
             canonical_inodes: set[tuple[int, int]] = set()
-            audio_dir = self.paths.media_store / str(track_id) / "audio"
-            if audio_dir.is_dir():
-                for f in list(audio_dir.iterdir()):
+            track_dir = self.paths.media_store / str(track_id)
+            if track_dir.is_dir():
+                for f in list(track_dir.iterdir()):
                     if not f.is_file():
                         continue
                     try:
@@ -457,27 +347,8 @@ class SyncUseCase:
                         canonical_inodes.add((st.st_dev, st.st_ino))
                     except OSError:
                         continue
-                # 删除 media_store/<tid>/audio/ 下全部文件（各格式、bitrate 变体、.lrc）
-                shutil.rmtree(audio_dir)
-
-            # 通过 inode 匹配删除所有 preset 目录下的 library 链接
-            if canonical_inodes:
-                for preset in self.cfg.presets:
-                    parent = self.cfg.preset_dir(preset.name)
-                    if not parent.is_dir():
-                        continue
-                    for pl_dir in parent.iterdir():
-                        if not pl_dir.is_dir():
-                            continue
-                        for f in list(pl_dir.iterdir()):
-                            if not f.is_file():
-                                continue
-                            try:
-                                st = f.stat()
-                                if (st.st_dev, st.st_ino) in canonical_inodes:
-                                    f.unlink()
-                            except OSError:
-                                continue
+                # 扁平布局：删除 media_store/<tid>/ 整个目录（各格式、bitrate 变体、.lrc）
+                shutil.rmtree(track_dir)
 
             state_map.pop(track_id, None)
             removed_count += 1
@@ -491,7 +362,6 @@ class SyncUseCase:
     def _sync_tracks(
         self,
         tracks: list[Track],
-        track_playlists: dict[int, list[int]],
         progress: ProgressReporter | None = None,
     ) -> tuple[list[DownloadedTrack], int]:
         """下载新增曲目，返回 (下载结果, 无直链跳过的数量)。"""
@@ -511,7 +381,7 @@ class SyncUseCase:
             pending.append((track, url))
         logger.info("下载准备完成：可下载=%s 跳过=%s", len(pending), skipped)
 
-        downloaded = self._run_download_batch(pending, track_playlists, progress)
+        downloaded = self._run_download_batch(pending, progress)
         # 写入 raw→track 映射（供 process 阶段从文件名反查 track_id）
         for item in downloaded:
             self.recorder.state.upsert_track(item.track)
@@ -522,7 +392,6 @@ class SyncUseCase:
     def _run_download_batch(
         self,
         tasks: list[tuple[Track, str]],
-        track_playlists: dict[int, list[int]],
         progress: ProgressReporter | None = None,
     ) -> list[DownloadedTrack]:
         if not tasks:
@@ -546,7 +415,6 @@ class SyncUseCase:
                         idx, track = future_map[future]
                         try:
                             item = future.result()
-                            item.playlist_ids = track_playlists.get(track.id, [])
                             results.append(item)
                             if progress is not None:
                                 progress.advance(success=True, idx=idx, item_name=track.name)
@@ -572,3 +440,13 @@ class SyncUseCase:
             self.recorder.state.upsert_track(item.track)
             rel = workspace_rel_path(Path(item.source_file), self.cfg.workspace_path)
             self.recorder.state.add_pending_file(rel, item.track.id)
+
+    def _save_lyrics(self, track_id: int) -> None:
+        """拉取曲目歌词并转统一格式入库；失败降级为空行，不阻塞下载。"""
+        try:
+            payload = self.api.get_track_lyrics(track_id)
+            lines = convert_lyrics_payload(payload)
+        except Exception as error:  # noqa: BLE001 - 歌词失败降级，不阻塞下载
+            logger.warning("获取歌词失败 track_id=%s：%s", track_id, error)
+            lines = ()
+        self.recorder.state.save_lyrics(track_id, lyrics_to_json(lines), time.time())

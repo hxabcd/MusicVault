@@ -426,6 +426,12 @@ class SQLiteStateRepository:
             row = connection.execute("SELECT track_id FROM pending_files WHERE path = ?", (path,)).fetchone()
         return int(row["track_id"]) if row is not None else None
 
+    def list_pending_track_ids(self) -> list[int]:
+        """列出已有待处理 raw 文件的 track_id（表示该曲目已下载但尚未处理完）。"""
+        with self.database.connect() as connection:
+            rows = connection.execute("SELECT DISTINCT track_id FROM pending_files ORDER BY track_id").fetchall()
+        return [int(row["track_id"]) for row in rows]
+
     # -- lyrics（源端歌词原稿，按 track 一行 upsert） --
 
     def save_lyrics(

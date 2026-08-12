@@ -50,7 +50,9 @@ def test_sync_records_tracks_and_playlists_to_sqlite(tmp_path: Path) -> None:
         playlist_ids=[10],
     )
 
-    SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo).run_sync("cookie", playlist_ids=[10])
+    svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo)
+    svc.run_fetch("cookie", playlist_ids=[10])
+    svc.run_pull("cookie", playlist_ids=[10])
 
     snapshot = repo.create_snapshot()
     assert [track.id for track in snapshot.tracks] == [111]
@@ -72,7 +74,9 @@ def test_sync_records_managed_songs_to_sqlite(tmp_path: Path) -> None:
     api.get_tracks_download_urls.return_value = {}
     downloader = MagicMock()
 
-    SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo).run_sync("cookie", playlist_ids=[])
+    svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo)
+    svc.run_fetch("cookie", playlist_ids=[])
+    svc.run_pull("cookie", playlist_ids=[])
 
     snapshot = repo.create_snapshot()
     assert 999 in [track.id for track in snapshot.tracks]
@@ -89,7 +93,8 @@ def test_dry_run_sync_does_not_write_sqlite(tmp_path: Path) -> None:
     api.get_playlist_tracks.return_value = [_make_track(111)]
     api.get_tracks_download_urls.return_value = {111: "http://example.com/111.mp3"}
 
-    SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=True, state=repo).run_sync("cookie", playlist_ids=[10])
+    # dry-run 下 fetch 不执行（写 SQLite 有副作用），pull 只计算计划
+    SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=True, state=repo).run_pull("cookie", playlist_ids=[10])
 
     assert repo.create_snapshot().tracks == ()
 
@@ -161,7 +166,9 @@ def test_sync_with_stale_song_id_does_not_crash(tmp_path: Path) -> None:
     api.get_tracks_download_urls.return_value = {}
     downloader = MagicMock()
 
-    SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo).run_sync("cookie", playlist_ids=[])
+    svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo)
+    svc.run_fetch("cookie", playlist_ids=[])
+    svc.run_pull("cookie", playlist_ids=[])
 
     snapshot = repo.create_snapshot()
     assert [track.id for track in snapshot.tracks] == [999]
@@ -188,7 +195,9 @@ def test_synced_state_feeds_target_sync_closed_loop(tmp_path: Path) -> None:
         is_ncm=False,
         playlist_ids=[10],
     )
-    SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo).run_sync("cookie", playlist_ids=[10])
+    svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo)
+    svc.run_fetch("cookie", playlist_ids=[10])
+    svc.run_pull("cookie", playlist_ids=[10])
 
     # 2) 模拟 process 产出 canonical 音频并登记媒体资产
     canonical = cfg.media_store_dir / "111" / "audio" / "111.flac"
@@ -229,7 +238,9 @@ def test_sync_no_longer_writes_synced_tracks_json(tmp_path: Path) -> None:
         playlist_ids=[10],
     )
 
-    SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo).run_sync("cookie", playlist_ids=[10])
+    svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo)
+    svc.run_fetch("cookie", playlist_ids=[10])
+    svc.run_pull("cookie", playlist_ids=[10])
 
     assert not (cfg.workspace_path / "state").exists()
 
@@ -261,14 +272,14 @@ def test_second_sync_reads_synced_state_from_sqlite(tmp_path: Path) -> None:
         downloader.download_track.side_effect = _download
         return downloader
 
-    SyncUseCase(cfg, _api(), _real_downloader(), workers=2, dry_run=False, state=repo).run_sync(
-        "cookie", playlist_ids=[10]
-    )
+    svc = SyncUseCase(cfg, _api(), _real_downloader(), workers=2, dry_run=False, state=repo)
+    svc.run_fetch("cookie", playlist_ids=[10])
+    svc.run_pull("cookie", playlist_ids=[10])
 
     second_downloader = _real_downloader()
-    SyncUseCase(cfg, _api(), second_downloader, workers=2, dry_run=False, state=repo).run_sync(
-        "cookie", playlist_ids=[10]
-    )
+    svc = SyncUseCase(cfg, _api(), second_downloader, workers=2, dry_run=False, state=repo)
+    svc.run_fetch("cookie", playlist_ids=[10])
+    svc.run_pull("cookie", playlist_ids=[10])
 
     second_downloader.download_track.assert_not_called()
 

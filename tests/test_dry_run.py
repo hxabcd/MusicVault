@@ -33,7 +33,7 @@ def _repository(cfg: Config) -> SQLiteStateRepository:
     return SQLiteStateRepository(SQLiteState(cfg.state_db_file))
 
 
-def _seed_synced(cfg: Config, state_map: dict[int, list[int]]) -> None:
+def _seed_synced(cfg: Config, state_map: dict[int, list[int]]) -> SQLiteStateRepository:
     """把 {track_id: [playlist_ids]} 写入 SQLite，替代旧 synced_tracks.json 预置。"""
     repo = _repository(cfg)
     tracks = [Track(id=tid, name=f"Song {tid}", artists=[], album="Album", raw={}) for tid in state_map]
@@ -44,6 +44,7 @@ def _seed_synced(cfg: Config, state_map: dict[int, list[int]]) -> None:
     for pid, playlist in playlists.items():
         object.__setattr__(playlist, "track_ids", tuple(tid for tid, pids in state_map.items() if pid in pids))
     SourceStateRecorder(repo).record_source_state(tracks, playlists.values())
+    return repo
 
 
 class TestSyncDryRun:
@@ -51,10 +52,11 @@ class TestSyncDryRun:
         cfg = _make_cfg(tmp_path)
         cfg.media_store_dir.mkdir(parents=True)
         cfg.cache_dir.mkdir(parents=True)
-        # 已有 1 首已同步（状态经 SQLite 预置）
-        _seed_synced(cfg, {111: [10]})
+        # 已有 1 首已下载（状态经 SQLite 预置，pending_files 标记下载产物）
+        repo = _seed_synced(cfg, {111: [10]})
+        repo.add_pending_file("cache/111.mp3", 111)
 
-        # API：歌单信息变化（正式运行会更新索引文件）、曲目新增 222
+        # API：歌单信息变化、曲目新增 222
         api = MagicMock()
         api.get_playlist_info.return_value = {"name": "歌单A", "track_count": 99}
         api.get_playlist_tracks.return_value = [_make_track(111), _make_track(222)]
@@ -62,9 +64,9 @@ class TestSyncDryRun:
 
         downloader = MagicMock()
         svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=True, state=_repository(cfg))
-        result = svc.run_sync("cookie", playlist_ids=[10])
+        result = svc.run_pull("cookie", playlist_ids=[10])
 
-        # 不下载、不写状态
+        # 不下载、不写状态（dry-run 下 fetch 由 Pipeline 层跳过）
         assert result.downloaded == ()
         downloader.download_track.assert_not_called()
         state_map = svc.load_synced_state()
@@ -79,7 +81,7 @@ class TestSyncDryRun:
         cfg.cache_dir.mkdir(parents=True)
         # 本地有 111（远端已删除）和 222（远端仍在）
         _seed_synced(cfg, {111: [10], 222: [10]})
-        canonical = cfg.media_store_dir / "111" / "audio" / "111.flac"
+        canonical = cfg.media_store_dir / "111" / "111.flac"
         canonical.parent.mkdir(parents=True, exist_ok=True)
         canonical.write_text("fake flac")
 
@@ -88,7 +90,7 @@ class TestSyncDryRun:
         api.get_playlist_tracks.return_value = [_make_track(222)]
 
         svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=True, state=_repository(cfg))
-        result = svc.run_sync("cookie", playlist_ids=[10])
+        result = svc.run_pull("cookie", playlist_ids=[10])
 
         # 111 列入清理计划，但文件与状态均保留
         assert result.dry_run_plan["pruned"] == [111]
@@ -97,12 +99,12 @@ class TestSyncDryRun:
         assert 111 in state_map
 
     def test_prune_deletes_canonical_from_media_store(self, tmp_path: Path) -> None:
-        """非 dry-run：远端已删除曲目的 canonical 从 media_store 删除，library 链接同步删除。"""
+        """非 dry-run：远端已删除曲目的整个 media_store/<tid>/ 目录被删除（扁平布局）。"""
         cfg = _make_cfg(tmp_path)
         cfg.media_store_dir.mkdir(parents=True)
         cfg.cache_dir.mkdir(parents=True)
         _seed_synced(cfg, {111: [10]})
-        canonical = cfg.media_store_dir / "111" / "audio" / "111.flac"
+        canonical = cfg.media_store_dir / "111" / "111.flac"
         canonical.parent.mkdir(parents=True, exist_ok=True)
         canonical.write_bytes(b"fake flac")
 
@@ -111,7 +113,8 @@ class TestSyncDryRun:
         api.get_playlist_tracks.return_value = []  # 远端已无 111
 
         svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=False, state=_repository(cfg))
-        svc.run_sync("cookie", playlist_ids=[10])
+        svc.run_fetch("cookie", playlist_ids=[10])
+        svc.run_pull("cookie", playlist_ids=[10])
 
         assert not canonical.exists()
         assert 111 not in svc.load_synced_state()
@@ -137,7 +140,8 @@ class TestSyncDryRun:
         )
 
         svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo)
-        result = svc.run_sync("cookie", playlist_ids=[10])
+        svc.run_fetch("cookie", playlist_ids=[10])
+        result = svc.run_pull("cookie", playlist_ids=[10])
 
         assert len(result.downloaded) == 1
         downloader.download_track.assert_called_once()

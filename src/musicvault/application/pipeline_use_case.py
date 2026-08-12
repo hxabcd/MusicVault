@@ -206,11 +206,11 @@ class PipelineUseCase:
         playlist_count = 0
         dry_run_plan: dict | None = None
         if not only_process:
-            sync_result = self.sync_service.run_sync(
-                cookie=cookie,
-                playlist_ids=[pl.id for pl in self.recorder.state.list_playlists()],
-                progress=progress,
-            )
+            playlist_ids = [pl.id for pl in self.recorder.state.list_playlists()]
+            # fetch 写 SQLite 有副作用，dry-run 下跳过；pull 的 dry-run 只计算计划
+            if not self.dry_run:
+                self.sync_service.run_fetch(cookie=cookie, playlist_ids=playlist_ids)
+            sync_result = self.sync_service.run_pull(cookie=cookie, playlist_ids=playlist_ids, progress=progress)
             downloaded = sync_result.downloaded
             pruned = sync_result.pruned
             track_count = sync_result.track_count
