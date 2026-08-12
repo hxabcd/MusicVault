@@ -46,15 +46,6 @@ def test_initialize_creates_new_schema(tmp_path: Path) -> None:
     } == tables
 
 
-def test_initialize_rejects_legacy_database(tmp_path: Path) -> None:
-    path = tmp_path / "state.db"
-    with SQLiteState(path).connect() as connection:
-        connection.execute("CREATE TABLE preset_registry (name TEXT PRIMARY KEY)")
-
-    with pytest.raises(RuntimeError, match="旧格式数据库"):
-        SQLiteState(path).initialize()
-
-
 def test_initialize_is_idempotent(tmp_path: Path) -> None:
     database = SQLiteState(tmp_path / "state.db")
 

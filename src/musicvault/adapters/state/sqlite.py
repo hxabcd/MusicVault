@@ -1,6 +1,6 @@
 """SQLite 状态适配器：源侧状态与处理管线状态两个 Repository。
 
-表结构（单版本、无迁移链；旧格式库检测后拒绝初始化，见 SQLiteState.initialize）：
+表结构（单版本、无迁移链；视为全新数据库，由 SQLiteState.initialize 幂等建表）：
 - tracks / playlists / playlist_tracks / managed_tracks：源侧元数据与关系
 - media_assets：媒体资产；歌词原稿行 asset_type='lyrics'、data_json 存统一歌词格式 payload
 - processing_state：处理管线状态（downloaded → processed）
@@ -69,26 +69,13 @@ CREATE TABLE IF NOT EXISTS processing_state (
 );
 """
 
-# 旧格式（迁移链时代）业务表：新库若存在任一旧表名则拒绝初始化，避免新旧表混杂。
-_LEGACY_TABLE_NAMES = frozenset(
-    {
-        "preset_registry",
-        "export_targets",
-        "lyrics",
-        "processed_tracks",
-        "pending_files",
-        "managed_songs",
-        "schema_version",
-    }
-)
-
 _LYRICS_ASSET_TYPE = "lyrics"
 _LYRICS_SPEC = "unified"
 _LYRICS_SOURCE = "netease"
 
 
 class SQLiteState:
-    """SQLite 数据库连接与建库；检测旧格式库。"""
+    """SQLite 数据库连接与建库。"""
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -101,17 +88,8 @@ class SQLiteState:
         return connection
 
     def initialize(self) -> None:
-        """幂等建库；旧格式库抛 RuntimeError，提示用户删除后重建。"""
+        """幂等建库。"""
         with self.connect() as connection:
-            existing = {
-                row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
-            }
-            legacy = sorted(existing & _LEGACY_TABLE_NAMES)
-            if legacy:
-                raise RuntimeError(
-                    f"检测到旧格式数据库 {self.path}（旧表：{', '.join(legacy)}），"
-                    "本版本不再迁移旧数据，请删除该文件后重新运行"
-                )
             connection.executescript(_SCHEMA_SQL)
 
 
