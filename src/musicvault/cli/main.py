@@ -11,6 +11,7 @@ from pathlib import Path
 
 from musicvault.cli.playlist import handle_playlist_mgmt
 from musicvault.core.config import Config
+from musicvault.ports.source import InteractiveLoginApi
 from musicvault.shared.output import error as output_error
 from musicvault.shared.output import info as output_info
 from musicvault.shared.output import success as output_success
@@ -22,12 +23,13 @@ _force_exit = False
 logger: logging.Logger
 
 
-def _handle_double_sigint(signum: int, frame: object) -> None:
+def _handle_double_sigint(_signum: int, _frame: object) -> None:
     """双击 Ctrl+C 的 SIGINT 处理器。
 
     首次 Ctrl+C → 触发 KeyboardInterrupt，走优雅关闭流程（保存状态等）。
     再次 Ctrl+C → 直接 os._exit(130)，立即强制终止。
     """
+    del _signum, _frame
     global _force_exit
     if _force_exit:
         sys.stderr.write("\n再次 Ctrl+C 强制退出\n")
@@ -334,7 +336,7 @@ def _render_qrcode(url: str) -> str:
     return buf.getvalue()
 
 
-def _interactive_login(api: object) -> str | None:
+def _interactive_login(api: InteractiveLoginApi) -> str | None:
     """交互式登录，返回 cookie 字符串；用户取消则返回 None。
 
     api 由 composition root（bootstrap.build_source_client）创建后注入。

@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
+from http.client import HTTPResponse
 from urllib.request import urlopen
 
 from musicvault.domain.models import DownloadedTrack, Track
@@ -48,7 +49,7 @@ class Downloader:
         return DownloadedTrack(track=track, source_file=str(target), is_ncm=is_ncm)
 
     @staticmethod
-    def _open_with_retry(url: str):
+    def _open_with_retry(url: str) -> HTTPResponse:
         for attempt in range(_RETRIES):
             if attempt > 0:
                 delay = _RETRY_BACKOFF[min(attempt, len(_RETRY_BACKOFF) - 1)]
@@ -63,3 +64,4 @@ class Downloader:
             except (URLError, OSError, TimeoutError) as exc:
                 if attempt == _RETRIES - 1:
                     raise RuntimeError(f"下载失败（网络错误），已重试 {_RETRIES} 次：{exc}") from exc
+        raise RuntimeError(f"下载失败：重试后未获得响应（{url}）")

@@ -15,7 +15,7 @@ from musicvault.application.pipeline_use_case import PipelineUseCase
 from musicvault.core.config import Config
 from musicvault.domain.models import DownloadedTrack, Playlist, Track
 from musicvault.domain.operations import OperationResult, OperationStatus
-from musicvault.preset_api.v1 import AudioFormat, BasePreset, PresetRegistry, TargetRegistration
+from musicvault.preset_api.v1 import AudioFormat, BasePreset, PresetContext, PresetRegistry, TargetRegistration
 
 
 def _make_cfg(tmp_path: Path) -> Config:
@@ -41,14 +41,14 @@ class _RecordingSync:
     """记录收到 context 的同步器：所有生命周期操作直接成功。"""
 
     def __init__(self) -> None:
-        self.contexts: list[object] = []
+        self.contexts: list[PresetContext] = []
 
     def __call__(self, deps: dict[str, object]) -> _RecordingSync:
         """SyncEngine 以 factory(deps) 方式构造同步器；直接返回自身。"""
         del deps
         return self
 
-    def prepare(self, context: object) -> OperationResult:
+    def prepare(self, context: PresetContext) -> OperationResult:
         self.contexts.append(context)
         return OperationResult(name="prepare", status=OperationStatus.SUCCEEDED)
 
@@ -70,11 +70,11 @@ def _api() -> MagicMock:
     return api
 
 
-def _real_downloader(cfg: Config) -> MagicMock:
+def _real_downloader(_: Config) -> MagicMock:
     """下载真实落盘到 cache/，供 process 阶段消费。"""
     downloader = MagicMock()
 
-    def _download(track: Track, url: str, dest: Path) -> DownloadedTrack:
+    def _download(track: Track, _: str, dest: Path) -> DownloadedTrack:
         file = dest / f"{track.id}.mp3"
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_bytes(b"fake mp3")
@@ -103,7 +103,7 @@ def _patch_processors(monkeypatch, cfg: Config, *, downloader=None, organizer=No
         canonical.parent.mkdir(parents=True, exist_ok=True)
         canonical.write_bytes(b"fake mp3")
         fake_organizer.route_audio.return_value = {(AudioFormat.MP3, "192k"): canonical}
-    monkeypatch.setattr("musicvault.application.pipeline_use_case.Organizer", lambda **kwargs: fake_organizer)
+    monkeypatch.setattr("musicvault.application.pipeline_use_case.Organizer", lambda **_: fake_organizer)
     return real_downloader
 
 

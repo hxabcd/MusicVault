@@ -28,8 +28,8 @@ def _snapshot() -> SourceSnapshot:
 def _fake_signal_module() -> types.ModuleType:
     """替换 cli.main 中的 signal 模块，避免测试注册真实 SIGINT 处理器。"""
     fake = types.ModuleType("signal")
-    fake.SIGINT = 2
-    fake.signal = lambda signum, handler: None
+    setattr(fake, "SIGINT", 2)
+    setattr(fake, "signal", lambda *_: None)
     return fake
 
 
@@ -40,6 +40,7 @@ class _FailedDistributePipeline:
     """模拟目标分发整体失败的 distribute pipeline。"""
 
     def run(self, *, selected: set[str] | None = None) -> SyncRunResult:
+        del selected
         return SyncRunResult(
             snapshot_hash="a" * 64,
             presets=(PresetRunResult(name="demo", source="test", status=OperationStatus.FAILED, error="模拟失败"),),
@@ -47,12 +48,14 @@ class _FailedDistributePipeline:
         )
 
 
+def _stub_build_distribute_pipeline(cfg, dry_run: bool = False) -> _FailedDistributePipeline:
+    del cfg, dry_run
+    return _FailedDistributePipeline()
+
+
 def test_distribute_failed_result_returns_exit_code_1(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("musicvault.cli.main.signal", _fake_signal_module())
-    monkeypatch.setattr(
-        "musicvault.application.bootstrap.build_distribute_pipeline",
-        lambda cfg, dry_run=False: _FailedDistributePipeline(),
-    )
+    monkeypatch.setattr("musicvault.application.bootstrap.build_distribute_pipeline", _stub_build_distribute_pipeline)
 
     code = main(["distribute", "--config", str(tmp_path / "config.json")])
 
@@ -63,6 +66,7 @@ def test_distribute_runtime_error_returns_exit_code_2(tmp_path: Path, monkeypatc
     monkeypatch.setattr("musicvault.cli.main.signal", _fake_signal_module())
 
     def _boom(cfg: object, dry_run: bool = False) -> None:
+        del cfg, dry_run
         raise RuntimeError("模拟加载失败")
 
     monkeypatch.setattr("musicvault.application.bootstrap.build_distribute_pipeline", _boom)
@@ -81,13 +85,13 @@ class _LinkingSynchronizer:
     def __init__(self, source: Path) -> None:
         self.source = source
 
-    def prepare(self, context: object) -> None:
+    def prepare(self, _: object) -> None:
         pass
 
     def sync_item(self, track: Track, context) -> None:
         context.link(self.source, Path(f"track-{track.id}.txt"))
 
-    def finalize(self, context: object) -> None:
+    def finalize(self, _: object) -> None:
         pass
 
 
@@ -95,7 +99,7 @@ def test_repeated_sync_to_same_target_is_idempotent(tmp_path: Path) -> None:
     target = FilesystemTarget(tmp_path / "root")
     source = tmp_path / "source.txt"
     source.write_text("内容", encoding="utf-8")
-    registration = TargetRegistration("linker", lambda presets: _LinkingSynchronizer(source), source="test")
+    registration = TargetRegistration("linker", lambda _: _LinkingSynchronizer(source), source="test")
 
     first = SyncEngine(target=target).run(_snapshot(), [registration])
     second = SyncEngine(target=target).run(_snapshot(), [registration])

@@ -15,6 +15,7 @@ from rich.table import Table
 
 from musicvault.application.playlist_use_case import PlaylistUseCase
 from musicvault.core.config import Config
+from musicvault.ports.source import InteractiveLoginApi
 from musicvault.shared.output import error as output_error
 from musicvault.shared.output import info as output_info
 from musicvault.shared.output import success as output_success
@@ -39,7 +40,7 @@ def handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
             _add_songs(args.song, use_case)
 
         if not inputs and not has_songs:
-            return _add_playlist_interactive(cfg, use_case, api, cookie)
+            return _add_playlist_interactive(use_case, api, cookie)
 
         result = 0
         for raw in inputs:
@@ -49,7 +50,7 @@ def handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
                 output_error(str(exc))
                 result = 1
                 continue
-            if _add_playlist_by_id(pid, cfg, use_case, api, cookie) != 0:
+            if _add_playlist_by_id(pid, cfg, use_case, cookie) != 0:
                 result = 1
 
         return 0 if result == 0 and not (has_songs and not inputs) else result
@@ -69,7 +70,7 @@ def handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
             return 0
 
         if not has_songs:
-            return _remove_playlist_interactive(cfg, use_case)
+            return _remove_playlist_interactive(use_case)
 
     elif args.command in ("list", "ls"):
         if getattr(args, "song", False):
@@ -132,7 +133,6 @@ def _add_playlist_by_id(
     pid: int,
     cfg: Config,
     use_case: PlaylistUseCase,
-    api: object,
     cookie: str | None,
 ) -> int:
     if use_case.has_playlist(pid):
@@ -161,9 +161,8 @@ def _add_playlist_by_id(
 
 
 def _add_playlist_interactive(
-    cfg: Config,
     use_case: PlaylistUseCase,
-    api: object,
+    api: InteractiveLoginApi,
     cookie: str | None,
 ) -> int:
     if not cookie:
@@ -250,7 +249,7 @@ def _add_playlist_interactive(
     return 0 if added > 0 else 1
 
 
-def _remove_playlist_interactive(cfg: Config, use_case: PlaylistUseCase) -> int:
+def _remove_playlist_interactive(use_case: PlaylistUseCase) -> int:
     playlists = use_case.list_playlists()
     if not playlists:
         output_info("尚未添加任何歌单，无需移除")

@@ -102,7 +102,7 @@ class SyncUseCase:
 
         self.api.login_with_cookie(cookie)
         remote = self._fetch_remote(playlist_ids)
-        for pid, _old_name, new_name in remote.pending_renames:
+        for pid, _, new_name in remote.pending_renames:
             self.recorder.state.upsert_playlist(Playlist(pid, new_name, ()))
             logger.info("歌单 %s 已改名为 '%s'（仅登记 SQLite，library 由 distribute 幂等重建）", pid, new_name)
 
@@ -195,7 +195,7 @@ class SyncUseCase:
         if song_ids:
             logger.info("将同步 %s 首单独管理的单曲", len(song_ids))
             song_details = self.api.get_tracks_detail(song_ids)
-            for _sid, track in song_details.items():
+            for _, track in song_details.items():
                 if track.id not in all_tracks:
                     all_tracks[track.id] = track
             # 过滤本地已删除但仍在 managed_songs 中的旧 ID（dry-run 不写 SQLite）

@@ -180,6 +180,7 @@ def test_base_preset_subclass_override():
         format = AudioFormat.FLAC
 
         def build_lyrics(self, lines):
+            del lines
             return "custom"
 
     preset = MyPreset()

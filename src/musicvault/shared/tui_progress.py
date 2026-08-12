@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import sys as _sys
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import timedelta
-from typing import Iterator
 
 from rich.console import Console, Group
 from rich.live import Live
@@ -42,7 +42,7 @@ class BatchProgress:
         with BatchProgress(total=27, phase="下载中") as bp:
             for item in items:
                 ok = do_work(item)
-                bp.advance(ok, idx, item.name)
+                bp.advance(ok, _idx, item.name)
     """
 
     def __init__(self, total: int, phase: str) -> None:
@@ -77,25 +77,27 @@ class BatchProgress:
         self._live.start()
         return self
 
-    def __exit__(self, *exc_args: object) -> None:
+    def __exit__(self, *_exc_args: object) -> None:
+        del _exc_args
         self._live.stop()
         elapsed = time.perf_counter() - self._start
         _print_batch_summary(self.phase, self.done, self.total, self.failed, elapsed)
 
     # ---- public helpers ------------------------------------------------------
 
-    def advance(self, success: bool, idx: int, item_name: str) -> None:
+    def advance(self, success: bool, _idx: int, item_name: str) -> None:
         """Advance the bar by one item.
 
         Parameters
         ----------
         success:
             Whether the item was processed successfully.
-        idx:
-            1-based index of the item (for display only).
+        _idx:
+            1-based index of the item (unused; kept for signature compatibility).
         item_name:
             Short display name of the current item.
         """
+        del _idx
         if success:
             self.done += 1
         else:
@@ -155,7 +157,7 @@ class BatchProgress:
 
 
 @contextmanager
-def status(description: str) -> Iterator[None]:
+def status(description: str) -> Generator[None]:
     """Context manager that shows a spinner while the task runs.
 
     On success the spinner is replaced by a green ``●``; on failure by a

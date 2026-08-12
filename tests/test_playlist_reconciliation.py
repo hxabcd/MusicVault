@@ -20,7 +20,7 @@ def _seed_state(cfg: Config, state_map: dict[int, list[int]]) -> None:
     repo = SQLiteStateRepository(SQLiteState(cfg.state_db_file))
     playlists: dict[int, Playlist] = {}
     tracks = [Track(id=tid, name=f"曲目 {tid}", artists=[], album="专辑", raw={}) for tid in state_map]
-    for tid, pids in state_map.items():
+    for _, pids in state_map.items():
         for pid in pids:
             playlists.setdefault(pid, Playlist(pid, f"歌单{pid}", ()))
     for pid, playlist in playlists.items():

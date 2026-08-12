@@ -39,6 +39,7 @@ def test_resolve_returns_matching_asset() -> None:
 
     resolved = resolver.resolve(MediaRequest(track_id=1))
 
+    assert resolved is not None
     assert resolved == asset
     assert resolved.asset_type == "audio"
 
@@ -114,4 +115,4 @@ def test_media_request_is_frozen_and_slots() -> None:
     request = MediaRequest(track_id=1)
 
     with pytest.raises(dataclasses.FrozenInstanceError):
-        request.track_id = 2
+        request.track_id = 2  # type: ignore[reportAttributeAccessIssue]  # 测试冻结语义：故意赋值

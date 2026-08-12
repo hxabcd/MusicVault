@@ -5,7 +5,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from collections.abc import Mapping
 
 from musicvault.adapters.filesystem.workspace import WorkspacePaths
 from musicvault.adapters.processors.decryptor import Decryptor

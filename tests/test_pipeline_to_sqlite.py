@@ -285,7 +285,7 @@ def test_second_sync_reads_synced_state_from_sqlite(tmp_path: Path) -> None:
         """真实落盘，避免 processed_files.json 的 stale 清理干扰本切片。"""
         downloader = MagicMock()
 
-        def _download(track: Track, url: str, dest: Path) -> DownloadedTrack:
+        def _download(track: Track, _: str, dest: Path) -> DownloadedTrack:
             file = dest / f"{track.id}.mp3"
             file.parent.mkdir(parents=True, exist_ok=True)
             file.write_bytes(b"fake mp3")

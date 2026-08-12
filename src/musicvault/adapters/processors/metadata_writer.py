@@ -13,7 +13,7 @@ from PIL import Image
 
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import ID3
-from mutagen.id3 import (
+from mutagen.id3._frames import (
     APIC,
     COMM,
     TALB,
@@ -166,7 +166,7 @@ class MetadataWriter:
 
         ratio = max_size / max_dim
         new_size = (int(width * ratio), int(height * ratio))
-        img = img.resize(new_size, Image.LANCZOS)
+        img = img.resize(new_size, Image.Resampling.LANCZOS)
 
         if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")

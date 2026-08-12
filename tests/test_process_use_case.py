@@ -58,7 +58,8 @@ class _RecordingMetadata:
     def __init__(self) -> None:
         self.calls: list[tuple[Path, MetadataSpec]] = []
 
-    def write(self, audio_file: Path, track: Track, *, metadata: MetadataSpec, cover_timeout: int = 15) -> None:
+    def write(self, audio_file: Path, _: Track, *, metadata: MetadataSpec, cover_timeout: int = 15) -> None:
+        del cover_timeout
         self.calls.append((audio_file, metadata))
 
 
@@ -258,6 +259,7 @@ def test_run_process_reprocesses_canonical_for_new_spec(tmp_path: Path) -> None:
         bitrate = "192k"
 
     def _route(src, track, output_dir, audio_specs, force=False):
+        del src, track, audio_specs, force
         out = output_dir / "333_192k.mp3"
         out.write_bytes(b"fake mp3")
         return {(AudioFormat.MP3, "192k"): out}
@@ -311,6 +313,7 @@ def test_run_process_scan_survives_track_detail_api_failure(tmp_path: Path) -> N
         bitrate = "192k"
 
     def _route(src, track, output_dir, audio_specs, force=False):
+        del src, audio_specs, force
         out = output_dir / f"{track.id}_192k.mp3"
         out.write_bytes(b"fake mp3")
         return {(AudioFormat.MP3, "192k"): out}
@@ -414,6 +417,7 @@ def test_process_build_lyrics_error_isolates_preset(tmp_path: Path, caplog) -> N
         format = AudioFormat.FLAC
 
         def build_lyrics(self, lines):
+            del lines
             raise RuntimeError("preset 脚本崩溃")
 
     p_bad = _ExplodingPreset()
@@ -460,6 +464,7 @@ def test_safe_track_detail_cached_within_instance(tmp_path: Path) -> None:
         bitrate = "192k"
 
     def _route(src, track, output_dir, audio_specs, force=False):
+        del src, audio_specs, force
         out = output_dir / f"{track.id}_192k.mp3"
         out.write_bytes(b"fake mp3")
         return {(AudioFormat.MP3, "192k"): out}

@@ -24,27 +24,35 @@ def test_fake_satisfies_source_client_port() -> None:
 
     class FakeSource:
         def login_with_cookie(self, cookie: str) -> None:
+            del cookie
             return None
 
         def get_playlist_info(self, playlist_id: int) -> dict:
+            del playlist_id
             return {"name": "x", "track_count": 0}
 
         def get_playlist_tracks(self, playlist_id: int) -> list:
+            del playlist_id
             return []
 
         def get_tracks_detail(self, track_ids: list[int]) -> dict:
+            del track_ids
             return {}
 
         def get_track_detail(self, track_id: int) -> None:
+            del track_id
             return None
 
         def get_tracks_download_urls(self, track_ids: list[int]) -> dict:
+            del track_ids
             return {}
 
         def get_album_info(self, album_id: int) -> dict:
+            del album_id
             return {}
 
         def get_track_lyrics(self, track_id: int) -> dict:
+            del track_id
             return {}
 
     _: SourceClient = FakeSource()

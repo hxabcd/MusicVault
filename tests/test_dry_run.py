@@ -38,7 +38,7 @@ def _seed_synced(cfg: Config, state_map: dict[int, list[int]]) -> SQLiteStateRep
     repo = _repository(cfg)
     tracks = [Track(id=tid, name=f"Song {tid}", artists=[], album="Album", raw={}) for tid in state_map]
     playlists: dict[int, Playlist] = {}
-    for tid, pids in state_map.items():
+    for _, pids in state_map.items():
         for pid in pids:
             playlists.setdefault(pid, Playlist(pid, f"歌单{pid}", ()))
     for pid, playlist in playlists.items():
@@ -72,6 +72,7 @@ class TestSyncDryRun:
         state_map = svc.load_synced_state()
         assert 222 not in state_map
         # 计划包含新曲目与歌单信息变化
+        assert result.dry_run_plan is not None
         assert [t.id for t in result.dry_run_plan["with_url"]] == [222]
         assert result.dry_run_plan["pruned"] == []
 
@@ -93,6 +94,7 @@ class TestSyncDryRun:
         result = svc.run_pull("cookie", playlist_ids=[10])
 
         # 111 列入清理计划，但文件与状态均保留
+        assert result.dry_run_plan is not None
         assert result.dry_run_plan["pruned"] == [111]
         assert canonical.exists()
         state_map = svc.load_synced_state()

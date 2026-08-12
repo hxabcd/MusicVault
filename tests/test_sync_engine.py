@@ -24,7 +24,7 @@ class WritingSynchronizer:
     def prepare(self, context) -> None:
         context.write_text(Path("output.txt"), "ok")
 
-    def sync_item(self, track, context) -> None:
+    def sync_item(self, track, _) -> None:
         if track.id == 2:
             raise ValueError("单项失败")
 
@@ -37,19 +37,19 @@ class WritingSynchronizer:
 
 
 class PrepareFailureSynchronizer:
-    def prepare(self, context) -> None:
+    def prepare(self, _) -> None:
         raise RuntimeError("准备失败")
 
-    def sync_item(self, track, context) -> None:
+    def sync_item(self, *_) -> None:
         raise AssertionError("prepare 失败后不应处理曲目")
 
-    def finalize(self, context) -> None:
+    def finalize(self, _) -> None:
         raise AssertionError("prepare 失败后不应 finalize")
 
 
 def test_engine_shares_snapshot_and_isolates_item_failures(tmp_path: Path) -> None:
     target = FilesystemTarget(tmp_path)
-    registration = TargetRegistration("writer", lambda presets: WritingSynchronizer(), source="test")
+    registration = TargetRegistration("writer", lambda _: WritingSynchronizer(), source="test")
 
     result = SyncEngine(target=target).run(_snapshot(), [registration])
 
@@ -63,8 +63,8 @@ def test_engine_shares_snapshot_and_isolates_item_failures(tmp_path: Path) -> No
 
 def test_engine_prepare_failure_does_not_run_items_but_other_presets_continue(tmp_path: Path) -> None:
     registrations = [
-        TargetRegistration("broken", lambda presets: PrepareFailureSynchronizer(), source="broken"),
-        TargetRegistration("writer", lambda presets: WritingSynchronizer(), source="writer"),
+        TargetRegistration("broken", lambda _: PrepareFailureSynchronizer(), source="broken"),
+        TargetRegistration("writer", lambda _: WritingSynchronizer(), source="writer"),
     ]
 
     result = SyncEngine(target=FilesystemTarget(tmp_path)).run(_snapshot(), registrations)
@@ -76,7 +76,7 @@ def test_engine_prepare_failure_does_not_run_items_but_other_presets_continue(tm
 
 def test_dry_run_does_not_run_standard_or_custom_side_effects(tmp_path: Path) -> None:
     result = SyncEngine(target=FilesystemTarget(tmp_path), dry_run=True).run(
-        _snapshot(), [TargetRegistration("writer", lambda presets: WritingSynchronizer(), source="test")]
+        _snapshot(), [TargetRegistration("writer", lambda _: WritingSynchronizer(), source="test")]
     )
 
     assert not (tmp_path / "output.txt").exists()
@@ -87,10 +87,10 @@ class SucceedingSynchronizer:
     def prepare(self, context) -> None:
         context.write_text(Path("output.txt"), "ok")
 
-    def sync_item(self, track, context) -> None:
+    def sync_item(self, *_) -> None:
         pass
 
-    def finalize(self, context) -> None:
+    def finalize(self, _) -> None:
         pass
 
 
@@ -98,10 +98,10 @@ class FinalizeFailureSynchronizer:
     def prepare(self, context) -> None:
         context.write_text(Path("output.txt"), "ok")
 
-    def sync_item(self, track, context) -> None:
+    def sync_item(self, *_) -> None:
         pass
 
-    def finalize(self, context) -> None:
+    def finalize(self, _) -> None:
         raise RuntimeError("整理失败")
 
 
@@ -112,17 +112,17 @@ class MarkerSynchronizer:
     def prepare(self, context) -> None:
         context.write_text(Path(f"{self.marker}.txt"), "ok")
 
-    def sync_item(self, track, context) -> None:
+    def sync_item(self, *_) -> None:
         pass
 
-    def finalize(self, context) -> None:
+    def finalize(self, _) -> None:
         pass
 
 
 def test_engine_one_preset_failure_does_not_stop_others_and_overall_is_failed(tmp_path: Path) -> None:
     registrations = [
-        TargetRegistration("broken", lambda presets: PrepareFailureSynchronizer(), source="broken"),
-        TargetRegistration("good", lambda presets: SucceedingSynchronizer(), source="good"),
+        TargetRegistration("broken", lambda _: PrepareFailureSynchronizer(), source="broken"),
+        TargetRegistration("good", lambda _: SucceedingSynchronizer(), source="good"),
     ]
 
     result = SyncEngine(target=FilesystemTarget(tmp_path)).run(_snapshot(), registrations)
@@ -138,7 +138,7 @@ def test_engine_one_preset_failure_does_not_stop_others_and_overall_is_failed(tm
 def test_engine_finalize_failure_keeps_successful_items_and_marks_failed(tmp_path: Path) -> None:
     result = SyncEngine(target=FilesystemTarget(tmp_path)).run(
         _snapshot(),
-        [TargetRegistration("finalize-broken", lambda presets: FinalizeFailureSynchronizer(), source="test")],
+        [TargetRegistration("finalize-broken", lambda _: FinalizeFailureSynchronizer(), source="test")],
     )
 
     preset_result = result.presets[0]
@@ -152,7 +152,7 @@ def test_engine_finalize_failure_keeps_successful_items_and_marks_failed(tmp_pat
 def test_engine_disabled_preset_is_skipped_without_running(tmp_path: Path) -> None:
     result = SyncEngine(target=FilesystemTarget(tmp_path)).run(
         _snapshot(),
-        [TargetRegistration("disabled", lambda presets: SucceedingSynchronizer(), source="test", enabled=False)],
+        [TargetRegistration("disabled", lambda _: SucceedingSynchronizer(), source="test", enabled=False)],
     )
 
     preset_result = result.presets[0]
@@ -164,8 +164,8 @@ def test_engine_disabled_preset_is_skipped_without_running(tmp_path: Path) -> No
 
 def test_engine_selected_subset_runs_only_requested_presets(tmp_path: Path) -> None:
     registrations = [
-        TargetRegistration("alpha", lambda presets: MarkerSynchronizer("alpha"), source="test"),
-        TargetRegistration("beta", lambda presets: MarkerSynchronizer("beta"), source="test"),
+        TargetRegistration("alpha", lambda _: MarkerSynchronizer("alpha"), source="test"),
+        TargetRegistration("beta", lambda _: MarkerSynchronizer("beta"), source="test"),
     ]
 
     result = SyncEngine(target=FilesystemTarget(tmp_path)).run(_snapshot(), registrations, selected={"alpha"})
@@ -198,7 +198,7 @@ def test_engine_missing_preset_dependency_marks_failed_without_calling_factory(t
     """depends_on 未在 presets 索引中提供 → 该 target FAILED，factory 不被调用。"""
     called = False
 
-    def factory(presets):
+    def factory(_):
         nonlocal called
         called = True
         return SucceedingSynchronizer()
@@ -221,13 +221,13 @@ def test_engine_media_store_root_reaches_context(tmp_path: Path) -> None:
         def prepare(self, context) -> None:
             seen.append(context.media_store_root)
 
-        def sync_item(self, track, context) -> None:
+        def sync_item(self, *_) -> None:
             pass
 
-        def finalize(self, context) -> None:
+        def finalize(self, _) -> None:
             pass
 
-    registration = TargetRegistration("capture", lambda presets: CapturingSynchronizer(), source="test")
+    registration = TargetRegistration("capture", lambda _: CapturingSynchronizer(), source="test")
     engine = SyncEngine(target=FilesystemTarget(tmp_path), media_store_root=Path("media_root"))
     engine.run(_snapshot(), [registration])
 

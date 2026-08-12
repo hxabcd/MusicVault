@@ -19,5 +19,5 @@ def test_build_pipeline_with_fake_source(tmp_path: Path) -> None:
     assert service.recorder.state is not None
     # 注入的 source 真正流入用例：api 属性即注入对象，方法返回值被用例透传
     assert service.api is source
-    assert service.api.get_playlist_info() == {"id": 10, "name": "注入源"}
+    assert service.api.get_playlist_info(10) == {"id": 10, "name": "注入源"}
     source.get_playlist_info.assert_called_once()

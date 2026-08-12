@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Mapping
+from collections.abc import Mapping
 
 from musicvault.domain.models import TargetDescriptor
 from musicvault.preset_api.render import enhanced_lrc
@@ -40,7 +40,8 @@ class HardlinkDistributor:
         self.default_name = default_name
         self.filename_template = "{artist} - {name}"
 
-    def prepare(self, context) -> None:
+    def prepare(self, _context) -> None:
+        del _context
         return None
 
     def sync_item(self, track, context) -> None:
@@ -114,6 +115,8 @@ def register_builtin_presets(
         # 依赖注入路径（SyncEngine/registry.create_target）必传 preset 索引；
         # 无参兼容路径（TargetRegistration.create()）回退内置 archive。
         preset = presets["archive"] if presets else ArchivePreset()
+        if not isinstance(preset, BasePreset):
+            raise TypeError(f"hardlink 依赖的 'archive' preset 类型不合法：{type(preset).__name__}")
         return HardlinkDistributor(preset, "archive", target_root_path, default_playlist_name)
 
     registry.register_target(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import threading
+from collections.abc import Callable
 
 import pytest
 
@@ -30,7 +31,7 @@ class FakeResponse:
 class FakeNeteaseCloudMusicApi:
     """可编程 fake：按方法名返回预设响应，并记录每次调用参数"""
 
-    responses: dict[str, FakeResponse] = {}
+    responses: dict[str, FakeResponse | Callable[..., FakeResponse]] = {}
     instances: list["FakeNeteaseCloudMusicApi"] = []
 
     def __init__(self, env=None):

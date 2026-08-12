@@ -64,7 +64,7 @@ def render_dry_run_plan(plan: dict) -> None:
 
     if renames:
         console.print("  [cyan]歌单目录将重命名：[/cyan]")
-        for _pid, old, new in renames:
+        for _, old, new in renames:
             console.print(f"    [dim]-[/dim] {old} → {new}")
 
     if moves:

@@ -30,7 +30,7 @@ class _FakeSdk:
 
     last_level: str | None = None
 
-    def __init__(self, env=None) -> None:
+    def __init__(self, _=None) -> None:
         self.calls: list[dict] = []
 
     def song_url_v1(self, **kwargs):
@@ -128,6 +128,7 @@ def test_build_distribute_pipeline_passes_preset_instances_to_engine(tmp_path: P
     captured: dict = {}
 
     def fake_run(self, snapshot, registrations, *, selected=None, presets=None):
+        del self, snapshot, registrations, selected
         captured["presets"] = presets
         from musicvault.application.sync_engine import SyncRunResult
 

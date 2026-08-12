@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 from mutagen.flac import FLAC
+from mutagen.id3 import ID3
 from mutagen.mp3 import MP3
 
 from musicvault.adapters.processors.metadata_writer import MetadataWriter
@@ -28,8 +29,15 @@ def _make_flac(path: Path) -> None:
     path.write_bytes(b"fLaC" + bytes([0x80, 0x00, 0x00, 0x22]) + streaminfo)
 
 
-def _id3_key_starts(tags, prefix: str) -> list[str]:
+def _id3_key_starts(tags: ID3, prefix: str) -> list[str]:
     return [key for key in tags if key.startswith(prefix)]
+
+
+def _read_tags(path: Path) -> ID3:
+    """读取 MP3 的 ID3 标签；无标签时失败并给出清晰断言信息。"""
+    tags = MP3(str(path)).tags
+    assert tags is not None, f"MP3 缺少 ID3 标签：{path}"
+    return tags
 
 
 @pytest.fixture
@@ -76,7 +84,7 @@ class TestWriteMp3:
 
         writer.write(audio, track, metadata=MetadataSpec.full(), cover_timeout=15)
 
-        tags = MP3(str(audio)).tags
+        tags = _read_tags(audio)
         assert tags["TIT2"].text == ["测试歌曲"]
         assert tags["TPE1"].text == ["歌手A/歌手B"]
         assert tags["TALB"].text == ["测试专辑"]
@@ -103,7 +111,7 @@ class TestWriteMp3:
 
         writer.write(audio, track_without_cover, metadata=MetadataSpec.none())
 
-        tags = MP3(str(audio)).tags
+        tags = _read_tags(audio)
         assert tags["TIT2"].text == ["无封面歌曲"]
         assert tags["TPE1"].text == ["歌手"]
         assert tags["TALB"].text == ["专辑"]
@@ -137,7 +145,7 @@ class TestWriteMp3:
 
         writer.write(audio, track, metadata=MetadataSpec.basic())
 
-        tags = MP3(str(audio)).tags
+        tags = _read_tags(audio)
         assert str(tags["TDRC"].text[0]) == "2020"
         assert tags["TRCK"].text == ["3"]
         assert tags["TPOS"].text == ["2"]
@@ -156,7 +164,7 @@ class TestWriteMp3:
 
         writer.write(audio, track, metadata=MetadataSpec(fields=("year", "track_number")))
 
-        tags = MP3(str(audio)).tags
+        tags = _read_tags(audio)
         assert str(tags["TDRC"].text[0]) == "2020"
         assert tags["TRCK"].text == ["3"]
         assert "TPOS" not in tags

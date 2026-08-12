@@ -41,11 +41,11 @@ def _make_api(track_ids: list[int]) -> MagicMock:
     return api
 
 
-def _make_downloader(cfg: Config) -> MagicMock:
+def _make_downloader(_: Config) -> MagicMock:
     """真实落盘 cache 的下载器，便于后续 pending_files 登记。"""
     downloader = MagicMock()
 
-    def _download(track: Track, url: str, dest: Path) -> DownloadedTrack:
+    def _download(track: Track, _: str, dest: Path) -> DownloadedTrack:
         file = dest / f"{track.id}.mp3"
         file.parent.mkdir(parents=True, exist_ok=True)
         file.write_bytes(b"fake mp3")
@@ -60,7 +60,7 @@ def _seed_synced(cfg: Config, state_map: dict[int, list[int]]) -> SQLiteStateRep
     repo = _repository(cfg)
     playlists: dict[int, Playlist] = {}
     tracks = [_make_track(track_id) for track_id in state_map]
-    for track_id, playlist_ids in state_map.items():
+    for _, playlist_ids in state_map.items():
         for playlist_id in playlist_ids:
             playlists.setdefault(playlist_id, Playlist(playlist_id, f"歌单{playlist_id}", ()))
     for playlist_id, playlist in playlists.items():

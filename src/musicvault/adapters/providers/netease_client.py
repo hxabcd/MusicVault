@@ -171,8 +171,9 @@ class NeteaseClient:
         resp = _retry_api(self._api().verify_qrcodestatus, qr=unikey)
         body = self._check(resp)
         code = int(body.get("code") or 0)
-        if code == 803 and body.get("cookie"):
-            self._last_cookie = body.get("cookie")
+        cookie = body.get("cookie")
+        if code == 803 and cookie:
+            self._last_cookie = str(cookie)
         return code
 
     def poll_qrcode(self, unikey: str, timeout: int = 120) -> LoginResult:

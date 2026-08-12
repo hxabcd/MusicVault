@@ -12,7 +12,7 @@ from pathlib import Path
 from musicvault.domain.models import MediaAsset, Playlist, SourceSnapshot, Track
 from musicvault.domain.operations import OperationStatus
 from musicvault.preset_api.builtins import ArchivePreset, HardlinkDistributor, register_builtin_presets
-from musicvault.preset_api.v1 import PresetContext, PresetRegistry
+from musicvault.preset_api.v1 import AudioFormat, PresetContext, PresetRegistry
 
 
 class FakeTarget:
@@ -21,18 +21,18 @@ class FakeTarget:
     def __init__(self) -> None:
         self.links: list[tuple[Path, Path]] = []
 
-    def link(self, src, dst) -> None:
-        src = Path(src)
-        dst = Path(dst)
-        self.links.append((src, dst))
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        os.link(src, dst)
+    def link(self, source, destination) -> None:
+        source = Path(source)
+        destination = Path(destination)
+        self.links.append((source, destination))
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        os.link(source, destination)
 
-    def copy(self, src, dst) -> None:
-        pass
+    def copy(self, source, destination) -> None:
+        del source, destination
 
-    def write_text(self, dst, content, encoding="utf-8") -> None:
-        pass
+    def write_text(self, destination, content, encoding="utf-8") -> None:
+        del destination, content, encoding
 
 
 def _make_context(snapshot: SourceSnapshot, media_store_root: Path, *, dry_run: bool = False) -> PresetContext:
@@ -45,7 +45,7 @@ def _snapshot(track: Track, playlists: tuple[Playlist, ...], assets: tuple[Media
 
 def test_archive_preset_declares_flac_full_metadata() -> None:
     preset = ArchivePreset()
-    assert preset.format.value == "flac"
+    assert preset.format == AudioFormat.FLAC
     assert preset.quality.value == "hires"
     assert preset.metadata.embed_cover is True
     assert preset.build_lyrics(()) == ""
@@ -72,6 +72,7 @@ def test_hardlink_links_audio_and_lyrics_to_owned_playlist(tmp_path: Path) -> No
     distributor.sync_item(track, context)
 
     # format_track_name("{artist} - {name}") 对空 artists 回退 "Unknown Artist"
+    assert isinstance(context.target, FakeTarget)
     assert len(context.target.links) == 2
     assert context.target.links[0][1] == library / "fav" / "Unknown Artist - song.flac"
     assert context.target.links[1][1] == library / "fav" / "Unknown Artist - song.lrc"

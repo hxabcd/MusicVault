@@ -31,7 +31,7 @@ def _use_case(tmp_path: Path) -> tuple[Config, SQLiteStateRepository, PlaylistUs
 
 class TestSongManagement:
     def test_add_and_list_songs(self, tmp_path: Path) -> None:
-        cfg, repo, use_case = _use_case(tmp_path)
+        _, repo, use_case = _use_case(tmp_path)
         assert use_case.list_songs() == []
 
         use_case.add_song(123)
@@ -60,7 +60,7 @@ class TestSongManagement:
         assert use_case.has_song(999) is True
 
     def test_remove_song(self, tmp_path: Path) -> None:
-        cfg, repo, use_case = _use_case(tmp_path)
+        cfg, _, use_case = _use_case(tmp_path)
         canonical = cfg.media_store_dir / "1" / "1.flac"
         canonical.parent.mkdir(parents=True, exist_ok=True)
         canonical.write_bytes(b"fake")
@@ -84,7 +84,7 @@ class TestSongManagement:
 
 class TestPlaylistManagement:
     def test_add_and_list_playlists(self, tmp_path: Path) -> None:
-        _, repo, use_case = _use_case(tmp_path)
+        _, _, use_case = _use_case(tmp_path)
         assert use_case.list_playlists() == []
 
         use_case.add_playlist(10, name="歌单A")

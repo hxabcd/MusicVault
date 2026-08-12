@@ -61,8 +61,8 @@ def test_distribute_subcommand_exists() -> None:
 def _fake_signal_module() -> types.ModuleType:
     """替换 cli.main 中的 signal 模块，避免测试注册真实 SIGINT 处理器。"""
     fake = types.ModuleType("signal")
-    fake.SIGINT = 2
-    fake.signal = lambda signum, handler: None
+    setattr(fake, "SIGINT", 2)
+    setattr(fake, "signal", lambda *_: None)
     return fake
 
 

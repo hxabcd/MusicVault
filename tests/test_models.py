@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from musicvault.domain.models import Track, DownloadedTrack
 from musicvault.shared.utils import format_track_name
@@ -122,8 +123,8 @@ class TestDownloadedTrack:
 
 
 class TestFormatTrackName:
-    def _make_track(self, **kw):
-        defaults = dict(id=1, name="Song", artists=["Artist"], album="Album")
+    def _make_track(self, **kw: Any) -> Track:
+        defaults: dict[str, Any] = dict(id=1, name="Song", artists=["Artist"], album="Album")
         defaults.update(kw)
         return Track(**defaults)
 

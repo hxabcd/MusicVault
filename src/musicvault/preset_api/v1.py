@@ -230,17 +230,17 @@ class PresetRegistry:
             registration = replace(registration, source=self._loading_source)
         return self.register_target(registration)
 
-    def get(self, name: str) -> PresetRegistration:
+    def get(self, name: str) -> PresetRegistration | TargetRegistration:
         registration = self._registrations.get(name) or self._target_registrations.get(name)
         if registration is None:
             raise PresetLoadError(f"未找到 preset：{name}")
         return registration
 
-    def registrations(self, *, enabled_only: bool = False) -> tuple[PresetRegistration, ...]:
+    def registrations(self, *, enabled_only: bool = False) -> tuple[TargetRegistration, ...]:
         # 兼容现有调用：返回 target 注册列表
         return self.target_registrations(enabled_only=enabled_only)
 
-    def load_directories(self, directories: Iterable[str | Path]) -> tuple[PresetRegistration, ...]:
+    def load_directories(self, directories: Iterable[str | Path]) -> tuple[TargetRegistration, ...]:
         for directory in sorted((Path(item) for item in directories), key=lambda item: str(item.resolve())):
             if not directory.is_dir():
                 continue
