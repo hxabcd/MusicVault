@@ -5,6 +5,8 @@ import logging
 import re
 from pathlib import Path
 
+from musicvault.domain.lyrics import LyricLine, LyricWord
+
 # 标准/变体 LRC 时间标签，如 [00:22.200]、[00:22.20]、[00:22:20]
 _TIME_TAG_RE = re.compile(r"\[(\d{1,2}:\d{2}(?:(?:[.:])\d{1,3})?)\]")
 # 网易云 YRC 行头，如 [22200,3840]
@@ -352,3 +354,65 @@ def write_gb18030_lrc(
     )  # pragma: no cover — 回退列表含 utf-8-sig，前面必成功
     logger.warning("歌词编码回退到 utf-8(replace)：%s", lrc_path.name)  # pragma: no cover
     return lrc_path  # pragma: no cover
+
+
+def convert_lyrics_payload(payload: dict[str, str]) -> tuple[LyricLine, ...]:
+    """将网易云原始歌词 payload 转换为统一结构化行列表。"""
+    yrc = _sanitize_lyrics_text(payload.get("yrc") or "")
+    if yrc:
+        return _convert_yrc_lines(yrc, payload)
+    lrc = _sanitize_lyrics_text(payload.get("lrc") or "")
+    if not lrc:
+        return ()
+    return _convert_lrc_lines(lrc, payload)
+
+
+def _convert_yrc_lines(yrc: str, payload: dict[str, str]) -> tuple[LyricLine, ...]:
+    trans_map = _build_translation_map(payload.get("ytlrc") or "")
+    romaji_map = _build_translation_map(payload.get("yromalrc") or "")
+    lines: list[LyricLine] = []
+    for raw_line in yrc.splitlines():
+        parsed = _parse_yrc_line(raw_line)
+        if not parsed:
+            continue
+        start_ms, duration_ms, words, text = parsed
+        translation = _find_translation_fuzzy(start_ms, trans_map, tolerance_ms=200) or ""
+        romaji = _find_translation_fuzzy(start_ms, romaji_map, tolerance_ms=200) or ""
+        if _is_same_text(text, translation):
+            translation = ""
+        if _is_same_text(text, romaji):
+            romaji = ""
+        lines.append(
+            LyricLine(
+                start_ms=start_ms,
+                duration_ms=duration_ms,
+                text=text,
+                words=tuple(LyricWord(start_ms=w_start, text=w_text) for w_start, w_text in words),
+                translation=translation,
+                romaji=romaji,
+            )
+        )
+    return tuple(lines)
+
+
+def _convert_lrc_lines(lrc: str, payload: dict[str, str]) -> tuple[LyricLine, ...]:
+    trans_map = _build_translation_map(payload.get("tlyric") or "")
+    romaji_map = _build_translation_map(payload.get("romalrc") or "")
+    lines: list[LyricLine] = []
+    for raw_line in lrc.splitlines():
+        timestamps, text = _parse_line(raw_line)
+        if not timestamps or not text:
+            continue
+        for raw_ts in timestamps:
+            start_ms = _time_tag_to_ms(raw_ts)
+            if start_ms is None:
+                continue
+            tag = _ms_to_time_tag(start_ms)
+            translation = trans_map.get(tag) or _find_translation_fuzzy(start_ms, trans_map, tolerance_ms=200) or ""
+            romaji = romaji_map.get(tag) or _find_translation_fuzzy(start_ms, romaji_map, tolerance_ms=200) or ""
+            if _is_same_text(text, translation):
+                translation = ""
+            if _is_same_text(text, romaji):
+                romaji = ""
+            lines.append(LyricLine(start_ms=start_ms, duration_ms=0, text=text, translation=translation, romaji=romaji))
+    return tuple(lines)
