@@ -1,10 +1,9 @@
 # AGENTS.md
 
-This file provides guidance to AI Agent when working with code in this repository.
-
 ## 语言要求
 
 - 一律使用中文回答用户、书写注释、docstring 与 commit message。
+- 这是一个个人项目。
 - 领域术语遵循 `CONTEXT.md` 术语表（「中文（English）」形式，如 曲目（Track）、目标端（Target）、源快照（Source Snapshot）），不要自创同义词。
 
 ## 常用命令
@@ -26,12 +25,7 @@ uv python -m musicvault --help                  # CLI 冒烟
 
 ## 架构：模块化单体 + 端口适配器
 
-依赖方向固定：
-
-```text
-presentation → application → domain
-adapters ───────────────────┘
-```
+依赖方向固定：只允许上层依赖下层（presentation → application → domain，adapters → domain），不允许反向依赖。
 
 - `domain/` — 纯领域模型与规则：`models.py`（Track/Playlist/MediaAsset/SourceSnapshot/TargetDescriptor）、`lyrics.py`（LyricLine/LyricWord 统一歌词模型）、`operations.py`。只允许标准库，不得依赖 CLI、Rich、SQLite、网易云 SDK 或 ffmpeg。
 - `application/` — 应用用例与编排：`SyncUseCase`（fetch/pull 两阶段）、`ProcessUseCase`（后处理）、`PipelineUseCase`（sync 四阶段编排）、`SyncEngine`（distribute 引擎）、`SourceStateRecorder`（源侧状态登记）；`bootstrap.py` 是 composition root。
@@ -50,7 +44,7 @@ adapters ───────────────────┘
 
 ## 命令与流水线
 
-命令已收敛：`init` / `sync` / `distribute` / `presets` / `add` / `remove`（别名 `rm`）/ `list`（别名 `ls`）/ `help`；`pull`/`process` 并入 sync 内部阶段，`target-sync` 改名 `distribute`。
+命令：`init` / `sync` / `distribute` / `preset` / `target` / `add` / `remove`（`rm`）/ `list`（`ls`）/ `help`
 
 1. **sync 四阶段链路**：`cli` → `build_pipeline(config)` → `PipelineUseCase` 编排 `SyncUseCase`（fetch 拉取元数据 → pull 下载与歌词统一格式入库）→ `ProcessUseCase`（离线歌词、按 preset 声明转码/写元数据/写歌词文件）→ distribute 阶段（`SyncEngine` 驱动 sync_target 重建目标端）；`--no-distribute` / `--only-distribute` 控制分发，状态经 `SourceStateRecorder` 写入 SQLite。
 2. **distribute 独立命令**：`build_runtime(config)` 组装 → `PresetRegistry` 加载内置（archive preset + hardlink target，受 `preset_system.builtin` 开关控制）与外部脚本目录 → `build_distribute_pipeline` 的 `DistributePipeline.run` 按 `prepare → sync_item → finalize` 生命周期执行目标操作；`--dry-run` 不产生副作用；一次运行内所有 sync_target 共享同一 SQLite `SourceSnapshot`。
