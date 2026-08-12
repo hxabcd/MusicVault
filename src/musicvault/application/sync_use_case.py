@@ -261,6 +261,10 @@ class SyncUseCase:
             return len(stale_ids)
 
         for sid in stale_ids:
+            track_dir = self.paths.media_store / str(sid)
+            # remove_track 前收集其余文件 inode，供删除 library 硬链接使用
+            if track_dir.is_dir():
+                self._remove_library_links_by_inode(self._collect_inodes(track_dir))
             self.recorder.state.remove_track(sid)
         logger.info("清理过期状态：%s 个文件已不存在，已从索引中移除", len(stale_ids))
         return len(stale_ids)
@@ -317,10 +321,11 @@ class SyncUseCase:
         return with_url, no_url
 
     def _prune_stale_tracks(self, remote_tracks: dict[int, Track]) -> tuple[int, list[int]]:
-        """删除远端已不存在的本地曲目（canonical 文件 + SQLite 状态）。
+        """删除远端已不存在的本地曲目（canonical 文件 + SQLite 状态 + library 硬链接）。
 
         返回 (清理数量, stale_ids)；dry-run 模式下只计算并上报，不删除文件、不写状态。
-        library 链接由 distribute 幂等重建覆盖，这里不再遍历 library。
+        library 中指向 canonical 的硬链接需要按 inode 显式删除：distribute 幂等只覆盖
+        快照内曲目，已 remove_track 的曲目不可达，rmtree canonical 后链接残留不释放磁盘。
         """
         state_map = self.load_synced_state()
         synced_ids = set(state_map.keys())
@@ -333,20 +338,62 @@ class SyncUseCase:
             return len(stale_ids), stale_ids
 
         removed_count = 0
+        canonical_inodes: set[tuple[int, int]] = set()
         for track_id in stale_ids:
             # 扁平布局：删除 media_store/<tid>/ 整个目录（各格式、bitrate 变体、.lrc）
             track_dir = self.paths.media_store / str(track_id)
             if track_dir.is_dir():
+                # rmtree 前收集 canonical inode，供删除 library 硬链接使用
+                canonical_inodes.update(self._collect_inodes(track_dir))
                 shutil.rmtree(track_dir)
 
             state_map.pop(track_id, None)
             removed_count += 1
+
+        if canonical_inodes:
+            self._remove_library_links_by_inode(canonical_inodes)
 
         if removed_count:
             for track_id in stale_ids:
                 self.recorder.state.remove_track(track_id)
             logger.info("清理远端已删除曲目：%s 首", removed_count)
         return removed_count, stale_ids
+
+    @staticmethod
+    def _collect_inodes(directory: Path) -> set[tuple[int, int]]:
+        """收集目录内普通文件的 (st_dev, st_ino)，用于匹配 library 中的硬链接。"""
+        inodes: set[tuple[int, int]] = set()
+        if not directory.is_dir():
+            return inodes
+        for f in list(directory.iterdir()):
+            if not f.is_file():
+                continue
+            try:
+                st = f.stat()
+                inodes.add((st.st_dev, st.st_ino))
+            except OSError:
+                continue
+        return inodes
+
+    def _remove_library_links_by_inode(self, inodes: set[tuple[int, int]]) -> int:
+        """删除 library 顶层各歌单目录（含未分类）中指向指定 inode 的硬链接，返回删除数量。"""
+        if not inodes or not self.paths.library.is_dir():
+            return 0
+        removed = 0
+        for child in list(self.paths.library.iterdir()):
+            if not child.is_dir():
+                continue
+            for f in list(child.iterdir()):
+                if not f.is_file():
+                    continue
+                try:
+                    st = f.stat()
+                except OSError:
+                    continue
+                if (st.st_dev, st.st_ino) in inodes:
+                    f.unlink(missing_ok=True)
+                    removed += 1
+        return removed
 
     def _sync_tracks(
         self,

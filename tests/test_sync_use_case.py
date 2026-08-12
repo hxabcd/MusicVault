@@ -186,6 +186,64 @@ class TestPull:
         assert not canonical.parent.exists()
         assert 111 not in svc.load_synced_state()
 
+    def test_pull_prune_removes_library_hardlinks(self, tmp_path: Path) -> None:
+        """远端已删除曲目：library 中指向 canonical inode 的硬链接一并删除（rmtree 不释放链接磁盘）。"""
+        import os
+
+        cfg = _make_cfg(tmp_path)
+        cfg.media_store_dir.mkdir(parents=True)
+        cfg.cache_dir.mkdir(parents=True)
+        _seed_synced(cfg, {111: [10]})
+        canonical = cfg.media_store_dir / "111" / "111.flac"
+        canonical.parent.mkdir(parents=True, exist_ok=True)
+        canonical.write_bytes(b"fake flac")
+
+        # 模拟 distribute 后 library 下的硬链接：歌单目录与未分类 各一个
+        playlist_dir = cfg.library_dir / "歌单10"
+        playlist_dir.mkdir(parents=True)
+        os.link(canonical, playlist_dir / "111.flac")
+        uncat_dir = cfg.library_dir / cfg.default_playlist_name
+        uncat_dir.mkdir(parents=True)
+        os.link(canonical, uncat_dir / "111.flac")
+
+        svc = SyncUseCase(cfg, _make_api([]), MagicMock(), workers=2, dry_run=False, state=_repository(cfg))
+        svc.run_fetch("cookie", playlist_ids=[10])
+        svc.run_pull("cookie", playlist_ids=[10])
+
+        assert not (playlist_dir / "111.flac").exists()
+        assert not (uncat_dir / "111.flac").exists()
+
+    def test_cleanup_stale_state_removes_library_hardlinks(self, tmp_path: Path) -> None:
+        """canonical 手动缺失：remove_track 前收集其余文件 inode，删除 library 中对应硬链接。"""
+        import os
+
+        cfg = _make_cfg(tmp_path)
+        cfg.media_store_dir.mkdir(parents=True)
+        cfg.cache_dir.mkdir(parents=True)
+        _seed_synced(cfg, {111: [10]})
+        from musicvault.application.source_state import build_audio_asset_from_file
+
+        repo = _repository(cfg)
+        canonical = cfg.media_store_dir / "111" / "111.flac"
+        variant = cfg.media_store_dir / "111" / "111_192k.mp3"
+        canonical.parent.mkdir(parents=True, exist_ok=True)
+        canonical.write_bytes(b"fake flac")
+        variant.write_bytes(b"fake mp3")
+        repo.upsert_media_asset(build_audio_asset_from_file(111, "FLAC", canonical))
+
+        playlist_dir = cfg.library_dir / "歌单10"
+        playlist_dir.mkdir(parents=True)
+        os.link(variant, playlist_dir / "111_192k.mp3")
+
+        # 模拟 canonical 手动缺失（仅 192k 变体在库，asset.path 指向的 flac 已消失）
+        canonical.unlink()
+
+        svc = SyncUseCase(cfg, MagicMock(), MagicMock(), workers=2, dry_run=False, state=repo)
+        assert svc._cleanup_stale_state() == 1
+
+        assert not (playlist_dir / "111_192k.mp3").exists()
+        assert 111 not in svc.load_synced_state()
+
 
 class TestFetchPullFlow:
     def test_fetch_then_pull_downloads_new_track(self, tmp_path: Path) -> None:
