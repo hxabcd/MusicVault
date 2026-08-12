@@ -80,6 +80,12 @@ CREATE TABLE IF NOT EXISTS pending_files (
     path TEXT PRIMARY KEY,
     track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS lyrics (
+    track_id INTEGER PRIMARY KEY,
+    payload TEXT NOT NULL,
+    fetched_at REAL NOT NULL
+);
 """
 
 _MIGRATIONS: dict[int, str] = {1: _SCHEMA_SQL}
@@ -419,6 +425,31 @@ class SQLiteStateRepository:
         with self.database.connect() as connection:
             row = connection.execute("SELECT track_id FROM pending_files WHERE path = ?", (path,)).fetchone()
         return int(row["track_id"]) if row is not None else None
+
+    # -- lyrics（源端歌词原稿，按 track 一行 upsert） --
+
+    def save_lyrics(
+        self,
+        track_id: int,
+        payload: str,
+        fetched_at: float,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> None:
+        sql = (
+            "INSERT INTO lyrics (track_id, payload, fetched_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(track_id) DO UPDATE SET payload = excluded.payload, fetched_at = excluded.fetched_at"
+        )
+        if connection is None:
+            with self.transaction() as owned:
+                owned.execute(sql, (track_id, payload, fetched_at))
+        else:
+            connection.execute(sql, (track_id, payload, fetched_at))
+
+    def get_lyrics(self, track_id: int) -> str | None:
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT payload FROM lyrics WHERE track_id = ?", (track_id,)).fetchone()
+        return str(row["payload"]) if row is not None else None
 
     def _list_tracks(self, connection: sqlite3.Connection) -> list[Track]:
         rows = connection.execute("SELECT * FROM tracks ORDER BY id").fetchall()
