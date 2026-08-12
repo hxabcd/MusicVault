@@ -26,11 +26,11 @@ from mutagen.id3 import (
     TPE2,
     TPOS,
     TRCK,
-    USLT,
 )
 from mutagen.mp3 import MP3
 
 from musicvault.domain.models import Track
+from musicvault.preset_api.v1 import MetadataSpec
 
 
 class MetadataWriter:
@@ -43,30 +43,31 @@ class MetadataWriter:
         audio_file: Path,
         track: Track,
         *,
-        lyric_text: str | None = None,
-        embed_cover: bool = True,
-        embed_lyrics: bool = True,
+        metadata: MetadataSpec,
         cover_timeout: int = 15,
-        cover_max_size: int = 0,
-        metadata_fields: frozenset[str] = frozenset(),
     ) -> None:
-        """写入元数据到音频文件。policy 由 caller 决定。"""
+        """写入元数据到音频文件。粒度与封面策略由 metadata 规格决定。"""
         cover_data: bytes | None = None
-        if embed_cover:
-            cover_data = self._download_cover(track.cover_url, cover_timeout, cover_max_size)
+        if metadata.embed_cover:
+            cover_data = self._download_cover(track.cover_url, cover_timeout, metadata.cover_max_size)
+
+        metadata_fields = frozenset(metadata.fields)
 
         if audio_file.suffix.lower() == ".mp3":
-            self._write_mp3(audio_file, track, lyric_text, cover_data, embed_lyrics, metadata_fields)
+            self._write_mp3(audio_file, track, cover_data, metadata_fields)
         elif audio_file.suffix.lower() == ".flac":
-            self._write_flac(audio_file, track, lyric_text, cover_data, embed_lyrics, metadata_fields)
+            self._write_flac(audio_file, track, cover_data, metadata_fields)
 
     # ------------------------------------------------------------------
     # MP3
     # ------------------------------------------------------------------
 
     def _write_mp3(
-        self, path: Path, track: Track, lyric_text: str | None,
-        cover_data: bytes | None, embed_lyrics: bool, metadata_fields: frozenset[str],
+        self,
+        path: Path,
+        track: Track,
+        cover_data: bytes | None,
+        metadata_fields: frozenset[str],
     ) -> None:
         audio = MP3(str(path))
         tags = audio.tags or ID3()
@@ -86,10 +87,6 @@ class MetadataWriter:
         self._set_id3_text(tags, "TEXT", TEXT, extras.get("lyricist"))
         self._set_id3_comment(tags, extras.get("comment"))
 
-        if embed_lyrics and lyric_text:
-            tags.delall("USLT")
-            tags.add(USLT(encoding=3, lang="eng", desc="", text=lyric_text))
-
         if cover_data:
             tags.delall("APIC")
             tags.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover", data=cover_data))
@@ -102,8 +99,11 @@ class MetadataWriter:
     # ------------------------------------------------------------------
 
     def _write_flac(
-        self, path: Path, track: Track, lyric_text: str | None,
-        cover_data: bytes | None, embed_lyrics: bool, metadata_fields: frozenset[str],
+        self,
+        path: Path,
+        track: Track,
+        cover_data: bytes | None,
+        metadata_fields: frozenset[str],
     ) -> None:
         audio = FLAC(str(path))
         audio["title"] = track.name
@@ -119,10 +119,6 @@ class MetadataWriter:
         self._set_vorbis_text(audio, "composer", extras.get("composer"))
         self._set_vorbis_text(audio, "lyricist", extras.get("lyricist"))
         self._set_vorbis_text(audio, "comment", extras.get("comment"))
-
-        if embed_lyrics and lyric_text:
-            audio["lyrics"] = lyric_text
-            audio["description"] = "Synced by MusicVault"
 
         if cover_data:
             pic = Picture()

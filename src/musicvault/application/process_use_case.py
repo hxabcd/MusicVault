@@ -20,6 +20,7 @@ from musicvault.application.source_state import SourceStateRecorder, build_audio
 from musicvault.core.config import Config
 from musicvault.domain.models import DownloadedTrack, MediaAsset, Track
 from musicvault.domain.preset import Preset, audio_spec_key, build_audio_specs, compute_preset_hash
+from musicvault.preset_api.v1 import MetadataSpec
 from musicvault.ports.source import SourceClient
 from musicvault.ports.state import StateRepository
 from musicvault.shared.utils import (
@@ -258,23 +259,20 @@ class ProcessUseCase:
         for spec_key, canon_path in audio_map.items():
             presets_for_spec = spec_presets.get(spec_key, [])
             embed_cover = any(p.embed_cover for p in presets_for_spec)
-            embed_lyrics = any(p.embed_lyrics for p in presets_for_spec)
             cover_max_size = max((p.cover_max_size for p in presets_for_spec), default=0)
             mf_union: set[str] = set()
             for p in presets_for_spec:
                 mf_union |= set(p.metadata_fields)
 
-            best_lyric = self._pick_best_lyric(lyrics, presets_for_spec)
-
             self.metadata.write(
                 canon_path,
                 track_info,
-                lyric_text=best_lyric if embed_lyrics else None,
-                embed_cover=embed_cover,
-                embed_lyrics=embed_lyrics,
+                metadata=MetadataSpec(
+                    embed_cover=embed_cover,
+                    cover_max_size=cover_max_size,
+                    fields=tuple(sorted(mf_union)),
+                ),
                 cover_timeout=self.cfg.network_cover_timeout,
-                cover_max_size=cover_max_size,
-                metadata_fields=frozenset(mf_union),
             )
 
         # LRC 文件（按 preset 独立）
