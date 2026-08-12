@@ -141,8 +141,3 @@ def create_link(src: Path, dst: Path) -> None:
     except OSError:
         _warn_hardlink_fallback_once()
         shutil.copy2(src, dst)
-
-
-def remove_link(path: Path) -> None:
-    """删除硬链接/文件，不存在时静默跳过"""
-    path.unlink(missing_ok=True)

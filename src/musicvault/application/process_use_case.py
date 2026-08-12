@@ -16,8 +16,6 @@ from musicvault.application.source_state import SourceStateRecorder, build_audio
 from musicvault.core.config import Config
 from musicvault.domain.lyrics import lyrics_from_json
 from musicvault.domain.models import DownloadedTrack, MediaAsset, Track
-from musicvault.domain.preset import audio_spec_key as legacy_spec_key
-from musicvault.domain.preset import build_audio_specs
 from musicvault.preset_api.v1 import (
     AudioFormat,
     BasePreset,
@@ -303,7 +301,8 @@ class ProcessUseCase:
         if force:
             return tasks, 0
 
-        required_specs = {legacy_spec_key(fmt, br) for fmt, br in build_audio_specs(self.cfg.presets)}
+        # 必需 spec 以注入的 preset 实例（v1 枚举）为准，不再读取领域 cfg.presets
+        required_specs = {audio_spec_key(p.format, p.bitrate) for p in self.presets.values()}
         pending: list[tuple[Path, Track]] = []
         skipped = 0
         for raw_file, track in tasks:

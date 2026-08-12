@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Mapping
 
 from musicvault.adapters.filesystem.workspace import WorkspacePaths
@@ -14,18 +13,13 @@ from musicvault.adapters.processors.organizer import Organizer
 from musicvault.application.process_use_case import ProcessUseCase
 from musicvault.application.progress import ProgressReporter
 from musicvault.application.source_state import SourceStateRecorder
+from musicvault.application.sync_engine import SyncEngine
 from musicvault.application.sync_use_case import SyncUseCase
 from musicvault.core.config import Config
-from musicvault.domain.preset import audio_spec_key
 from musicvault.ports.source import SourceClient
 from musicvault.ports.state import StateRepository
 from musicvault.ports.target import TargetOperations
 from musicvault.preset_api.v1 import BasePreset, PresetRegistry
-from musicvault.shared.utils import (
-    create_link,
-    format_track_name,
-    safe_filename,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +37,7 @@ class PipelineResult:
 
 
 class PipelineUseCase:
-    """流水线用例：sync/pull/process 的编排与源侧状态登记"""
+    """流水线用例：sync 四阶段（fetch → pull → process → distribute）编排与源侧状态登记"""
 
     def __init__(
         self,
@@ -60,9 +54,11 @@ class PipelineUseCase:
         self.dry_run = dry_run
         self.registry = registry
         self.target = target
+        # preset 实例索引：process 阶段消费（歌词/元数据/规格），distribute 阶段注入 SyncEngine
+        self.presets = presets
         # workspace 各生命周期区域路径的唯一来源（cache/media_store/library/logs）
         self.paths = WorkspacePaths(cfg.workspace_path)
-        # 把同步/处理的源侧状态写入 SQLite，供 target-sync 消费
+        # 把同步/处理的源侧状态写入 SQLite，供 distribute 阶段消费
         self.recorder = SourceStateRecorder(state)
 
         cpu = os.cpu_count() or 4
@@ -97,208 +93,71 @@ class PipelineUseCase:
             presets=presets,
         )
 
-    def link_only(self, cookie: str) -> tuple[int, int]:
-        """仅创建 library 硬链接，跳过下载、解码、转码、元数据和歌词处理。
-
-        从 SQLite 快照读取 track_id → playlist_ids 映射，
-        通过 API 批量获取曲目详情生成文件名，在各 preset 目录中重建硬链接。
-
-        返回 (linked_tracks, playlist_count)。dry-run 模式下只统计将创建的链接，不落盘。
-        """
-        from musicvault.domain.models import Track
-
-        if not self.dry_run:
-            self.cfg.ensure_dirs()
-
-        # 1. 加载同步状态（自 SQLite 快照派生）
-        state_map = self.sync_service.load_synced_state()
-        if not state_map:
-            return 0, 0
-
-        # 2. 加载歌单索引
-        playlist_index = {
-            str(pl.id): {"name": pl.name, "track_count": len(pl.track_ids)}
-            for pl in self.recorder.state.list_playlists()
-        }
-        name_to_pid: dict[str, int] = {}
-        for pid_str, entry in playlist_index.items():
-            name = entry.get("name") if isinstance(entry, dict) else None
-            if name:
-                name_to_pid[safe_filename(str(name))] = int(pid_str)
-
-        # 3. 批量获取曲目详情（用于生成正确的链接文件名）
-        all_track_ids = list(state_map.keys())
-        self.api.login_with_cookie(cookie)
-        track_details = self.api.get_tracks_detail(all_track_ids)
-
-        # 4. 遍历曲目，创建缺失的 library 链接
-        linked_tracks = 0
-        total_links = 0
-        for track_id, playlist_ids in state_map.items():
-            track = track_details.get(track_id) or Track(
-                id=track_id, name=str(track_id), artists=[], album="Unknown Album", raw={}
-            )
-
-            # 从 download 目录收集 canonical 文件
-            audio_map: dict[str, Path] = {}
-            for preset in self.cfg.presets:
-                spec_key = audio_spec_key(preset.format, preset.bitrate)
-                if spec_key not in audio_map:
-                    src = self.sync_service.find_canonical_for_spec(track_id, spec_key)
-                    if src:
-                        audio_map[spec_key] = src
-
-            if not audio_map:
-                continue
-
-            has_linked = False
-            for pid in playlist_ids:
-                entry = playlist_index.get(str(pid))
-                dirname = safe_filename(str(entry["name"])) if entry and entry.get("name") else str(pid)
-                for preset in self.cfg.presets:
-                    spec_key = audio_spec_key(preset.format, preset.bitrate)
-                    audio_src = audio_map.get(spec_key)
-                    if not audio_src:
-                        continue
-                    link_stem = format_track_name(preset.filename_template, track)
-                    dst_dir = self.cfg.preset_dir(preset.name) / dirname
-                    if not self.dry_run:
-                        dst_dir.mkdir(parents=True, exist_ok=True)
-                    audio_dst = dst_dir / f"{link_stem}{audio_src.suffix}"
-                    if not audio_dst.exists():
-                        if self.dry_run:
-                            total_links += 1
-                        else:
-                            create_link(audio_src, audio_dst)
-                        has_linked = True
-                    if preset.write_lrc_file:
-                        lrc_src = audio_src.with_name(f"{track_id}.{preset.name}.lrc")
-                        if lrc_src.exists():
-                            lrc_dst = dst_dir / f"{link_stem}.lrc"
-                            if not lrc_dst.exists():
-                                if self.dry_run:
-                                    total_links += 1
-                                else:
-                                    create_link(lrc_src, lrc_dst)
-                                has_linked = True
-
-            if has_linked:
-                linked_tracks += 1
-
-        playlist_count = len({pid for pids in state_map.values() for pid in pids})
-
-        if self.dry_run:
-            logger.info("dry-run 链接预览：%s 个链接，%s 首曲目", total_links, linked_tracks)
-            return linked_tracks, playlist_count
-
-        logger.info("仅链接模式完成：%s 首曲目已创建链接", linked_tracks)
-        return linked_tracks, playlist_count
-
     def run_pipeline(
         self,
         cookie: str,
-        command: str,
         *,
+        distribute: bool = True,
+        only_distribute: bool = False,
         progress: ProgressReporter | None = None,
     ) -> PipelineResult:
+        """sync 四阶段编排：fetch → pull → process → distribute。
+
+        only_distribute 跳过前三阶段直接分发（结果只含 distribute 信息，
+        由 CLI 另行渲染）；distribute=False 时跳过收尾分发。
+        dry-run 下 fetch 不执行（写 SQLite 有副作用）、pull/process 沿用
+        现有 dry-run 语义、distribute 沿用 SyncEngine 的 dry-run。
+        """
+        if only_distribute:
+            self._run_distribute()
+            return PipelineResult()
+
         if not self.dry_run:
             self.cfg.ensure_dirs()
 
-        only_pull = command == "pull"
-        only_process = command == "process"
-
-        downloaded: tuple = ()
-        pruned = 0
-        track_count = 0
-        playlist_count = 0
-        dry_run_plan: dict | None = None
-        if not only_process:
-            playlist_ids = [pl.id for pl in self.recorder.state.list_playlists()]
-            # fetch 写 SQLite 有副作用，dry-run 下跳过；pull 的 dry-run 只计算计划
-            if not self.dry_run:
-                self.sync_service.run_fetch(cookie=cookie, playlist_ids=playlist_ids)
-            sync_result = self.sync_service.run_pull(cookie=cookie, playlist_ids=playlist_ids, progress=progress)
-            downloaded = sync_result.downloaded
-            pruned = sync_result.pruned
-            track_count = sync_result.track_count
-            playlist_count = sync_result.playlist_count
-            dry_run_plan = sync_result.dry_run_plan
+        playlist_ids = [pl.id for pl in self.recorder.state.list_playlists()]
+        # fetch 写 SQLite 有副作用，dry-run 下跳过；pull 的 dry-run 只计算计划
+        if not self.dry_run:
+            self.sync_service.run_fetch(cookie=cookie, playlist_ids=playlist_ids)
+        sync_result = self.sync_service.run_pull(cookie=cookie, playlist_ids=playlist_ids, progress=progress)
+        downloaded = sync_result.downloaded
 
         # sync 的 dry-run 不跑 process 阶段（新下载文件尚未落地）
         processed = 0
-        if not only_pull and (not self.dry_run or only_process):
+        if not self.dry_run:
             process_result = self.process_service.run_process(
-                downloaded=downloaded,
+                downloaded=list(downloaded),
                 force=self.cfg.force,
                 progress=progress,
             )
             processed = process_result.processed
 
-        if not self.dry_run:
-            # 清理未分类 中无索引归属的孤立文件（上一版 bug 的残留，以及后续边界情况）
-            self._cleanup_uncategorized_orphans()
+        if distribute:
+            self._run_distribute()
 
         return PipelineResult(
             downloaded=len(downloaded),
             processed=processed,
-            pruned=pruned,
-            track_count=track_count,
-            playlist_count=playlist_count,
-            dry_run_plan=dry_run_plan,
+            pruned=sync_result.pruned,
+            track_count=sync_result.track_count,
+            playlist_count=sync_result.playlist_count,
+            dry_run_plan=sync_result.dry_run_plan,
         )
 
-    def _cleanup_uncategorized_orphans(self) -> None:
-        """清理 library/*/未分类 下无索引归属的硬链接。"""
-        synced = self.sync_service.load_synced_state()
-        valid_ids = set(synced.keys())
-        if not valid_ids:
+    def _run_distribute(self) -> None:
+        """distribute 阶段：按注册表目标分发 SQLite 快照到 library（SyncEngine 驱动）。
+
+        registry/target 未注入时静默跳过（旧链路仅拉取/处理的使用场景）。
+        """
+        if self.registry is None or self.target is None:
             return
-
-        # 构建 canonical 文件的 inode → track_id 映射
-        inode_to_tid: dict[tuple[int, int], int] = {}
-        media_root = self.paths.media_store
-        if media_root.is_dir():
-            for track_dir in media_root.iterdir():
-                if not track_dir.is_dir() or not track_dir.name.isdigit():
-                    continue
-                audio_dir = track_dir / "audio"
-                if not audio_dir.is_dir():
-                    continue
-                for f in audio_dir.iterdir():
-                    if not f.is_file():
-                        continue
-                    try:
-                        st = f.stat()
-                        inode_to_tid[(st.st_dev, st.st_ino)] = int(track_dir.name)
-                    except OSError:
-                        continue
-
-        if not inode_to_tid:
-            return
-
-        removed = 0
-        for preset in self.cfg.presets:
-            uncat = self.cfg.preset_dir(preset.name) / self.cfg.default_playlist_name
-            if not uncat.is_dir():
-                continue
-            for f in list(uncat.iterdir()):
-                if not f.is_file():
-                    continue
-                try:
-                    st = f.stat()
-                    tid = inode_to_tid.get((st.st_dev, st.st_ino))
-                except OSError:
-                    continue
-                if tid is not None and tid not in valid_ids:
-                    f.unlink()
-                    removed += 1
-                    logger.info("清理无归属的未分类文件：%s", f.name)
-            # 清空后删除目录
-            try:
-                if not any(uncat.iterdir()):
-                    uncat.rmdir()
-            except OSError:
-                pass
-
-        if removed:
-            logger.info("未分类清理完成：已删除 %s 个孤立文件", removed)
+        engine = SyncEngine(
+            target=self.target,
+            dry_run=self.dry_run,
+            media_store_root=self.paths.media_store,
+        )
+        engine.run(
+            self.recorder.state.create_snapshot(),
+            self.registry.target_registrations(enabled_only=True),
+            presets=self.presets,
+        )

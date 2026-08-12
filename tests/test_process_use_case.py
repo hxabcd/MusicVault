@@ -187,6 +187,38 @@ def test_process_writes_lrc_with_preset_encodings(tmp_path: Path) -> None:
         data.decode("utf-8")
 
 
+def test_filter_pending_uses_preset_param_specs(tmp_path: Path) -> None:
+    """_filter_pending 的必需 spec 来自 presets 参数（v1 枚举），而非 cfg.presets。
+
+    presets 只声明 MP3-192k：media_assets 覆盖该 spec 且有处理记录 → 第二次跳过；
+    若按 cfg.presets（默认含 FLAC）计算，FLAC 未覆盖会误判为待处理。
+    """
+    from musicvault.application.source_state import build_audio_asset_from_file
+
+    cfg = _make_cfg(tmp_path)
+    cfg.media_store_dir.mkdir(parents=True)
+    canonical = cfg.media_store_dir / "333" / "333_192k.mp3"
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_bytes(b"fake mp3")
+
+    repo = _repository(cfg)
+    repo.upsert_track(_make_track(333))
+    repo.upsert_media_asset(build_audio_asset_from_file(333, "MP3-192k", canonical))
+    repo.record_processed(333, "preset-script", 0.0)
+
+    class _Mp3Preset(BasePreset):
+        format = AudioFormat.MP3
+        bitrate = "192k"
+
+    organizer = MagicMock()
+    svc = _process_svc(cfg, repo, organizer=organizer, presets={"mp3": _Mp3Preset()})
+    result = svc.run_process(downloaded=[_downloaded(333, canonical)], force=False)
+
+    assert result.processed == 0
+    assert result.skipped == 1
+    organizer.route_audio.assert_not_called()
+
+
 def test_run_process_without_downloads_returns_empty(tmp_path: Path) -> None:
     """run_process 无下载输入 → 直接返回空结果（本地独立模式已移除）。"""
     cfg = _make_cfg(tmp_path)

@@ -119,6 +119,26 @@ class TestSyncDryRun:
         assert not canonical.exists()
         assert 111 not in svc.load_synced_state()
 
+    def test_dry_run_keeps_stale_managed_song(self, tmp_path: Path) -> None:
+        """dry-run 下远端已删除的单曲 ID 不写入清理（remove_managed_song 不生效）。"""
+        from musicvault.application.playlist_use_case import PlaylistUseCase
+
+        cfg = _make_cfg(tmp_path)
+        cfg.media_store_dir.mkdir(parents=True)
+        cfg.cache_dir.mkdir(parents=True)
+        repo = _repository(cfg)
+        PlaylistUseCase(cfg, repo).add_song(999)
+        PlaylistUseCase(cfg, repo).add_song(1000)  # 该 id 已被远端删除
+
+        api = MagicMock()
+        api.get_tracks_detail.return_value = {999: _make_track(999)}  # 1000 缺失
+
+        svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=True, state=repo)
+        svc.run_pull("cookie", playlist_ids=[])
+
+        # dry-run 不写 SQLite：无效单曲 ID 保留，等待真实运行再清理
+        assert repo.list_managed_songs() == [999, 1000]
+
     def test_normal_mode_writes_to_sqlite(self, tmp_path: Path) -> None:
         """回归：dry_run=False 时下载并把状态写入 SQLite（不再写 JSON）。"""
         cfg = _make_cfg(tmp_path)

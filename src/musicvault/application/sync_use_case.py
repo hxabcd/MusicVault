@@ -202,12 +202,15 @@ class SyncUseCase:
             for _sid, track in song_details.items():
                 if track.id not in all_tracks:
                     all_tracks[track.id] = track
-            # 过滤本地已删除但仍在 managed_songs 中的旧 ID
+            # 过滤本地已删除但仍在 managed_songs 中的旧 ID（dry-run 不写 SQLite）
             missing = sorted(set(song_ids) - set(song_details.keys()))
             if missing:
-                for mid in missing:
-                    self.recorder.state.remove_managed_song(mid)
-                logger.info("清理无效单曲 ID：%s", missing)
+                if self.dry_run:
+                    logger.info("dry-run：将清理无效单曲 ID %s（不写库）", missing)
+                else:
+                    for mid in missing:
+                        self.recorder.state.remove_managed_song(mid)
+                    logger.info("清理无效单曲 ID：%s", missing)
 
         return _RemoteState(
             all_tracks=all_tracks,
