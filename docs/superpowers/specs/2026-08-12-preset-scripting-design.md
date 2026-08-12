@@ -225,31 +225,33 @@ class ArchivePreset(BasePreset):
         return enhanced_lrc(lines, include_translation=True, include_romaji=True)
 
 class HardlinkDistributor:
-    """按歌单目录硬链接分发指定 preset 的音频与歌词。"""
+    """按歌单目录硬链接分发指定 preset 的音频与歌词（按曲目幂等）。"""
     def __init__(self, presets: Mapping[str, Preset]):
         self.preset = presets["archive"]        # 引用内置 archive
     def sync_item(self, track, context):
         asset = context.media_asset(track.id, spec=audio_spec_key(self.preset.format, self.preset.bitrate))
         if asset is None: return
-        for playlist in track 所属歌单:
-            dest = target_root / safe_filename(playlist.name) / f"{format_track_name(template, track)}{asset.path.suffix}"
-            context.link(asset.path, dest)
-        lrc = context.lyrics_file(track.id, self.preset.name)
-        if lrc: context.link(lrc, dest.with_suffix(".lrc"))
+        owned = {safe_filename(pl.name) for pl in context.playlists if track.id in pl.track_ids} or {未分类}
+        # 1) 删除本曲目在 library 其他歌单目录下的旧链接（仅 inode 与 canonical 一致的自建链接）
+        # 2) 在所属歌单目录建立缺失链接（音频 + 歌词）
+    def finalize(self, context):
+        # 删除快照中不存在的歌单目录（内容全为硬链接，rmtree 不伤 canonical）
 ```
 
 - 默认 preset 仅 archive（portable 移除）；默认 sync_target 为 hardlink
 - **library/ = hardlink sync_target 的专属导出根**（bootstrap 注入 `target_root=library/`），不会有别的 target 使用该目录
 - 布局：`library/<歌单名>/<文件>`、`library/未分类/`（default_playlist_name）
 - 链接文件名模板归 sync_target 自己定义（`format_track_name` 工具保留）
-- 删除策略保留 `append`（只追加不删除，避免误删用户文件）
+- **幂等语义**（取代 append）：sync_item 对每个曲目——先删除本曲目在非所属歌单目录下的旧链接（**仅限 inode 与 canonical 一致的自建硬链接**，`st_dev+st_ino` 匹配，绝不误删用户文件），再在所属歌单目录建缺失链接；finalize 删除快照中不存在的歌单目录（目录内容全为硬链接，rmtree 安全）；未分类目录中 inode 属于快照 canonical 但该曲目已有歌单归属的链接同样清理（曲目无歌单归属时留在未分类）；快照之外的孤儿文件一律保留
+- 歌单改名/分配变化/远端删除的 library 清理全部由 distribute 幂等重建覆盖；fetch 阶段只更新 SQLite 关系，不碰 library
 
 ## 处理链路重构
 
 ### fetch（拉取歌单元数据，不下载）
 
-- 登录 → 拉取歌单详情/曲目列表 → 改名检测（`_handle_playlist_rename`）、歌单分配协调（`_reconcile_playlist_assignments` 的计算部分）→ 更新 SQLite 歌单/曲目关系
+- 登录 → 拉取歌单详情/曲目列表 → 检测改名/删除/分配变化 → 更新 SQLite 歌单/曲目关系
 - 现状拆分：`SyncUseCase.run_sync` 的元数据前半段独立为 fetch 阶段
+- **不碰 library**：链接的移动/删除/改名后重建全部由 distribute 的 hardlink 幂等重建覆盖（`_handle_playlist_rename`/`_reconcile_playlist_assignments` 的链接操作移除）
 
 ### pull（增量下载/移除，最完整信息入库）
 
@@ -316,7 +318,7 @@ class HardlinkDistributor:
 - `core/config.py` / `cli/main.py` / `adapters/providers/netease_client.py` — 命令与配置变化
 - `adapters/filesystem/workspace.py` — media_store 扁平化（`<tid>/audio/` → `<tid>/`）
 
-**删除**：`domain/preset.py`（辅助函数迁 preset_api）、lyrics.py 文本级渲染、PlaylistUseCase 的 preset 目录遍历清理、SyncUseCase 的 library 链接相关（_create_track_links/_remove_track_links/_link_name 迁移语义至 sync_target）
+**删除**：`domain/preset.py`（辅助函数迁 preset_api）、lyrics.py 文本级渲染、PlaylistUseCase 的 preset 目录遍历清理、SyncUseCase 的 library 链接相关（`_create_track_links`/`_remove_track_links`/`_handle_playlist_rename` 的链接操作/`_reconcile_playlist_assignments`——语义由 hardlink 幂等重建覆盖）、PipelineUseCase 的 `_cleanup_uncategorized_orphans`（由 hardlink 幂等清理覆盖）
 
 ## 错误处理与事务
 
