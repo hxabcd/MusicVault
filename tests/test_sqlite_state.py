@@ -177,3 +177,15 @@ def test_remove_track_cascades_processed_and_pending(tmp_path: Path) -> None:
     assert repo.get_track(1) is None
     assert repo.find_track_id_by_path("downloads/cache/1.mp3") is None
     assert not repo.is_processed(1, set())
+
+
+def test_remove_track_deletes_lyrics_row(tmp_path: Path) -> None:
+    """remove_track 级联删除 lyrics 行：lyrics 表无外键，需显式删除避免孤儿行。"""
+    repo = SQLiteStateRepository(SQLiteState(tmp_path / "state.db"))
+    repo.upsert_track(_track(1))
+    repo.save_lyrics(1, "[]", 0.0)
+    assert repo.get_lyrics(1) is not None
+
+    repo.remove_track(1)
+
+    assert repo.get_lyrics(1) is None

@@ -278,11 +278,13 @@ class SQLiteStateRepository:
             connection.execute("DELETE FROM managed_songs WHERE track_id = ?", (track_id,))
 
     def remove_track(self, track_id: int, *, connection: sqlite3.Connection | None = None) -> None:
-        """删除曲目及其级联关系（playlist_tracks / managed_songs / media_assets）。"""
+        """删除曲目及其级联关系（playlist_tracks / managed_songs / media_assets / lyrics）。"""
         if connection is None:
             with self.transaction() as owned:
+                owned.execute("DELETE FROM lyrics WHERE track_id = ?", (track_id,))
                 owned.execute("DELETE FROM tracks WHERE id = ?", (track_id,))
         else:
+            connection.execute("DELETE FROM lyrics WHERE track_id = ?", (track_id,))
             connection.execute("DELETE FROM tracks WHERE id = ?", (track_id,))
 
     def remove_playlist(self, playlist_id: int, *, connection: sqlite3.Connection | None = None) -> None:
