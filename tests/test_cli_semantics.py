@@ -1,6 +1,6 @@
 """CLI 退出码语义与幂等重复执行测试。
 
-覆盖：target-sync 结果失败返回退出码 1、运行期异常返回 2（退出码语义区分）；
+覆盖：distribute 结果失败返回退出码 1、运行期异常返回 2（退出码语义区分）；
 同一资产连续两次 sync_item/link 到同一目标，第二次幂等跳过、不产生重复目标。
 """
 
@@ -36,8 +36,8 @@ def _fake_signal_module() -> types.ModuleType:
 # -- CLI 退出码 ------------------------------------------------------------
 
 
-class _FailedTargetSyncPipeline:
-    """模拟目标同步整体失败的 target-sync pipeline。"""
+class _FailedDistributePipeline:
+    """模拟目标分发整体失败的 distribute pipeline。"""
 
     def run(self, *, selected: set[str] | None = None) -> SyncRunResult:
         return SyncRunResult(
@@ -47,27 +47,27 @@ class _FailedTargetSyncPipeline:
         )
 
 
-def test_target_sync_failed_result_returns_exit_code_1(tmp_path: Path, monkeypatch) -> None:
+def test_distribute_failed_result_returns_exit_code_1(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("musicvault.cli.main.signal", _fake_signal_module())
     monkeypatch.setattr(
-        "musicvault.application.bootstrap.build_target_sync_pipeline",
-        lambda cfg, dry_run=False: _FailedTargetSyncPipeline(),
+        "musicvault.application.bootstrap.build_distribute_pipeline",
+        lambda cfg, dry_run=False: _FailedDistributePipeline(),
     )
 
-    code = main(["target-sync", "--config", str(tmp_path / "config.json")])
+    code = main(["distribute", "--config", str(tmp_path / "config.json")])
 
     assert code == 1
 
 
-def test_target_sync_runtime_error_returns_exit_code_2(tmp_path: Path, monkeypatch) -> None:
+def test_distribute_runtime_error_returns_exit_code_2(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("musicvault.cli.main.signal", _fake_signal_module())
 
     def _boom(cfg: object, dry_run: bool = False) -> None:
         raise RuntimeError("模拟加载失败")
 
-    monkeypatch.setattr("musicvault.application.bootstrap.build_target_sync_pipeline", _boom)
+    monkeypatch.setattr("musicvault.application.bootstrap.build_distribute_pipeline", _boom)
 
-    code = main(["target-sync", "--config", str(tmp_path / "config.json")])
+    code = main(["distribute", "--config", str(tmp_path / "config.json")])
 
     assert code == 2
 

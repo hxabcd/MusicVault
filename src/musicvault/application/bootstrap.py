@@ -107,7 +107,7 @@ def build_playlist_use_case(config: Config) -> PlaylistUseCase:
 
 @dataclass(frozen=True, slots=True)
 class TargetSyncPipeline:
-    """target-sync 链路的组装：运行时 + 同步引擎；CLI 只负责参数与输出。"""
+    """distribute 链路的组装：运行时 + 同步引擎；CLI 只负责参数与输出。"""
 
     runtime: Runtime
     engine: SyncEngine
@@ -139,7 +139,3 @@ def build_distribute_pipeline(config: Config, *, dry_run: bool = False) -> Targe
         media_store_root=runtime.paths.media_store,
     )
     return TargetSyncPipeline(runtime=runtime, engine=engine)
-
-
-# 旧名别名：cli/main.py 仍在引用，Task 15 迁移后移除。
-build_target_sync_pipeline = build_distribute_pipeline

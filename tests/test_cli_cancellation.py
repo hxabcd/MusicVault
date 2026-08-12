@@ -1,7 +1,7 @@
 """CLI 层 KeyboardInterrupt 处理测试。
 
-主流程（sync / process 等 pipeline 路径）中断返回退出码 130 且不抛裸异常；
-二维码扫码等待阶段取消登录返回退出码 2。
+主流程（sync / sync --only-distribute 等 pipeline 路径）中断返回退出码 130
+且不抛裸异常；二维码扫码等待阶段取消登录返回退出码 2。
 """
 
 from __future__ import annotations
@@ -13,12 +13,9 @@ from musicvault.cli.main import main
 
 
 class _InterruptingService:
-    """模拟运行中途被 Ctrl+C 打断的 pipeline 服务。"""
+    """模拟运行中途被 Ctrl+C 打断的 pipeline 服务（cookie 位置参数 + 关键字选项）。"""
 
-    def run_pipeline(self, **kwargs: object) -> None:
-        raise KeyboardInterrupt
-
-    def link_only(self, **kwargs: object) -> None:
+    def run_pipeline(self, cookie: str, **kwargs: object) -> None:
         raise KeyboardInterrupt
 
 
@@ -41,13 +38,14 @@ def test_sync_keyboard_interrupt_returns_130(tmp_path: Path, monkeypatch) -> Non
     assert code == 130
 
 
-def test_process_keyboard_interrupt_returns_130(tmp_path: Path, monkeypatch) -> None:
+def test_sync_only_distribute_keyboard_interrupt_returns_130(tmp_path: Path, monkeypatch) -> None:
+    # --only-distribute 走同一 pipeline 路径，Ctrl+C 同样优雅返回 130
     monkeypatch.setattr("musicvault.cli.main.signal", _fake_signal_module())
     monkeypatch.setattr(
         "musicvault.application.bootstrap.build_pipeline", lambda cfg, dry_run=False: _InterruptingService()
     )
 
-    code = main(["process", "--config", str(tmp_path / "config.json"), "--cookie", "fake-cookie"])
+    code = main(["sync", "--config", str(tmp_path / "config.json"), "--cookie", "fake-cookie", "--only-distribute"])
 
     assert code == 130
 

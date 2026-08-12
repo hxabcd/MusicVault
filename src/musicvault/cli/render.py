@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from musicvault.application.pipeline_use_case import PipelineResult
+from musicvault.application.sync_engine import SyncRunResult
 from musicvault.shared.tui_progress import BatchProgress, console, ok
 
 
@@ -73,38 +74,38 @@ def render_dry_run_plan(plan: dict) -> None:
         console.print(f"  [yellow]将清理 {stale_index} 条本地文件缺失的过期索引[/yellow]")
 
 
-def render_pipeline_result(result: PipelineResult, *, dry_run: bool, command: str) -> None:
-    """pipeline 运行结束后的汇总输出。"""
-    if dry_run and command != "process":
-        if result.dry_run_plan:
-            console.print(
-                f"  从 [cyan]{result.dry_run_plan.get('playlist_count', '?')}[/cyan] 个歌单同步 "
-                f"[cyan]{result.dry_run_plan.get('track_count', '?')}[/cyan] 首（[bold yellow]dry-run 预览[/bold yellow]）"
-            )
-            render_dry_run_plan(result.dry_run_plan)
+def render_pipeline_result(result: PipelineResult, *, dry_run: bool, only_distribute: bool = False) -> None:
+    """pipeline 运行结束后的汇总输出。
+
+    only_distribute 时 sync 阶段未执行，只渲染分发结果。
+    """
+    if dry_run and result.dry_run_plan:
+        console.print(
+            f"  从 [cyan]{result.dry_run_plan.get('playlist_count', '?')}[/cyan] 个歌单同步 "
+            f"[cyan]{result.dry_run_plan.get('track_count', '?')}[/cyan] 首（[bold yellow]dry-run 预览[/bold yellow]）"
+        )
+        render_dry_run_plan(result.dry_run_plan)
         n_new = len((result.dry_run_plan or {}).get("with_url") or [])
-        if n_new and command != "pull":
+        if n_new:
             console.print(f"  [dim]随后将进入后处理：新下载的 {n_new} 首曲目（转码/元数据/歌词/硬链接）[/dim]")
         console.print("  [bold yellow]dry-run 结束：未下载、未修改任何文件[/bold yellow]")
+        if result.distribute is not None:
+            render_distribute_result(result.distribute)
         return
-    if command != "process" or result.track_count:
+    if not only_distribute:
         render_sync_summary(result.track_count, result.playlist_count, result.downloaded, result.pruned)
-    if command != "pull":
         if result.processed:
             console.print(f"  [green]处理完成 {result.processed} 首[/green]")
+    if result.distribute is not None:
+        render_distribute_result(result.distribute)
     ok("完成")
 
 
-def render_link_result(counts: tuple[int, int], *, dry_run: bool) -> None:
-    """link（--only-link）结果输出。"""
-    linked, playlist_count = counts
-    if dry_run:
+def render_distribute_result(result: SyncRunResult) -> None:
+    """distribute 结果逐 preset 汇总（distribute 命令与 sync 分发阶段共用）。"""
+    for preset_result in result.presets:
         console.print(
-            f"  [bold yellow]dry-run 预览[/bold yellow]：将创建 [cyan]{linked}[/cyan] 个硬链接"
-            f"（涉及 [cyan]{playlist_count}[/cyan] 个歌单）"
+            f"  {preset_result.name}: {preset_result.status}，"
+            f"成功 {preset_result.success_count}，失败 {preset_result.failed_count}，"
+            f"操作 {len(preset_result.operations)}"
         )
-        return
-    if linked:
-        console.print(f"  链接完成：[cyan]{linked}[/cyan] 首曲目，[cyan]{playlist_count}[/cyan] 个歌单")
-    else:
-        console.print("[dim]所有 library 链接均已就绪[/dim]")

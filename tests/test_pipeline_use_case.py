@@ -146,8 +146,10 @@ def test_run_pipeline_full_flow(tmp_path: Path, monkeypatch) -> None:
     snapshot = svc.recorder.state.create_snapshot()
     assert [track.id for track in snapshot.tracks] == [111]
     assert snapshot.playlists[0].name == "歌单A"
-    # distribute 阶段已执行（SyncEngine 驱动了 registration 的同步器）
+    # distribute 阶段已执行（SyncEngine 驱动了 registration 的同步器），结果随字段携带
     assert recording.contexts != []
+    assert result.distribute is not None
+    assert result.distribute.status == OperationStatus.SUCCEEDED
 
 
 def test_run_pipeline_only_distribute_skips_download(tmp_path: Path, monkeypatch) -> None:
@@ -164,9 +166,12 @@ def test_run_pipeline_only_distribute_skips_download(tmp_path: Path, monkeypatch
     api.get_playlist_info.assert_not_called()
     api.get_playlist_tracks.assert_not_called()
     api.get_tracks_download_urls.assert_not_called()
-    # 结果只含分发信息（沿用默认字段）
+    # 结果只含分发信息（distribute 字段携带 SyncRunResult）
     assert result.downloaded == 0
     assert result.processed == 0
+    assert result.distribute is not None
+    assert result.distribute.status == OperationStatus.SUCCEEDED
+    assert [preset.name for preset in result.distribute.presets] == ["links"]
     assert recording.contexts != []
 
 
@@ -182,6 +187,7 @@ def test_run_pipeline_no_distribute_skips_distribute(tmp_path: Path, monkeypatch
     assert result.downloaded == 1
     assert result.processed == 1
     assert recording.contexts == []
+    assert result.distribute is None
 
 
 def test_run_pipeline_dry_run_skips_fetch_and_process(tmp_path: Path, monkeypatch) -> None:
@@ -202,6 +208,7 @@ def test_run_pipeline_dry_run_skips_fetch_and_process(tmp_path: Path, monkeypatc
     # distribute 仍执行，且 SyncEngine 收到 dry_run 语义
     assert recording.contexts != []
     assert recording.contexts[0].dry_run is True
+    assert result.distribute is not None
 
 
 def test_run_pipeline_without_registry_skips_distribute(tmp_path: Path, monkeypatch) -> None:
@@ -214,6 +221,7 @@ def test_run_pipeline_without_registry_skips_distribute(tmp_path: Path, monkeypa
 
     assert result.downloaded == 1
     assert result.processed == 1
+    assert result.distribute is None
     # 正常结束，无 distribute 相关异常
 
 
@@ -227,5 +235,6 @@ def test_run_pipeline_only_distribute_dry_run(tmp_path: Path, monkeypatch) -> No
     result = svc.run_pipeline("cookie", only_distribute=True)
 
     assert result.downloaded == 0
+    assert result.distribute is not None
     assert recording.contexts != []
     assert recording.contexts[0].dry_run is True

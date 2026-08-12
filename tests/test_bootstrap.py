@@ -11,7 +11,6 @@ from musicvault.application.bootstrap import (
     build_pipeline,
     build_runtime,
     build_source_client,
-    build_target_sync_pipeline,
 )
 from musicvault.core.config import Config
 from musicvault.domain.operations import OperationStatus
@@ -131,8 +130,3 @@ def test_build_distribute_pipeline_passes_preset_instances_to_engine(tmp_path: P
 
     assert set(captured["presets"]) == {"archive"}
     assert isinstance(captured["presets"]["archive"], ArchivePreset)
-
-
-def test_build_target_sync_pipeline_alias_kept_for_cli() -> None:
-    """旧名别名保留：cli/main.py 在 Task 15 前仍引用 build_target_sync_pipeline。"""
-    assert build_target_sync_pipeline is build_distribute_pipeline

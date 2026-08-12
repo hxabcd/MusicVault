@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import os
 from dataclasses import dataclass
 from typing import Mapping
@@ -13,15 +12,13 @@ from musicvault.adapters.processors.organizer import Organizer
 from musicvault.application.process_use_case import ProcessUseCase
 from musicvault.application.progress import ProgressReporter
 from musicvault.application.source_state import SourceStateRecorder
-from musicvault.application.sync_engine import SyncEngine
+from musicvault.application.sync_engine import SyncEngine, SyncRunResult
 from musicvault.application.sync_use_case import SyncUseCase
 from musicvault.core.config import Config
 from musicvault.ports.source import SourceClient
 from musicvault.ports.state import StateRepository
 from musicvault.ports.target import TargetOperations
 from musicvault.preset_api.v1 import BasePreset, PresetRegistry
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +31,7 @@ class PipelineResult:
     track_count: int = 0
     playlist_count: int = 0
     dry_run_plan: dict | None = None
+    distribute: SyncRunResult | None = None
 
 
 class PipelineUseCase:
@@ -103,14 +101,13 @@ class PipelineUseCase:
     ) -> PipelineResult:
         """sync 四阶段编排：fetch → pull → process → distribute。
 
-        only_distribute 跳过前三阶段直接分发（结果只含 distribute 信息，
-        由 CLI 另行渲染）；distribute=False 时跳过收尾分发。
+        only_distribute 跳过前三阶段直接分发（结果只含 distribute 字段）；
+        distribute=False 时跳过收尾分发。
         dry-run 下 fetch 不执行（写 SQLite 有副作用）、pull/process 沿用
         现有 dry-run 语义、distribute 沿用 SyncEngine 的 dry-run。
         """
         if only_distribute:
-            self._run_distribute()
-            return PipelineResult()
+            return PipelineResult(distribute=self._run_distribute())
 
         if not self.dry_run:
             self.cfg.ensure_dirs()
@@ -132,8 +129,9 @@ class PipelineUseCase:
             )
             processed = process_result.processed
 
+        distribute_result = None
         if distribute:
-            self._run_distribute()
+            distribute_result = self._run_distribute()
 
         return PipelineResult(
             downloaded=len(downloaded),
@@ -142,21 +140,23 @@ class PipelineUseCase:
             track_count=sync_result.track_count,
             playlist_count=sync_result.playlist_count,
             dry_run_plan=sync_result.dry_run_plan,
+            distribute=distribute_result,
         )
 
-    def _run_distribute(self) -> None:
+    def _run_distribute(self) -> SyncRunResult | None:
         """distribute 阶段：按注册表目标分发 SQLite 快照到 library（SyncEngine 驱动）。
 
-        registry/target 未注入时静默跳过（旧链路仅拉取/处理的使用场景）。
+        返回 SyncRunResult 供 PipelineResult.distribute 携带（CLI 渲染分发结果）；
+        registry/target 未注入时返回 None（旧链路仅拉取/处理的使用场景）。
         """
         if self.registry is None or self.target is None:
-            return
+            return None
         engine = SyncEngine(
             target=self.target,
             dry_run=self.dry_run,
             media_store_root=self.paths.media_store,
         )
-        engine.run(
+        return engine.run(
             self.recorder.state.create_snapshot(),
             self.registry.target_registrations(enabled_only=True),
             presets=self.presets,

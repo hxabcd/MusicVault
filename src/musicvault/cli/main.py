@@ -92,20 +92,12 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）")
     init.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
 
-    sync = sub.add_parser("sync", help="同步音乐", description="拉取并处理音乐")
+    sync = sub.add_parser("sync", help="同步音乐", description="拉取、后处理并分发到 library")
     _add_common_args(sync)
-
-    pull = sub.add_parser("pull", help="拉取音乐", description="从网易云歌单同步并下载音乐")
-    _add_common_args(pull)
-
-    process = sub.add_parser(
-        "process",
-        help="处理音乐",
-        description="对本地音乐文件进行后处理。对 lossless 填充完整的元数据，对 lossy 压缩并仅填充基本元数据",
-    )
-    _add_common_args(process)
-    process.add_argument(
-        "--only-link", action="store_true", help="仅创建 library 硬链接，跳过后处理（解码/转码/元数据/歌词）"
+    distribute_group = sync.add_mutually_exclusive_group()
+    distribute_group.add_argument("--no-distribute", action="store_true", help="同步完成后跳过分发（library 重建）")
+    distribute_group.add_argument(
+        "--only-distribute", action="store_true", help="仅执行分发（library 重建），跳过拉取/下载/后处理"
     )
 
     add_pl = sub.add_parser("add", help="添加歌单", description="添加要同步的目标歌单")
@@ -148,16 +140,16 @@ def build_parser() -> argparse.ArgumentParser:
     presets.add_argument("--workspace", default=None, help="工作目录")
     presets.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
 
-    target_sync = sub.add_parser(
-        "target-sync", help="运行本地目标同步", description="从 SQLite 源快照执行已发现 preset 的目标同步"
+    distribute = sub.add_parser(
+        "distribute", help="运行本地分发", description="从 SQLite 源快照执行已发现 preset 的目标分发"
     )
-    target_sync.add_argument(
+    distribute.add_argument(
         "--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）"
     )
-    target_sync.add_argument("--workspace", default=None, help="工作目录")
-    target_sync.add_argument("--preset", action="append", default=None, help="只执行指定 preset，可重复指定")
-    target_sync.add_argument("--dry-run", action="store_true", help="只展示操作计划，不产生目标端副作用")
-    target_sync.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
+    distribute.add_argument("--workspace", default=None, help="工作目录")
+    distribute.add_argument("--preset", action="append", default=None, help="只执行指定 preset，可重复指定")
+    distribute.add_argument("--dry-run", action="store_true", help="只展示操作计划，不产生目标端副作用")
+    distribute.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
 
     return parser
 
@@ -215,36 +207,38 @@ def main(argv: list[str] | None = None) -> int:
             from musicvault.application.bootstrap import build_runtime
 
             runtime = build_runtime(cfg)
-            for registration in runtime.presets.registrations():
+            for registration in runtime.presets.preset_registrations():
                 state = "启用" if registration.enabled else "禁用"
-                output_info(f"{registration.name}\t{state}\t{registration.api_version}\t{registration.source}")
+                output_info(f"preset\t{registration.name}\t{state}\t{registration.api_version}\t{registration.source}")
+            for registration in runtime.presets.target_registrations():
+                state = "启用" if registration.enabled else "禁用"
+                output_info(
+                    f"sync_target\t{registration.name}\t{state}\t{registration.api_version}\t{registration.source}"
+                )
         except Exception as error:  # noqa: BLE001 - CLI 将加载失败转换为非零退出码
             output_error(f"preset 加载失败：{error}")
             return 2
         return 0
 
-    if args.command == "target-sync":
+    if args.command == "distribute":
         if getattr(args, "workspace", None) is not None:
             cfg.workspace = args.workspace
         try:
-            from musicvault.application.bootstrap import build_target_sync_pipeline
+            from musicvault.application.bootstrap import build_distribute_pipeline
             from musicvault.domain.operations import OperationStatus
 
-            result = build_target_sync_pipeline(cfg, dry_run=args.dry_run).run(
+            result = build_distribute_pipeline(cfg, dry_run=args.dry_run).run(
                 selected=set(args.preset) if args.preset else None
             )
         except Exception as error:  # noqa: BLE001 - CLI 将应用失败转换为非零退出码
-            output_error(f"目标同步失败：{error}")
+            output_error(f"分发失败：{error}")
             return 2
-        for preset_result in result.presets:
-            output_info(
-                f"{preset_result.name}: {preset_result.status}，"
-                f"成功 {preset_result.success_count}，失败 {preset_result.failed_count}，"
-                f"操作 {len(preset_result.operations)}"
-            )
+        from musicvault.cli.render import render_distribute_result
+
+        render_distribute_result(result)
         if result.status == OperationStatus.FAILED:
             return 1
-        output_success(f"目标同步完成，snapshot={result.snapshot_hash[:16]}")
+        output_success(f"分发完成，snapshot={result.snapshot_hash[:16]}")
         return 0
 
     # 任意需要 API 的操作前先确保登录
@@ -252,8 +246,8 @@ def main(argv: list[str] | None = None) -> int:
     if cookie is None:
         return 2
 
-    # sync / pull 首次登录后退出，让用户有机会配置歌单
-    if args.command in ("sync", "pull") and just_logged_in:
+    # sync 首次登录后退出，让用户有机会配置歌单
+    if args.command == "sync" and just_logged_in:
         from musicvault.application.bootstrap import build_playlist_use_case
 
         if not build_playlist_use_case(cfg).list_playlists():
@@ -282,21 +276,24 @@ def main(argv: list[str] | None = None) -> int:
     if getattr(args, "force", False):
         cfg.force = True
 
-    # add / remove 成功后自动执行 sync；其余子命令照原样传递
-    pipeline_cmd = args.command if args.command in ("sync", "pull", "process") else "sync"
-
+    # add / remove 成功后自动执行 sync
     from musicvault.application.bootstrap import build_pipeline
-    from musicvault.cli.render import BatchProgressAdapter, render_link_result, render_pipeline_result
+    from musicvault.cli.render import BatchProgressAdapter, render_pipeline_result
 
     service = build_pipeline(cfg, dry_run=getattr(args, "dry_run", False))
     progress = BatchProgressAdapter()
     try:
-        if args.command == "process" and getattr(args, "only_link", False):
-            result = service.link_only(cookie=cookie)
-            render_link_result(result, dry_run=getattr(args, "dry_run", False))
-        else:
-            result = service.run_pipeline(cookie=cookie, command=pipeline_cmd, progress=progress)
-            render_pipeline_result(result, dry_run=getattr(args, "dry_run", False), command=pipeline_cmd)
+        result = service.run_pipeline(
+            cookie,
+            distribute=not getattr(args, "no_distribute", False),
+            only_distribute=getattr(args, "only_distribute", False),
+            progress=progress,
+        )
+        render_pipeline_result(
+            result,
+            dry_run=getattr(args, "dry_run", False),
+            only_distribute=getattr(args, "only_distribute", False),
+        )
     except KeyboardInterrupt:
         output_info("已取消")
         return 130
