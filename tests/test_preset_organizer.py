@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 
 from musicvault.adapters.processors.organizer import Organizer
 from musicvault.domain.models import Track
+from musicvault.preset_api.v1 import AudioFormat
 
 
 def _make_track(track_id: int) -> Track:
@@ -20,11 +21,11 @@ class TestRouteAudioSingleSpec:
             output = Path(tmp) / "out"
 
             org = Organizer(ffmpeg_threads=1, ffmpeg_path="")
-            result = org.route_audio(src, _make_track(1), output, {("flac", None)})
+            result = org.route_audio(src, _make_track(1), output, {(AudioFormat.FLAC, None)})
 
             assert len(result) == 1
-            assert ("flac", None) in result
-            assert result[("flac", None)].name == "1.flac"
+            assert (AudioFormat.FLAC, None) in result
+            assert result[(AudioFormat.FLAC, None)].name == "1.flac"
 
     def test_mp3_source_no_transcode(self):
         """MP3 source, format=None -> copy original."""
@@ -49,16 +50,16 @@ class TestRouteAudioSingleSpec:
             org = Organizer(ffmpeg_threads=1, ffmpeg_path="")
             result = org.route_audio(
                 src, _make_track(3), output,
-                {("mp3", "320k"), ("mp3", "192k"), ("mp3", "128k")}
+                {(AudioFormat.MP3, "320k"), (AudioFormat.MP3, "192k"), (AudioFormat.MP3, "128k")}
             )
 
-            assert ("mp3", "320k") in result
-            assert ("mp3", "192k") in result
-            assert ("mp3", "128k") in result
+            assert (AudioFormat.MP3, "320k") in result
+            assert (AudioFormat.MP3, "192k") in result
+            assert (AudioFormat.MP3, "128k") in result
             # All get bitrate suffix since multiple mp3 specs
-            assert result[("mp3", "320k")].name == "3_320k.mp3"
-            assert result[("mp3", "192k")].name == "3_192k.mp3"
-            assert result[("mp3", "128k")].name == "3_128k.mp3"
+            assert result[(AudioFormat.MP3, "320k")].name == "3_320k.mp3"
+            assert result[(AudioFormat.MP3, "192k")].name == "3_192k.mp3"
+            assert result[(AudioFormat.MP3, "128k")].name == "3_128k.mp3"
 
     def test_mixed_specs(self):
         """Multiple mp3 specs from one source (both copy since source is mp3)."""
@@ -70,9 +71,9 @@ class TestRouteAudioSingleSpec:
             org = Organizer(ffmpeg_threads=1, ffmpeg_path="")
             result = org.route_audio(
                 src, _make_track(4), output,
-                {("mp3", "320k"), ("mp3", "192k")}
+                {(AudioFormat.MP3, "320k"), (AudioFormat.MP3, "192k")}
             )
 
             assert len(result) == 2
-            assert result[("mp3", "320k")].name == "4_320k.mp3"
-            assert result[("mp3", "192k")].name == "4_192k.mp3"
+            assert result[(AudioFormat.MP3, "320k")].name == "4_320k.mp3"
+            assert result[(AudioFormat.MP3, "192k")].name == "4_192k.mp3"
