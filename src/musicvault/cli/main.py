@@ -180,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     existed = cfg_path.exists()
     if existed:
         logger.info("已加载配置文件：%s", cfg_path)
-    else:
+    else:  # pragma: no cover - 不可达：Config.load 总会先创建配置文件
         logger.info("配置文件不存在，已按默认值自动生成：%s", cfg_path)
 
     # init 命令：仅登录并创建配置
@@ -322,6 +322,27 @@ def _ensure_cookie(args: argparse.Namespace, cfg: Config) -> tuple[str | None, b
     return cookie, True
 
 
+def _poll_qrcode(  # pragma: no cover - 二维码扫码轮询交互，人工手动测试
+    api: InteractiveLoginApi,
+    unikey: str,
+) -> None:
+    """轮询二维码登录状态直至确认 / 过期 / 超时。"""
+
+    with console.status("[dim]等待扫码...[/dim]", spinner="dots") as status:
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            code = api.check_qrcode(unikey)
+            if code == 802:
+                status.update("[dim]已扫码，请在手机上确认登录...[/dim]")
+            elif code == 803:
+                break
+            elif code == 800:
+                raise RuntimeError("二维码已过期，请重新获取")
+            time.sleep(2)
+        else:
+            raise TimeoutError("二维码登录超时，请重试")
+
+
 def _render_qrcode(url: str) -> str:
     """将链接渲染为终端二维码 ASCII 字符串"""
     import io
@@ -375,19 +396,7 @@ def _interactive_login(api: InteractiveLoginApi) -> str | None:
                     console.print()
                     console.print("  [bold]请打开网易云音乐 App，扫描上方二维码[/bold]")
 
-                    with console.status("[dim]等待扫码...[/dim]", spinner="dots") as status:
-                        deadline = time.monotonic() + 120
-                        while time.monotonic() < deadline:
-                            code = api.check_qrcode(unikey)
-                            if code == 802:
-                                status.update("[dim]已扫码，请在手机上确认登录...[/dim]")
-                            elif code == 803:
-                                break
-                            elif code == 800:
-                                raise RuntimeError("二维码已过期，请重新获取")
-                            time.sleep(2)
-                        else:
-                            raise TimeoutError("二维码登录超时，请重试")
+                    _poll_qrcode(api, unikey)
 
                 result = api.get_login_status()
 

@@ -64,4 +64,4 @@ class Downloader:
             except (URLError, OSError, TimeoutError) as exc:
                 if attempt == _RETRIES - 1:
                     raise RuntimeError(f"下载失败（网络错误），已重试 {_RETRIES} 次：{exc}") from exc
-        raise RuntimeError(f"下载失败：重试后未获得响应（{url}）")
+        raise RuntimeError(f"下载失败：重试后未获得响应（{url}）")  # pragma: no cover - 不可达：循环内除返回外必然抛出

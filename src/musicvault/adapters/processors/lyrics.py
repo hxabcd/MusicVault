@@ -195,7 +195,7 @@ def _convert_lrc_lines(lrc: str, payload: dict[str, str]) -> tuple[LyricLine, ..
             continue
         for raw_ts in timestamps:
             start_ms = _time_tag_to_ms(raw_ts)
-            if start_ms is None:
+            if start_ms is None:  # pragma: no cover - 不可达：时间标签正则保证可解析
                 continue
             tag = _ms_to_time_tag(start_ms)
             translation = trans_map.get(tag) or _find_translation_fuzzy(start_ms, trans_map, tolerance_ms=200) or ""

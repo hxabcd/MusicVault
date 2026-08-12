@@ -40,7 +40,7 @@ def handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
             _add_songs(args.song, use_case)
 
         if not inputs and not has_songs:
-            return _add_playlist_interactive(use_case, api, cookie)
+            return _add_playlist_interactive(use_case, api, cookie)  # pragma: no cover - 交互流程，人工手动测试
 
         result = 0
         for raw in inputs:
@@ -70,7 +70,7 @@ def handle_playlist_mgmt(args: argparse.Namespace, cfg: Config) -> int:
             return 0
 
         if not has_songs:
-            return _remove_playlist_interactive(use_case)
+            return _remove_playlist_interactive(use_case)  # pragma: no cover - 交互流程，人工手动测试
 
     elif args.command in ("list", "ls"):
         if getattr(args, "song", False):
@@ -160,7 +160,7 @@ def _add_playlist_by_id(
     return 0
 
 
-def _add_playlist_interactive(
+def _add_playlist_interactive(  # pragma: no cover - 交互流程（input 选择），人工手动测试
     use_case: PlaylistUseCase,
     api: InteractiveLoginApi,
     cookie: str | None,
@@ -249,7 +249,9 @@ def _add_playlist_interactive(
     return 0 if added > 0 else 1
 
 
-def _remove_playlist_interactive(use_case: PlaylistUseCase) -> int:
+def _remove_playlist_interactive(
+    use_case: PlaylistUseCase,
+) -> int:  # pragma: no cover - 交互流程（input 选择），人工手动测试
     playlists = use_case.list_playlists()
     if not playlists:
         output_info("尚未添加任何歌单，无需移除")

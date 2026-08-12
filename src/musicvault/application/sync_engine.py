@@ -35,7 +35,7 @@ class PresetRunResult:
         return sum(item.status == OperationStatus.FAILED for item in self.item_results)
 
     @property
-    def skipped_count(self) -> int:
+    def skipped_count(self) -> int:  # pragma: no cover - 不可达：item 状态仅产生 SUCCEEDED/FAILED，SKIPPED 为预留
         return sum(item.status == OperationStatus.SKIPPED for item in self.item_results)
 
 
