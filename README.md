@@ -50,7 +50,8 @@ pip install -e .
 | `msv rm` | `remove` 的别名 |
 | `msv list` | 查看已添加的歌单或单曲 |
 | `msv ls` | `list` 的别名 |
-| `msv presets` | 列出内置和外部 Python preset 与 sync_target |
+| `msv preset list` | 列出内置和外部 Python preset |
+| `msv target list` | 列出内置和外部 sync_target |
 | `msv help` | 显示帮助信息 |
 
 文件落位：canonical 文件写入 `media_store/<track_id>/`（扁平布局，含 `<track_id>.flac/.mp3` 及 `<track_id>.<preset>.lrc`），下载缓存与解密中间产物落 `cache/`（临时目录，可清理）。

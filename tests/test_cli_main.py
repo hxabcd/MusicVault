@@ -66,22 +66,29 @@ def _fake_signal_module() -> types.ModuleType:
     return fake
 
 
-def test_presets_command_lists_preset_and_sync_target(tmp_path: Path, monkeypatch, capfd) -> None:
-    """presets 命令分两类列出：preset（内置 archive）与 sync_target（内置 hardlink）。
-
-    Rich console 将制表符展开为空格（tab_size=8），按空白分词匹配类型标记。
-    """
+def test_preset_list_command_lists_presets(tmp_path: Path, monkeypatch, capfd) -> None:
+    """preset list 只列出 preset 注册项（内置 archive），不含 sync_target。"""
     monkeypatch.setattr("musicvault.cli.main.signal", _fake_signal_module())
     ws = tmp_path / "ws"
 
-    code = main(["presets", "--config", str(tmp_path / "config.json"), "--workspace", str(ws)])
+    code = main(["preset", "list", "--config", str(tmp_path / "config.json"), "--workspace", str(ws)])
 
     assert code == 0
     captured = capfd.readouterr()
-    token_lines = [line.split() for line in (captured.out + captured.err).splitlines()]
-    preset_lines = [tokens for tokens in token_lines if tokens and tokens[0] == "preset"]
-    target_lines = [tokens for tokens in token_lines if tokens and tokens[0] == "sync_target"]
-    assert preset_lines, "presets 输出缺少 preset 类型行"
-    assert target_lines, "presets 输出缺少 sync_target 类型行"
-    assert any("archive" in tokens for tokens in preset_lines)
-    assert any("hardlink" in tokens for tokens in target_lines)
+    out = captured.out + captured.err
+    assert "archive" in out
+    assert "hardlink" not in out
+
+
+def test_target_list_command_lists_targets(tmp_path: Path, monkeypatch, capfd) -> None:
+    """target list 只列出 sync_target 注册项（内置 hardlink），不含 preset。"""
+    monkeypatch.setattr("musicvault.cli.main.signal", _fake_signal_module())
+    ws = tmp_path / "ws"
+
+    code = main(["target", "list", "--config", str(tmp_path / "config.json"), "--workspace", str(ws)])
+
+    assert code == 0
+    captured = capfd.readouterr()
+    out = captured.out + captured.err
+    assert "hardlink" in out
+    assert "archive" not in out

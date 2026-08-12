@@ -130,12 +130,23 @@ def build_parser() -> argparse.ArgumentParser:
     ls_pl.add_argument("--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）")
     ls_pl.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
 
-    presets = sub.add_parser("presets", help="列出可用 preset", description="发现并列出内置和外部 Python preset")
-    presets.add_argument(
+    preset = sub.add_parser("preset", help="管理 preset", description="发现并列出内置和外部 Python preset")
+    preset_sub = preset.add_subparsers(dest="preset_action", required=True)
+    preset_list = preset_sub.add_parser("list", help="列出可用 preset")
+    preset_list.add_argument(
         "--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）"
     )
-    presets.add_argument("--workspace", default=None, help="工作目录")
-    presets.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
+    preset_list.add_argument("--workspace", default=None, help="工作目录")
+    preset_list.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
+
+    target = sub.add_parser("target", help="管理 sync_target", description="发现并列出内置和外部 sync_target")
+    target_sub = target.add_subparsers(dest="target_action", required=True)
+    target_list = target_sub.add_parser("list", help="列出可用 sync_target")
+    target_list.add_argument(
+        "--config", default=_DEFAULT_CONFIG, help="配置文件路径（可被 MUSIC_VAULT_CONFIG 环境变量覆盖）"
+    )
+    target_list.add_argument("--workspace", default=None, help="工作目录")
+    target_list.add_argument("-v", "--verbose", action="store_true", help="启用详细日志")
 
     distribute = sub.add_parser(
         "distribute", help="运行本地分发", description="从 SQLite 源快照执行已发现 preset 的目标分发"
@@ -197,23 +208,20 @@ def main(argv: list[str] | None = None) -> int:
         cookie, _ = _ensure_cookie(args, cfg)
         return 0 if cookie else 2
 
-    if args.command == "presets":
+    if args.command in ("preset", "target"):
         if getattr(args, "workspace", None) is not None:
             cfg.workspace = args.workspace
         try:
             from musicvault.application.bootstrap import build_runtime
+            from musicvault.cli.render import render_presets, render_targets
 
             runtime = build_runtime(cfg)
-            for registration in runtime.presets.preset_registrations():
-                state = "启用" if registration.enabled else "禁用"
-                output_info(f"preset\t{registration.name}\t{state}\t{registration.api_version}\t{registration.source}")
-            for registration in runtime.presets.target_registrations():
-                state = "启用" if registration.enabled else "禁用"
-                output_info(
-                    f"sync_target\t{registration.name}\t{state}\t{registration.api_version}\t{registration.source}"
-                )
+            if args.command == "preset":
+                render_presets(runtime.presets.preset_registrations())
+            else:
+                render_targets(runtime.presets.target_registrations())
         except Exception as error:  # noqa: BLE001 - CLI 将加载失败转换为非零退出码
-            output_error(f"preset 加载失败：{error}")
+            output_error(f"preset/target 加载失败：{error}")
             return 2
         return 0
 

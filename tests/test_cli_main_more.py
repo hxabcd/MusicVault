@@ -146,8 +146,8 @@ def test_init_already_logged_in_returns_0(tmp_path: Path, monkeypatch, capfd) ->
 # -- presets / distribute -------------------------------------------------------
 
 
-def test_presets_load_failure_returns_2(tmp_path: Path, monkeypatch, capfd) -> None:
-    """presets 加载失败：输出错误并返回 2。"""
+def test_preset_list_load_failure_returns_2(tmp_path: Path, monkeypatch, capfd) -> None:
+    """preset list 加载失败：输出错误并返回 2。"""
     monkeypatch.setattr("musicvault.cli.main.signal", _fake_signal_module())
 
     def _boom(cfg: object) -> None:
@@ -156,10 +156,10 @@ def test_presets_load_failure_returns_2(tmp_path: Path, monkeypatch, capfd) -> N
 
     monkeypatch.setattr("musicvault.application.bootstrap.build_runtime", _boom)
 
-    code = main(["presets", "--config", str(tmp_path / "config.json")])
+    code = main(["preset", "list", "--config", str(tmp_path / "config.json")])
 
     assert code == 2
-    assert "preset 加载失败" in _all_output(capfd)
+    assert "加载失败" in _all_output(capfd)
 
 
 def test_distribute_success_returns_0(tmp_path: Path, monkeypatch, capfd) -> None:
