@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
+from rich import box
+from rich.table import Table
+
 from musicvault.application.pipeline_use_case import PipelineResult
 from musicvault.application.sync_engine import SyncRunResult
+from musicvault.domain.operations import OperationStatus
+from musicvault.preset_api.v1 import PresetRegistration, TargetRegistration
 from musicvault.shared.tui_progress import BatchProgress, console, ok
 
 
@@ -48,16 +55,12 @@ def render_dry_run_plan(plan: dict) -> None:
     stale_index: int = plan.get("stale_index") or 0
 
     if with_url:
-        console.print(f"  [green]将下载[/green] [cyan]{len(with_url)}[/cyan] 首：")
-        for i, t in enumerate(with_url, 1):
-            console.print(f"    [dim]{i:>3}.[/dim] {t.artist_text} - {t.name}")
+        _render_track_list(with_url, header="将下载", color="green")
     else:
         console.print("  [dim]将下载 0 首（无新增曲目）[/dim]")
 
     if no_url:
-        console.print(f"  [yellow]无可用直链将跳过[/yellow] [cyan]{len(no_url)}[/cyan] 首：")
-        for i, t in enumerate(no_url, 1):
-            console.print(f"    [dim]{i:>3}.[/dim] {t.artist_text} - {t.name}")
+        _render_track_list(no_url, header="无可用直链将跳过", color="yellow")
 
     if pruned:
         console.print(f"  [red]将清理远端已删除曲目[/red] [cyan]{len(pruned)}[/cyan] 首：{', '.join(map(str, pruned))}")
@@ -72,6 +75,17 @@ def render_dry_run_plan(plan: dict) -> None:
 
     if stale_index:
         console.print(f"  [yellow]将清理 {stale_index} 条本地文件缺失的过期索引[/yellow]")
+
+
+def _render_track_list(tracks: Sequence[object], *, header: str, color: str) -> None:
+    """dry-run 曲目列表：Rich 表格（序号 + 曲目）。"""
+    console.print(f"  [{color}]{header}[/{color}] [cyan]{len(tracks)}[/cyan] 首：")
+    table = Table(show_header=False, box=None, padding=(0, 1), collapse_padding=True)
+    table.add_column(justify="right", style="dim", no_wrap=True)
+    table.add_column()
+    for i, track in enumerate(tracks, 1):
+        table.add_row(f"{i}.", f"{track.artist_text} - {track.name}")
+    console.print(table, highlight=False)
 
 
 def render_pipeline_result(result: PipelineResult, *, dry_run: bool, only_distribute: bool = False) -> None:
@@ -101,11 +115,75 @@ def render_pipeline_result(result: PipelineResult, *, dry_run: bool, only_distri
     ok("完成")
 
 
+_STATUS_TEXT: dict[OperationStatus, str] = {
+    OperationStatus.PLANNED: "[cyan]计划中[/cyan]",
+    OperationStatus.SUCCEEDED: "[green]成功[/green]",
+    OperationStatus.FAILED: "[red]失败[/red]",
+    OperationStatus.SKIPPED: "[yellow]跳过[/yellow]",
+}
+
+
 def render_distribute_result(result: SyncRunResult) -> None:
     """distribute 结果逐 preset 汇总（distribute 命令与 sync 分发阶段共用）。"""
+    if not result.presets:
+        return
+    table = Table(header_style="bold cyan", box=box.SIMPLE_HEAD)
+    table.add_column("目标", style="bold", no_wrap=True)
+    table.add_column("状态", justify="center")
+    table.add_column("成功", justify="right")
+    table.add_column("失败", justify="right")
+    table.add_column("操作", justify="right")
     for preset_result in result.presets:
-        console.print(
-            f"  {preset_result.name}: {preset_result.status}，"
-            f"成功 {preset_result.success_count}，失败 {preset_result.failed_count}，"
-            f"操作 {len(preset_result.operations)}"
+        table.add_row(
+            preset_result.name,
+            _STATUS_TEXT.get(preset_result.status, str(preset_result.status)),
+            str(preset_result.success_count),
+            str(preset_result.failed_count),
+            str(len(preset_result.operations)),
         )
+    console.print(table)
+
+
+def _state_text(enabled: bool) -> str:
+    """注册状态着色：启用绿色、禁用红色。"""
+    return "[green]启用[/green]" if enabled else "[red]禁用[/red]"
+
+
+def render_presets(preset_registrations: Sequence[PresetRegistration]) -> None:
+    """preset list 命令：以 Rich 表格列出 preset 注册项。"""
+    if not preset_registrations:
+        console.print("  [dim]未发现 preset[/dim]")
+        return
+    table = Table(title="可用 Preset", header_style="bold cyan", box=box.SIMPLE_HEAD)
+    table.add_column("名称", style="bold", no_wrap=True)
+    table.add_column("状态", justify="center")
+    table.add_column("API", justify="center")
+    table.add_column("来源")
+    for registration in preset_registrations:
+        table.add_row(
+            registration.name,
+            _state_text(registration.enabled),
+            registration.api_version,
+            registration.source,
+        )
+    console.print(table)
+
+
+def render_targets(target_registrations: Sequence[TargetRegistration]) -> None:
+    """target list 命令：以 Rich 表格列出 sync_target 注册项。"""
+    if not target_registrations:
+        console.print("  [dim]未发现 sync_target[/dim]")
+        return
+    table = Table(title="可用 sync_target", header_style="bold cyan", box=box.SIMPLE_HEAD)
+    table.add_column("名称", style="bold", no_wrap=True)
+    table.add_column("状态", justify="center")
+    table.add_column("API", justify="center")
+    table.add_column("来源")
+    for registration in target_registrations:
+        table.add_row(
+            registration.name,
+            _state_text(registration.enabled),
+            registration.api_version,
+            registration.source,
+        )
+    console.print(table)

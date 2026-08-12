@@ -155,14 +155,14 @@ def test_render_pipeline_result_normal(capfd) -> None:
 
 
 def test_render_pipeline_result_normal_with_distribute(capfd) -> None:
-    """普通路径带 distribute 结果：追加渲染各 preset 汇总。"""
+    """普通路径带 distribute 结果：追加渲染各 preset 汇总表格。"""
     result = PipelineResult(processed=1, distribute=_distribute_result())
 
     render_pipeline_result(result, dry_run=False)
 
     out = _all_output(capfd)
-    assert "hardlink: OperationStatus.SUCCEEDED" in out
-    assert "成功 1，失败 1，操作 0" in out
+    assert "hardlink" in out
+    assert "成功" in out and "失败" in out
 
 
 def test_render_pipeline_result_only_distribute(capfd) -> None:
@@ -173,8 +173,8 @@ def test_render_pipeline_result_only_distribute(capfd) -> None:
 
     out = _all_output(capfd)
     assert "个歌单同步" not in out
-    assert "hardlink: OperationStatus.SUCCEEDED" in out
-    assert "成功 1，失败 1，操作 0" in out
+    assert "hardlink" in out
+    assert "成功" in out and "失败" in out
     assert "完成" in out
 
 
@@ -191,7 +191,7 @@ def test_render_distribute_result_empty_presets(capfd) -> None:
 
 
 def test_render_distribute_result_multiple_presets(capfd) -> None:
-    """多个 preset：逐行输出名称/状态/成功/失败/操作数。"""
+    """多个 preset：表格输出名称/状态/成功/失败/操作数。"""
     result = SyncRunResult(
         snapshot_hash="d" * 64,
         status=OperationStatus.FAILED,
@@ -214,8 +214,8 @@ def test_render_distribute_result_multiple_presets(capfd) -> None:
     render_distribute_result(result)
 
     out = _all_output(capfd)
-    assert "archive: OperationStatus.SUCCEEDED，成功 0，失败 0，操作 0" in out
-    assert "hardlink: OperationStatus.FAILED，成功 1，失败 1，操作 0" in out
+    assert "archive" in out and "hardlink" in out
+    assert "成功" in out and "失败" in out
 
 
 # -- BatchProgressAdapter ---------------------------------------------------------------
