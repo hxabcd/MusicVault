@@ -11,12 +11,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 uv pip install -e .                          # 可编辑安装（Python 3.12+，依赖见 pyproject.toml）
-python -m pytest tests/ -q                   # 全量测试（当前 263 项通过）
-python -m pytest tests/test_source_port.py -v                # 单文件测试
-python -m pytest tests/test_source_port.py::test_name -v     # 单个用例
-python -m ruff check src/ tests/             # lint（line-length=120）
-python -m ruff format --check src/ tests/    # 格式检查
-python -m musicvault --help                  # CLI 冒烟
+uv python -m pytest tests/ -q                   # 全量测试（当前 263 项通过）
+uv python -m pytest tests/test_source_port.py -v                # 单文件测试
+uv python -m pytest tests/test_source_port.py::test_name -v     # 单个用例
+uv python -m ruff check src/ tests/             # lint（line-length=120）
+uv python -m ruff format --check src/ tests/    # 格式检查
+uv python -m musicvault --help                  # CLI 冒烟
 ```
 
 注意：
