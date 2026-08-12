@@ -8,7 +8,7 @@ import shutil
 from musicvault.adapters.filesystem.workspace import WorkspacePaths
 from musicvault.core.config import Config
 from musicvault.domain.models import Playlist, Track
-from musicvault.ports.state import StateRepository
+from musicvault.ports.source_state import SourceStateRepository
 from musicvault.shared.utils import safe_filename
 
 logger = logging.getLogger(__name__)
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class PlaylistUseCase:
     """歌单与单曲管理的应用用例。"""
 
-    def __init__(self, cfg: Config, state: StateRepository) -> None:
+    def __init__(self, cfg: Config, state: SourceStateRepository) -> None:
         self.cfg = cfg
         self.state = state
         # workspace 各生命周期区域路径的唯一来源（cache/media_store/library/logs）
@@ -122,23 +122,23 @@ class PlaylistUseCase:
     # ------------------------------------------------------------------
 
     def list_songs(self) -> list[int]:
-        return self.state.list_managed_songs()
+        return self.state.list_managed_tracks()
 
     def has_song(self, song_id: int) -> bool:
-        return self.state.has_managed_song(song_id)
+        return self.state.has_managed_track(song_id)
 
     def add_song(self, song_id: int) -> None:
-        """登记单独管理的单曲；track 不存在时先写占位记录（managed_songs 外键约束）。"""
-        if self.state.has_managed_song(song_id):
+        """登记单独管理的单曲；track 不存在时先写占位记录（managed_tracks 外键约束）。"""
+        if self.state.has_managed_track(song_id):
             return
         if self.state.get_track(song_id) is None:
             # 占位曲目由 sync 获取真实元数据后覆盖
             self.state.upsert_track(Track(id=song_id, name=str(song_id), artists=[], album="", raw={}))
-        self.state.add_managed_song(song_id)
+        self.state.add_managed_track(song_id)
 
     def remove_song(self, song_id: int) -> None:
         """移除单曲管理登记并删除其 canonical 文件。"""
-        self.state.remove_managed_song(song_id)
+        self.state.remove_managed_track(song_id)
         track_dir = self.paths.media_store / str(song_id)
         if track_dir.is_dir():
             shutil.rmtree(track_dir)

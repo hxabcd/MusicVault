@@ -6,18 +6,18 @@ from pathlib import Path
 
 from musicvault.domain.models import Track
 from musicvault.domain.models import MediaAsset, Playlist
-from musicvault.ports.state import StateRepository
+from musicvault.ports.source_state import SourceStateRepository
 from musicvault.shared.utils import sha256_file
 
 
 class SourceStateRecorder:
-    """把 fetch/pull/process 阶段产生的源侧状态持久化到 StateRepository（SQLite）。
+    """把 fetch/pull/process 阶段产生的源侧状态持久化到 SourceStateRepository（SQLite）。
 
     结果写入 SQLite，供 distribute 阶段通过 SourceSnapshot 消费，
     而不再只落在旧 JSON 状态文件中。
     """
 
-    def __init__(self, state: StateRepository) -> None:
+    def __init__(self, state: SourceStateRepository) -> None:
         self.state = state
 
     def record_source_state(
@@ -34,7 +34,7 @@ class SourceStateRecorder:
             for playlist in playlists:
                 self.state.upsert_playlist(playlist, connection=connection)
             for song_id in managed_songs:
-                self.state.add_managed_song(int(song_id), connection=connection)
+                self.state.add_managed_track(int(song_id), connection=connection)
             for asset in media_assets:
                 self.state.upsert_media_asset(asset, connection=connection)
 

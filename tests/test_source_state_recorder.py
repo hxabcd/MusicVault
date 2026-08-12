@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
+from musicvault.adapters.state.sqlite import SQLiteSourceStateRepository, SQLiteState
 from musicvault.application.source_state import SourceStateRecorder, build_audio_asset_from_file
 from musicvault.domain.models import Track
 from musicvault.domain.models import Playlist
@@ -21,8 +21,8 @@ def _track(track_id: int = 1) -> Track:
     )
 
 
-def _repository(tmp_path: Path) -> SQLiteStateRepository:
-    return SQLiteStateRepository(SQLiteState(tmp_path / "state.db"))
+def _repository(tmp_path: Path) -> SQLiteSourceStateRepository:
+    return SQLiteSourceStateRepository(SQLiteState(tmp_path / "state.db"))
 
 
 def test_recorder_persists_tracks_playlists_and_managed_songs(tmp_path: Path) -> None:

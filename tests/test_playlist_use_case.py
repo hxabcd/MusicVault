@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
+from musicvault.adapters.state.sqlite import SQLiteSourceStateRepository, SQLiteState
 from musicvault.application.playlist_use_case import PlaylistUseCase
 from musicvault.core.config import Config
 from musicvault.domain.models import Playlist
@@ -19,11 +19,11 @@ def _make_cfg(tmp_path: Path) -> Config:
     return Config(workspace=str(tmp_path / "ws"))
 
 
-def _repository(cfg: Config) -> SQLiteStateRepository:
-    return SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+def _repository(cfg: Config) -> SQLiteSourceStateRepository:
+    return SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file))
 
 
-def _use_case(tmp_path: Path) -> tuple[Config, SQLiteStateRepository, PlaylistUseCase]:
+def _use_case(tmp_path: Path) -> tuple[Config, SQLiteSourceStateRepository, PlaylistUseCase]:
     cfg = _make_cfg(tmp_path)
     repo = _repository(cfg)
     return cfg, repo, PlaylistUseCase(cfg, repo)
@@ -37,7 +37,7 @@ class TestSongManagement:
         use_case.add_song(123)
         use_case.add_song(456)
         assert use_case.list_songs() == [123, 456]
-        assert repo.list_managed_songs() == [123, 456]
+        assert repo.list_managed_tracks() == [123, 456]
 
     def test_add_duplicate_is_idempotent(self, tmp_path: Path) -> None:
         _, _, use_case = _use_case(tmp_path)
@@ -52,7 +52,7 @@ class TestSongManagement:
         assert use_case.has_song(99) is False
 
     def test_add_song_creates_placeholder_track(self, tmp_path: Path) -> None:
-        """managed_songs 外键约束：track 未同步前先登记占位曲目。"""
+        """managed_tracks 外键约束：track 未同步前先登记占位曲目。"""
         _, repo, use_case = _use_case(tmp_path)
         use_case.add_song(999)
         snapshot = repo.create_snapshot()

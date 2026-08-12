@@ -11,7 +11,7 @@ import os
 import pathlib
 from pathlib import Path
 
-from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
+from musicvault.adapters.state.sqlite import SQLiteSourceStateRepository, SQLiteState
 from musicvault.application.playlist_use_case import PlaylistUseCase
 from musicvault.core.config import Config
 from musicvault.domain.models import Playlist, Track
@@ -21,11 +21,11 @@ def _make_cfg(tmp_path: Path) -> Config:
     return Config(workspace=str(tmp_path / "ws"))
 
 
-def _repository(cfg: Config) -> SQLiteStateRepository:
-    return SQLiteStateRepository(SQLiteState(cfg.state_db_file))
+def _repository(cfg: Config) -> SQLiteSourceStateRepository:
+    return SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file))
 
 
-def _use_case(tmp_path: Path) -> tuple[Config, SQLiteStateRepository, PlaylistUseCase]:
+def _use_case(tmp_path: Path) -> tuple[Config, SQLiteSourceStateRepository, PlaylistUseCase]:
     cfg = _make_cfg(tmp_path)
     repo = _repository(cfg)
     return cfg, repo, PlaylistUseCase(cfg, repo)
