@@ -432,3 +432,50 @@ def test_process_build_lyrics_error_isolates_preset(tmp_path: Path, caplog) -> N
     assert (cfg.media_store_dir / "333" / "333.good.lrc").read_text(encoding="utf-8") == "good lrc"
     # 警告记录含 preset 名与曲目 ID
     assert any("bad" in r.message and "333" in r.message for r in caplog.records)
+
+
+def test_safe_track_detail_cached_within_instance(tmp_path: Path) -> None:
+    """_safe_track 单次缓存：同一实例内同曲目 scan 与 process 各走一次只打 1 次详情 API。
+
+    存量 canonical 重处理先经 run_process 的 scan 路径 _safe_track 一次，
+    _process_file 无 prefetched 直调时命中缓存，不再重复请求详情。
+    """
+    from musicvault.application.source_state import build_audio_asset_from_file
+    from musicvault.shared.utils import workspace_rel_path
+
+    cfg = _make_cfg(tmp_path)
+    cfg.media_store_dir.mkdir(parents=True)
+    repo = _repository(cfg)
+    repo.save_lyrics(333, lyrics_to_json((LyricLine(1000, 0, "hello"),)), 0.0)
+
+    canonical = cfg.media_store_dir / "333" / "333.flac"
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_bytes(b"fake flac")
+    repo.upsert_track(_make_track(333))
+    repo.upsert_media_asset(build_audio_asset_from_file(333, "FLAC", canonical))
+    repo.record_processed(333, "preset-script", 0.0)
+
+    class _Mp3Preset(BasePreset):
+        format = AudioFormat.MP3
+        bitrate = "192k"
+
+    def _route(src, track, output_dir, audio_specs, force=False):
+        out = output_dir / f"{track.id}_192k.mp3"
+        out.write_bytes(b"fake mp3")
+        return {(AudioFormat.MP3, "192k"): out}
+
+    organizer = MagicMock()
+    organizer.route_audio.side_effect = _route
+    api = MagicMock()
+    api.get_track_detail.return_value = None  # 走 fallback Track
+    svc = _process_svc(cfg, repo, organizer=organizer, api=api, presets={"mp3": _Mp3Preset()})
+
+    # scan 路径（run_process 内部 _safe_track 一次）
+    result = svc.run_process(downloaded=[], force=False)
+    assert result.processed == 1
+
+    # process 路径（_process_file 无 prefetched 时再走 _safe_track）：缓存命中不再打详情 API
+    rel = workspace_rel_path(canonical, cfg.workspace_path)
+    repo.add_pending_file(rel, 333)
+    svc._process_file(canonical)
+    assert api.get_track_detail.call_count == 1

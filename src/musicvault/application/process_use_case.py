@@ -71,6 +71,9 @@ class ProcessUseCase:
             raise PresetLoadError("ProcessUseCase 缺少 preset 实例索引（presets 参数）：请经 build_pipeline 组装注入")
         self._validate_preset_keys(presets)
         self.presets = presets
+        # 曲目详情实例级缓存：存量 canonical 扫描与后续处理对同一曲目只打一次详情 API。
+        # 无并发问题：scan 路径在主线程，_process_file 收到 prefetched_track 时不再走 _safe_track。
+        self._track_detail_cache: dict[int, Track | None] = {}
 
     @staticmethod
     def _validate_preset_keys(presets: Mapping[str, BasePreset]) -> None:
@@ -398,7 +401,17 @@ class ProcessUseCase:
         return self.recorder.state.find_track_id_by_path(rel)
 
     def _safe_track(self, track_id: int, fallback_name: str) -> Track:
+        """按需获取曲目详情，实例内单次缓存：同一曲目重复处理不再打详情 API。
+
+        None（API 未命中）也缓存，命中时仍按当前 fallback_name 构造降级 Track。
+        """
+        if track_id in self._track_detail_cache:
+            detail = self._track_detail_cache[track_id]
+            if detail is not None:
+                return detail
+            return self._fallback_track(track_id, fallback_name)
         detail = self.api.get_track_detail(track_id)
+        self._track_detail_cache[track_id] = detail
         if detail is not None:
             return detail
         return self._fallback_track(track_id, fallback_name)
