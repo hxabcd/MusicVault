@@ -49,13 +49,12 @@ class PlaylistUseCase:
             name = ""
         dir_name = safe_filename(str(name)) if name else safe_filename(str(playlist_id))
 
-        # 删除 library 目录（仅含硬链接，直接 rmtree）
+        # 删除 library 中的歌单目录（仅含硬链接，直接 rmtree）
         deleted_dirs = 0
-        for preset in self.cfg.presets:
-            target = self.cfg.preset_dir(preset.name) / dir_name
-            if target.is_dir():
-                shutil.rmtree(target)
-                deleted_dirs += 1
+        target = self.paths.library / dir_name
+        if target.is_dir():
+            shutil.rmtree(target)
+            deleted_dirs += 1
 
         # 找出不再属于任何歌单的曲目（删除本歌单后）
         ids_to_remove: set[int] = set()
@@ -74,10 +73,10 @@ class PlaylistUseCase:
         # 记录 canonical 文件的 inode（删除前），用于后续匹配 未分类 中的硬链接
         canonical_inodes: set[tuple[int, int]] = set()
         for track_id in ids_to_remove:
-            audio_dir = self.paths.media_store / str(track_id) / "audio"
-            if not audio_dir.is_dir():
+            track_dir = self.paths.media_store / str(track_id)
+            if not track_dir.is_dir():
                 continue
-            for f in list(audio_dir.iterdir()):
+            for f in list(track_dir.iterdir()):
                 if not f.is_file():
                     continue
                 try:
@@ -86,19 +85,17 @@ class PlaylistUseCase:
                 except OSError:
                     continue
 
-        # 删除无歌单归属的 canonical 文件（audio 目录仅含本曲目资产，直接 rmtree）
+        # 删除无歌单归属的 canonical 文件（track 目录仅含本曲目资产，直接 rmtree）
         for track_id in ids_to_remove:
-            audio_dir = self.paths.media_store / str(track_id) / "audio"
-            if audio_dir.is_dir():
-                shutil.rmtree(audio_dir)
+            track_dir = self.paths.media_store / str(track_id)
+            if track_dir.is_dir():
+                shutil.rmtree(track_dir)
             self.state.remove_track(track_id)
 
         # 删除 未分类 中对应的硬链接（它们指向同一 inode，unlink 不会自动消失）
         if canonical_inodes:
-            for preset in self.cfg.presets:
-                uncat_dir = self.cfg.preset_dir(preset.name) / self.cfg.default_playlist_name
-                if not uncat_dir.is_dir():
-                    continue
+            uncat_dir = self.paths.library / self.cfg.default_playlist_name
+            if uncat_dir.is_dir():
                 for f in list(uncat_dir.iterdir()):
                     if not f.is_file():
                         continue
@@ -142,6 +139,6 @@ class PlaylistUseCase:
     def remove_song(self, song_id: int) -> None:
         """移除单曲管理登记并删除其 canonical 文件。"""
         self.state.remove_managed_song(song_id)
-        audio_dir = self.paths.media_store / str(song_id) / "audio"
-        if audio_dir.is_dir():
-            shutil.rmtree(audio_dir)
+        track_dir = self.paths.media_store / str(song_id)
+        if track_dir.is_dir():
+            shutil.rmtree(track_dir)
