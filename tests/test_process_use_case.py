@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -394,3 +395,40 @@ def test_preset_dict_key_must_match_preset_name(tmp_path: Path) -> None:
 
     # 键名一致则正常构造
     _process_svc(cfg, repo, organizer=MagicMock(), presets={"archive": _NamedPreset()})
+
+
+def test_process_build_lyrics_error_isolates_preset(tmp_path: Path, caplog) -> None:
+    """build_lyrics 抛异常（preset 脚本代码）→ 该 preset 歌词文件跳过，不阻塞其他 preset 与整曲。"""
+    cfg = _make_cfg(tmp_path)
+    cfg.cache_dir.mkdir(parents=True)
+    repo = _repository(cfg)
+    repo.save_lyrics(333, lyrics_to_json((LyricLine(1000, 0, "hello"),)), 0.0)
+
+    raw = cfg.cache_dir / "333.mp3"
+    raw.write_bytes(b"fake mp3")
+    canonical = cfg.media_store_dir / "333" / "333.flac"
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_bytes(b"fake flac")
+
+    class _ExplodingPreset(BasePreset):
+        format = AudioFormat.FLAC
+
+        def build_lyrics(self, lines):
+            raise RuntimeError("preset 脚本崩溃")
+
+    p_bad = _ExplodingPreset()
+    p_good = _CustomLyricsPreset("good lrc")
+    organizer = MagicMock()
+    organizer.route_audio.return_value = {(AudioFormat.FLAC, None): canonical}
+    svc = _process_svc(cfg, repo, organizer=organizer, presets={"bad": p_bad, "good": p_good})
+
+    with caplog.at_level(logging.WARNING, logger="musicvault.application.process_use_case"):
+        result = svc.run_process(downloaded=[_downloaded(333, raw)], force=False)
+
+    assert result.processed == 1  # 整曲成功，不计 failed
+    assert result.failed == 0
+    # 坏 preset 的歌词文件不写，另一 preset 正常写
+    assert not (cfg.media_store_dir / "333" / "333.bad.lrc").exists()
+    assert (cfg.media_store_dir / "333" / "333.good.lrc").read_text(encoding="utf-8") == "good lrc"
+    # 警告记录含 preset 名与曲目 ID
+    assert any("bad" in r.message and "333" in r.message for r in caplog.records)
