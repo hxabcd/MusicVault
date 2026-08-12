@@ -38,7 +38,11 @@ class TestLoadSyncedState:
         _seed_state(cfg, {123: [10, 20], 456: [10]})
 
         svc = SyncUseCase(
-            cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file)),
+            cfg,
+            MagicMock(),
+            MagicMock(),
+            workers=1,
+            state=SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file)),
             process_state=SQLiteProcessStateRepository(SQLiteState(cfg.state_db_file)),
         )
         result = svc.load_synced_state()
@@ -50,7 +54,11 @@ class TestLoadSyncedState:
         _seed_state(cfg, {789: []})
 
         svc = SyncUseCase(
-            cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file)),
+            cfg,
+            MagicMock(),
+            MagicMock(),
+            workers=1,
+            state=SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file)),
             process_state=SQLiteProcessStateRepository(SQLiteState(cfg.state_db_file)),
         )
         result = svc.load_synced_state()
@@ -61,7 +69,11 @@ class TestLoadSyncedState:
         SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file))
 
         svc = SyncUseCase(
-            cfg, MagicMock(), MagicMock(), workers=1, state=SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file)),
+            cfg,
+            MagicMock(),
+            MagicMock(),
+            workers=1,
+            state=SQLiteSourceStateRepository(SQLiteState(cfg.state_db_file)),
             process_state=SQLiteProcessStateRepository(SQLiteState(cfg.state_db_file)),
         )
         result = svc.load_synced_state()

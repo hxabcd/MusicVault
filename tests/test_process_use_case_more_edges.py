@@ -40,7 +40,9 @@ def _downloaded(track_id: int, source_file: Path) -> DownloadedTrack:
     return DownloadedTrack(track=_make_track(track_id), source_file=str(source_file), is_ncm=False, playlist_ids=[])
 
 
-def _process_svc(cfg: Config, repo: SQLiteSourceStateRepository, *, organizer=None, metadata=None, api=None, presets=None):
+def _process_svc(
+    cfg: Config, repo: SQLiteSourceStateRepository, *, organizer=None, metadata=None, api=None, presets=None
+):
     return ProcessUseCase(
         cfg=cfg,
         api=api or MagicMock(),
@@ -85,7 +87,13 @@ class TestPresetInjection:
 
         with pytest.raises(PresetLoadError, match="presets"):
             ProcessUseCase(
-                cfg, MagicMock(), MagicMock(), MagicMock(), MagicMock(), workers=1, state=repo,
+                cfg,
+                MagicMock(),
+                MagicMock(),
+                MagicMock(),
+                MagicMock(),
+                workers=1,
+                state=repo,
                 process_state=_process_repository(cfg),
             )
 

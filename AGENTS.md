@@ -49,7 +49,7 @@ uv python -m musicvault --help                  # CLI 冒烟
 1. **sync 四阶段链路**：`cli` → `build_pipeline(config)` → `PipelineUseCase` 编排 `SyncUseCase`（fetch 拉取元数据 → pull 下载与歌词统一格式入库）→ `ProcessUseCase`（离线歌词、按 preset 声明转码/写元数据/写歌词文件）→ distribute 阶段（`SyncEngine` 驱动 sync_target 重建目标端）；`--no-distribute` / `--only-distribute` 控制分发，状态经 `SourceStateRecorder` 写入 SQLite。
 2. **distribute 独立命令**：`build_runtime(config)` 组装 → `PresetRegistry` 加载内置（archive preset + hardlink target，受 `preset_system.builtin` 开关控制）与外部脚本目录 → `build_distribute_pipeline` 的 `DistributePipeline.run` 按 `prepare → sync_item → finalize` 生命周期执行目标操作；`--dry-run` 不产生副作用；一次运行内所有 sync_target 共享同一 SQLite `SourceSnapshot`。
 
-workspace 布局：`cache/`（临时文件，含下载缓存与解密中间产物）、`media_store/<track_id>/`（长期媒体资产，canonical 文件与 `<tid>.<preset>.lrc` 扁平共存）、`library/`（可重建的目标视图，由 hardlink distribute 从 DB 重建）、`logs/`、`state.db`（SQLite，schema 版本化，写入走事务）。
+workspace 布局：`cache/`（临时文件，含下载缓存与解密中间产物）、`media_store/<track_id>/`（长期媒体资产，canonical 文件与 `<tid>.<preset>.lrc` 扁平共存）、`library/`（可重建的目标视图，由 hardlink distribute 从 DB 重建）、`logs/`、`state.db`（SQLite，六表职责化 schema：源侧状态 + 处理管线状态；旧格式库检测后拒绝初始化；写入走事务）。
 
 ## 文档约定
 

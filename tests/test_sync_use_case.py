@@ -85,7 +85,15 @@ class TestFetch:
         cfg.cache_dir.mkdir(parents=True)
         api = _make_api([111])
 
-        svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=False, state=_repository(cfg), process_state=_process_repository(cfg))
+        svc = SyncUseCase(
+            cfg,
+            api,
+            MagicMock(),
+            workers=2,
+            dry_run=False,
+            state=_repository(cfg),
+            process_state=_process_repository(cfg),
+        )
         svc.run_fetch("cookie", playlist_ids=[10])
 
         api.get_tracks_download_urls.assert_not_called()
@@ -97,7 +105,15 @@ class TestFetch:
         cfg.cache_dir.mkdir(parents=True)
         api = _make_api([111])
 
-        svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=False, state=_repository(cfg), process_state=_process_repository(cfg))
+        svc = SyncUseCase(
+            cfg,
+            api,
+            MagicMock(),
+            workers=2,
+            dry_run=False,
+            state=_repository(cfg),
+            process_state=_process_repository(cfg),
+        )
         svc.run_fetch("cookie", playlist_ids=[10])
 
         snapshot = _repository(cfg).create_snapshot()
@@ -114,7 +130,9 @@ class TestFetch:
         repo.upsert_playlist(Playlist(10, "旧名", ()))
         api = _make_api([111])
 
-        svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
+        svc = SyncUseCase(
+            cfg, api, MagicMock(), workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg)
+        )
         svc.run_fetch("cookie", playlist_ids=[10])
 
         playlist = repo.get_playlist(10)
@@ -132,7 +150,15 @@ class TestPull:
         api.get_track_lyrics.return_value = {"lrc": "[00:01.000]hello"}
         repo = _repository(cfg)
 
-        svc = SyncUseCase(cfg, api, _make_downloader(cfg), workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
+        svc = SyncUseCase(
+            cfg,
+            api,
+            _make_downloader(cfg),
+            workers=2,
+            dry_run=False,
+            state=repo,
+            process_state=_process_repository(cfg),
+        )
         result = svc.run_pull("cookie", playlist_ids=[10])
 
         assert len(result.downloaded) == 1
@@ -149,7 +175,15 @@ class TestPull:
         api.get_track_lyrics.side_effect = RuntimeError("boom")
         repo = _repository(cfg)
 
-        svc = SyncUseCase(cfg, api, _make_downloader(cfg), workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
+        svc = SyncUseCase(
+            cfg,
+            api,
+            _make_downloader(cfg),
+            workers=2,
+            dry_run=False,
+            state=repo,
+            process_state=_process_repository(cfg),
+        )
         result = svc.run_pull("cookie", playlist_ids=[10])
 
         assert len(result.downloaded) == 1
@@ -162,12 +196,28 @@ class TestPull:
         cfg.cache_dir.mkdir(parents=True)
         repo = _repository(cfg)
 
-        svc = SyncUseCase(cfg, _make_api([111]), _make_downloader(cfg), workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
+        svc = SyncUseCase(
+            cfg,
+            _make_api([111]),
+            _make_downloader(cfg),
+            workers=2,
+            dry_run=False,
+            state=repo,
+            process_state=_process_repository(cfg),
+        )
         svc.run_fetch("cookie", playlist_ids=[10])
         svc.run_pull("cookie", playlist_ids=[10])
 
         second_downloader = _make_downloader(cfg)
-        svc = SyncUseCase(cfg, _make_api([111]), second_downloader, workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
+        svc = SyncUseCase(
+            cfg,
+            _make_api([111]),
+            second_downloader,
+            workers=2,
+            dry_run=False,
+            state=repo,
+            process_state=_process_repository(cfg),
+        )
         svc.run_fetch("cookie", playlist_ids=[10])
         svc.run_pull("cookie", playlist_ids=[10])
 
@@ -183,7 +233,15 @@ class TestPull:
         canonical.parent.mkdir(parents=True, exist_ok=True)
         canonical.write_bytes(b"fake flac")
 
-        svc = SyncUseCase(cfg, _make_api([]), MagicMock(), workers=2, dry_run=False, state=_repository(cfg), process_state=_process_repository(cfg))
+        svc = SyncUseCase(
+            cfg,
+            _make_api([]),
+            MagicMock(),
+            workers=2,
+            dry_run=False,
+            state=_repository(cfg),
+            process_state=_process_repository(cfg),
+        )
         svc.run_fetch("cookie", playlist_ids=[10])
         svc.run_pull("cookie", playlist_ids=[10])
 
@@ -210,7 +268,15 @@ class TestPull:
         uncat_dir.mkdir(parents=True)
         os.link(canonical, uncat_dir / "111.flac")
 
-        svc = SyncUseCase(cfg, _make_api([]), MagicMock(), workers=2, dry_run=False, state=_repository(cfg), process_state=_process_repository(cfg))
+        svc = SyncUseCase(
+            cfg,
+            _make_api([]),
+            MagicMock(),
+            workers=2,
+            dry_run=False,
+            state=_repository(cfg),
+            process_state=_process_repository(cfg),
+        )
         svc.run_fetch("cookie", playlist_ids=[10])
         svc.run_pull("cookie", playlist_ids=[10])
 
@@ -242,7 +308,9 @@ class TestPull:
         # 模拟 canonical 手动缺失（仅 192k 变体在库，asset.path 指向的 flac 已消失）
         canonical.unlink()
 
-        svc = SyncUseCase(cfg, MagicMock(), MagicMock(), workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
+        svc = SyncUseCase(
+            cfg, MagicMock(), MagicMock(), workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg)
+        )
         assert svc._cleanup_stale_state() == 1
 
         assert not (playlist_dir / "111_192k.mp3").exists()
@@ -257,7 +325,15 @@ class TestFetchPullFlow:
         cfg.cache_dir.mkdir(parents=True)
         repo = _repository(cfg)
 
-        svc = SyncUseCase(cfg, _make_api([111]), _make_downloader(cfg), workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
+        svc = SyncUseCase(
+            cfg,
+            _make_api([111]),
+            _make_downloader(cfg),
+            workers=2,
+            dry_run=False,
+            state=repo,
+            process_state=_process_repository(cfg),
+        )
         svc.run_fetch("cookie", playlist_ids=[10])
         result = svc.run_pull("cookie", playlist_ids=[10])
 

@@ -37,7 +37,7 @@ def _process_repository(cfg: Config) -> SQLiteProcessStateRepository:
     return SQLiteProcessStateRepository(SQLiteState(cfg.state_db_file))
 
 
-def _seed_synced(cfg: Config, state_map: dict[int, list[int]]) -> SQLiteStateRepository:
+def _seed_synced(cfg: Config, state_map: dict[int, list[int]]) -> SQLiteSourceStateRepository:
     """把 {track_id: [playlist_ids]} 写入 SQLite，替代旧 synced_tracks.json 预置。"""
     repo = _repository(cfg)
     tracks = [Track(id=tid, name=f"Song {tid}", artists=[], album="Album", raw={}) for tid in state_map]
@@ -57,7 +57,7 @@ class TestSyncDryRun:
         cfg.media_store_dir.mkdir(parents=True)
         cfg.cache_dir.mkdir(parents=True)
         # 已有 1 首已下载（状态经 SQLite 预置，processing_state 标记下载产物）
-        repo = _seed_synced(cfg, {111: [10]})
+        _seed_synced(cfg, {111: [10]})
         _process_repository(cfg).mark_downloaded("cache/111.mp3", 111)
 
         # API：歌单信息变化、曲目新增 222
@@ -67,7 +67,15 @@ class TestSyncDryRun:
         api.get_tracks_download_urls.return_value = {222: "http://example.com/222.mp3"}
 
         downloader = MagicMock()
-        svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=True, state=_repository(cfg), process_state=_process_repository(cfg))
+        svc = SyncUseCase(
+            cfg,
+            api,
+            downloader,
+            workers=2,
+            dry_run=True,
+            state=_repository(cfg),
+            process_state=_process_repository(cfg),
+        )
         result = svc.run_pull("cookie", playlist_ids=[10])
 
         # 不下载、不写状态（dry-run 下 fetch 由 Pipeline 层跳过）
@@ -94,7 +102,15 @@ class TestSyncDryRun:
         api.get_playlist_info.return_value = {"name": "歌单A", "track_count": 1}
         api.get_playlist_tracks.return_value = [_make_track(222)]
 
-        svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=True, state=_repository(cfg), process_state=_process_repository(cfg))
+        svc = SyncUseCase(
+            cfg,
+            api,
+            MagicMock(),
+            workers=2,
+            dry_run=True,
+            state=_repository(cfg),
+            process_state=_process_repository(cfg),
+        )
         result = svc.run_pull("cookie", playlist_ids=[10])
 
         # 111 列入清理计划，但文件与状态均保留
@@ -118,7 +134,15 @@ class TestSyncDryRun:
         api.get_playlist_info.return_value = {"name": "歌单A", "track_count": 1}
         api.get_playlist_tracks.return_value = []  # 远端已无 111
 
-        svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=False, state=_repository(cfg), process_state=_process_repository(cfg))
+        svc = SyncUseCase(
+            cfg,
+            api,
+            MagicMock(),
+            workers=2,
+            dry_run=False,
+            state=_repository(cfg),
+            process_state=_process_repository(cfg),
+        )
         svc.run_fetch("cookie", playlist_ids=[10])
         svc.run_pull("cookie", playlist_ids=[10])
 
@@ -139,7 +163,9 @@ class TestSyncDryRun:
         api = MagicMock()
         api.get_tracks_detail.return_value = {999: _make_track(999)}  # 1000 缺失
 
-        svc = SyncUseCase(cfg, api, MagicMock(), workers=2, dry_run=True, state=repo, process_state=_process_repository(cfg))
+        svc = SyncUseCase(
+            cfg, api, MagicMock(), workers=2, dry_run=True, state=repo, process_state=_process_repository(cfg)
+        )
         svc.run_pull("cookie", playlist_ids=[])
 
         # dry-run 不写 SQLite：无效单曲 ID 保留，等待真实运行再清理
@@ -165,7 +191,9 @@ class TestSyncDryRun:
             playlist_ids=[10],
         )
 
-        svc = SyncUseCase(cfg, api, downloader, workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg))
+        svc = SyncUseCase(
+            cfg, api, downloader, workers=2, dry_run=False, state=repo, process_state=_process_repository(cfg)
+        )
         svc.run_fetch("cookie", playlist_ids=[10])
         result = svc.run_pull("cookie", playlist_ids=[10])
 
@@ -194,8 +222,16 @@ class TestProcessDryRun:
         organizer = MagicMock()
         metadata = MagicMock()
         svc = ProcessUseCase(
-            cfg, api, decryptor, organizer, metadata, workers=2, dry_run=True, state=_repository(cfg),
-            process_state=_process_repository(cfg), presets={},
+            cfg,
+            api,
+            decryptor,
+            organizer,
+            metadata,
+            workers=2,
+            dry_run=True,
+            state=_repository(cfg),
+            process_state=_process_repository(cfg),
+            presets={},
         )
         result = svc.run_process(downloaded=[item], force=False)
 
@@ -229,8 +265,16 @@ class TestProcessDryRun:
         item = DownloadedTrack(track=_make_track(333), source_file=str(canonical), is_ncm=False, playlist_ids=[])
 
         svc = ProcessUseCase(
-            cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=2, dry_run=True, state=repo,
-            process_state=_process_repository(cfg), presets={},
+            cfg,
+            api,
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+            workers=2,
+            dry_run=True,
+            state=repo,
+            process_state=_process_repository(cfg),
+            presets={},
         )
         result = svc.run_process(downloaded=[item], force=False)
 

@@ -104,8 +104,7 @@ class SQLiteState:
         """幂等建库；旧格式库抛 RuntimeError，提示用户删除后重建。"""
         with self.connect() as connection:
             existing = {
-                row[0]
-                for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+                row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
             }
             legacy = sorted(existing & _LEGACY_TABLE_NAMES)
             if legacy:
