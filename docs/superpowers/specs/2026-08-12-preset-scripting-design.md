@@ -44,13 +44,13 @@ fetch ──► pull ──► process ──► distribute（默认启用）
 | `preset_api/` | 两套公开 API：preset 脚本（声明规格/歌词函数/元数据）+ sync_target 脚本（引用 preset、定义分发）；歌词渲染工具库 |
 | `adapters/processors/lyrics.py`（改造） | 原始 payload → 结构化行列表转换器（复用现有 YRC/LRC 解析） |
 | `application/` | SyncUseCase 拆 fetch/pull 阶段；ProcessUseCase 离线消费；SyncEngine 作为 distribute 引擎 |
-| `cli/` | 命令收敛为 `sync [--no-distribute]` + `distribute` |
+| `cli/` | 命令收敛为 `sync [--only-process] [--no-distribute]` + `distribute` |
 
 ## 命令层
 
 | 命令 | 变化 |
 |---|---|
-| `sync` | 保留，四阶段默认全跑；新增 `--no-distribute` 选项 |
+| `sync` | 保留，四阶段默认全跑；新增 `--only-distribute` `--no-distribute` 选项 |
 | `distribute` | `target-sync` 改名；单独执行分发（复用 SyncEngine） |
 | `presets` | 保留，列出 preset 与 sync_target 两类脚本 |
 | `add/remove/list/init/help` | 保留 |
@@ -80,7 +80,7 @@ class LyricLine:
 
 - 输入：原始 payload dict（`lrc`/`tlyric`/`romalrc`/`yrc`/`ytlrc`/`yromalrc` 六个 key）
 - 清洗（去 JSON 元信息行）保留，只做存储前一次性处理
-- **YRC 优先**：逐行 `_parse_yrc_line` → `start_ms/duration_ms/words/text`；翻译/罗马音从 ytlrc/yromalrc 按起始时间对齐（复用 `_find_translation_fuzzy`，500ms 容差）
+- **YRC 优先**：逐行 `_parse_yrc_line` → `start_ms/duration_ms/words/text`；翻译/罗马音从 ytlrc/yromalrc 按起始时间对齐（复用 `_find_translation_fuzzy`，200ms 容差）
 - **标准 LRC 回退**：逐行解析 → `start_ms/text`，无逐字；重复时间戳行**拆成多行**；翻译/罗马音按时间戳 map 精确匹配 + fuzzy 回退
 - 输出：`tuple[LyricLine, ...]`
 - 现有文本级合并渲染（`merge_translation` 等）退役，渲染逻辑迁移到 preset_api 基于行模型重写
@@ -130,7 +130,7 @@ class MetadataSpec:
     @classmethod
     def full(cls) -> "MetadataSpec":   # 封面 + 全部字段
     @classmethod
-    def basic(cls) -> "MetadataSpec":   # 封面 + 常用字段（year/track_number/disc_number/album_artist）
+    def basic(cls) -> "MetadataSpec":   # 封面 + 常用字段（标题、艺术家、专辑)
     @classmethod
     def none(cls) -> "MetadataSpec":    # 无封面 + 无字段
     # 构造函数可覆盖任意项：MetadataSpec.basic(embed_cover=False)
