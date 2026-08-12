@@ -59,7 +59,9 @@ class HardlinkDistributor:
         stem = format_track_name(self.filename_template, track)
         for dirname in owned_names:
             dst_dir = self.target_root / dirname
-            dst_dir.mkdir(parents=True, exist_ok=True)
+            if not context.dry_run:
+                # 目录创建是副作用，dry-run 只计划链接（executor 的 PLANNED 语义）
+                dst_dir.mkdir(parents=True, exist_ok=True)
             context.link(asset.path, dst_dir / f"{stem}{asset.path.suffix}")
             if lrc is not None:
                 context.link(lrc, dst_dir / f"{stem}.lrc")

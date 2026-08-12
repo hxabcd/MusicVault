@@ -103,6 +103,30 @@ def test_hardlink_removes_stale_link_on_playlist_change(tmp_path: Path) -> None:
     assert (library / "fav" / "Unknown Artist - song.flac").exists()
 
 
+def test_hardlink_sync_item_dry_run_does_not_create_dirs(tmp_path: Path) -> None:
+    """dry-run：不创建歌单目录（目录创建是副作用，仅链接走 PLANNED 语义）。"""
+    media = tmp_path / "media_store"
+    audio_dir = media / "1"
+    audio_dir.mkdir(parents=True)
+    audio = audio_dir / "1.flac"
+    audio.write_bytes(b"FLAC")
+    library = tmp_path / "library"
+    library.mkdir()
+
+    track = Track(id=1, name="song", artists=[], album="", raw={})
+    snapshot = _snapshot(
+        track,
+        (Playlist(1, "fav", (1,)),),
+        (MediaAsset(track_id=1, asset_type="audio", spec="FLAC", path=audio, size=4),),
+    )
+    context = _make_context(snapshot, media, dry_run=True)
+    distributor = HardlinkDistributor(ArchivePreset(), "archive", library, "未分类")
+    distributor.sync_item(track, context)
+
+    assert not (library / "fav").exists()
+    assert list(library.iterdir()) == []
+
+
 def test_hardlink_sync_item_dry_run_skips_deletion_and_only_plans_links(tmp_path: Path) -> None:
     media = tmp_path / "media_store"
     audio_dir = media / "1"
