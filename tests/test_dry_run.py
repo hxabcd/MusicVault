@@ -153,57 +153,56 @@ class TestSyncDryRun:
 
 
 class TestProcessDryRun:
-    def test_pending_files_reported_no_writes(self, tmp_path: Path) -> None:
+    def test_pending_reported_no_writes(self, tmp_path: Path) -> None:
+        """process dry-run：待处理曲目计入 processed 计划，但不执行解码/转码/写索引。"""
         cfg = _make_cfg(tmp_path)
         cfg.media_store_dir.mkdir(parents=True)
         cfg.cache_dir.mkdir(parents=True)
-        # 本地 canonical 文件，不在 processed 索引中 → 待处理
-        canonical = cfg.media_store_dir / "333" / "audio" / "333.flac"
-        canonical.parent.mkdir(parents=True, exist_ok=True)
-        canonical.write_text("fake flac")
+        raw = cfg.cache_dir / "333.mp3"
+        raw.write_bytes(b"fake mp3")
 
         api = MagicMock()
-        api.get_tracks_detail.return_value = {333: _make_track(333)}
-        api.get_playlist_tracks.return_value = []
+        item = DownloadedTrack(track=_make_track(333), source_file=str(raw), is_ncm=False, playlist_ids=[])
 
         decryptor = MagicMock()
         organizer = MagicMock()
         metadata = MagicMock()
         svc = ProcessUseCase(cfg, api, decryptor, organizer, metadata, workers=2, dry_run=True, state=_repository(cfg))
-        svc.run_process(downloaded=[], force=False)
+        result = svc.run_process(downloaded=[item], force=False)
 
-        # 不执行任何处理管线、不写索引
+        # 只计计划不执行：不写索引、不触任何管线组件
+        assert result.processed == 1
         organizer.route_audio.assert_not_called()
         decryptor.decrypt_if_needed.assert_not_called()
         metadata.write.assert_not_called()
         assert not _repository(cfg).is_processed(333, {"FLAC"})
 
     def test_processed_track_skipped(self, tmp_path: Path) -> None:
-        """media_assets 已覆盖 spec 且 processed_tracks 有记录 → dry-run 不列出。"""
+        """media_assets 已覆盖 spec 且 processed_tracks 有记录 → 跳过（计入 skipped）。"""
         from musicvault.application.source_state import build_audio_asset_from_file
-        from musicvault.domain.preset import compute_preset_hash
 
         cfg = _make_cfg(tmp_path)
         cfg.media_store_dir.mkdir(parents=True)
         cfg.cache_dir.mkdir(parents=True)
-        canonical = cfg.media_store_dir / "333" / "audio" / "333.flac"
+        canonical = cfg.media_store_dir / "333" / "333.flac"
         canonical.parent.mkdir(parents=True, exist_ok=True)
-        canonical.write_text("fake flac")
-        mp3 = cfg.media_store_dir / "333" / "audio" / "333_192k.mp3"
-        mp3.write_text("fake mp3")
+        canonical.write_bytes(b"fake flac")
+        mp3 = cfg.media_store_dir / "333" / "333_192k.mp3"
+        mp3.write_bytes(b"fake mp3")
 
         repo = _repository(cfg)
         repo.upsert_track(_make_track(333))
         repo.upsert_media_asset(build_audio_asset_from_file(333, "FLAC", canonical))
         repo.upsert_media_asset(build_audio_asset_from_file(333, "MP3-192k", mp3))
-        repo.record_processed(333, compute_preset_hash(cfg.presets), 0.0)
+        repo.record_processed(333, "preset-script", 0.0)
 
         api = MagicMock()
-        api.get_tracks_detail.return_value = {333: _make_track(333)}
-        api.get_playlist_tracks.return_value = []
+        item = DownloadedTrack(track=_make_track(333), source_file=str(canonical), is_ncm=False, playlist_ids=[])
 
         svc = ProcessUseCase(cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=2, dry_run=True, state=repo)
-        svc.run_process(downloaded=[], force=False)
+        result = svc.run_process(downloaded=[item], force=False)
 
-        # spec 已覆盖：dry-run 不应产生任何待处理项
+        # spec 已覆盖：不产生待处理项，计入 skipped
+        assert result.processed == 0
+        assert result.skipped == 1
         assert repo.is_processed(333, {"FLAC"})

@@ -5,30 +5,29 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Mapping
 
 from musicvault.adapters.filesystem.workspace import WorkspacePaths
 from musicvault.adapters.processors.decryptor import Decryptor
-from musicvault.adapters.processors.lyrics import (
-    KaraokeLyrics,
-    StandardLyrics,
-)
 from musicvault.adapters.processors.metadata_writer import MetadataWriter
 from musicvault.adapters.processors.organizer import Organizer
 from musicvault.application.progress import ProgressReporter
 from musicvault.application.source_state import SourceStateRecorder, build_audio_asset_from_file
 from musicvault.core.config import Config
+from musicvault.domain.lyrics import lyrics_from_json
 from musicvault.domain.models import DownloadedTrack, MediaAsset, Track
-from musicvault.domain.preset import Preset, audio_spec_key, build_audio_specs, compute_preset_hash
-from musicvault.preset_api.v1 import MetadataSpec
+from musicvault.domain.preset import audio_spec_key as legacy_spec_key
+from musicvault.domain.preset import build_audio_specs
+from musicvault.preset_api.v1 import (
+    AudioFormat,
+    BasePreset,
+    LyricEncoding,
+    MetadataSpec,
+    audio_spec_key,
+)
 from musicvault.ports.source import SourceClient
 from musicvault.ports.state import StateRepository
-from musicvault.shared.utils import (
-    create_link,
-    format_track_name,
-    safe_filename,
-    workspace_rel_path,
-)
+from musicvault.shared.utils import workspace_rel_path
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,7 @@ class ProcessResult:
 
 
 class ProcessUseCase:
-    """处理应用用例：解码、转码、元数据、歌词与 library 硬链接"""
+    """处理应用用例：解码、转码、元数据与离线歌词文件写出。"""
 
     def __init__(
         self,
@@ -55,6 +54,7 @@ class ProcessUseCase:
         workers: int,
         state: StateRepository,
         dry_run: bool = False,
+        presets: Mapping[str, BasePreset] | None = None,
     ) -> None:
         self.cfg = cfg
         self.api = api
@@ -67,6 +67,8 @@ class ProcessUseCase:
         self.paths = WorkspacePaths(cfg.workspace_path)
         # 把本次处理产出的媒体资产登记到 SQLite，供 target-sync 消费
         self.recorder = SourceStateRecorder(state)
+        # 歌词/元数据/音频规格按 preset 声明执行；None 时从 cfg.presets 兼容回退（Task 17 移除）
+        self.presets: Mapping[str, BasePreset] = presets if presets is not None else {p.name: p for p in cfg.presets}
 
     # ------------------------------------------------------------------
     # 公开入口
@@ -76,18 +78,13 @@ class ProcessUseCase:
         self,
         downloaded: list[DownloadedTrack],
         force: bool,
-        playlist_index: dict[str, dict[str, object]] | None = None,
         *,
         progress: ProgressReporter | None = None,
     ) -> ProcessResult:
-        if downloaded:
-            playlist_index = playlist_index or {}
-            tasks: list[tuple[Path, Track, list[str]]] = []
-            for item in downloaded:
-                names = self._resolve_playlist_names(item.playlist_ids, playlist_index)
-                tasks.append((Path(item.source_file), item.track, names))
-            return self._run_process_batch(tasks, "处理中", force, progress)
-        return self._process_local(force, progress)
+        if not downloaded:
+            return ProcessResult()
+        tasks: list[tuple[Path, Track]] = [(Path(item.source_file), item.track) for item in downloaded]
+        return self._run_process_batch(tasks, "处理中", force, progress)
 
     # ------------------------------------------------------------------
     # 处理管线
@@ -95,7 +92,7 @@ class ProcessUseCase:
 
     def _run_process_batch(
         self,
-        tasks: list[tuple[Path, Track, list[str]]],
+        tasks: list[tuple[Path, Track]],
         stage_name: str,
         force: bool,
         progress: ProgressReporter | None = None,
@@ -113,7 +110,7 @@ class ProcessUseCase:
 
         total = len(pending)
         workers = min(self.workers, total)
-        results: list[tuple[dict[str, Path], Track, list[str]]] = []
+        results: list[tuple[dict[str, Path], Track]] = []
         failed = 0
 
         if progress is not None:
@@ -122,7 +119,7 @@ class ProcessUseCase:
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 future_map = {
                     pool.submit(self._process_file, raw_file, track_info, force): (idx, raw_file)
-                    for idx, (raw_file, track_info, _names) in enumerate(pending, start=1)
+                    for idx, (raw_file, track_info) in enumerate(pending, start=1)
                 }
 
                 try:
@@ -131,14 +128,13 @@ class ProcessUseCase:
                         try:
                             audio_map = future.result()
                             track_info = None
-                            playlist_names = None
-                            for rf, ti, pn in pending:
+                            for rf, ti in pending:
                                 if rf == raw_file:
-                                    track_info, playlist_names = ti, pn
+                                    track_info = ti
                                     break
                             self._mark_processed(audio_map, track_info)
-                            if track_info and playlist_names:
-                                results.append((audio_map, track_info, playlist_names))
+                            if track_info:
+                                results.append((audio_map, track_info))
                             if progress is not None:
                                 progress.advance(success=True, idx=idx, item_name=raw_file.name)
                         except Exception as exc:
@@ -155,22 +151,19 @@ class ProcessUseCase:
             if progress is not None:
                 progress.end()
 
-        for audio_map, track_info, playlist_names in results:
-            self._link_track(audio_map, track_info, playlist_names)
-
         self._record_processed_results(results)
 
         return ProcessResult(processed=len(results), skipped=skipped, failed=failed)
 
     def _record_processed_results(
         self,
-        results: list[tuple[dict[str, Path], Track, list[str]]],
+        results: list[tuple[dict[str, Path], Track]],
     ) -> None:
         """把本次处理产出的曲目与 canonical 媒体资产写入 SQLite。"""
         tracks: list[Track] = []
         seen: set[int] = set()
         assets: list[MediaAsset] = []
-        for audio_map, track_info, _names in results:
+        for audio_map, track_info in results:
             if track_info.id not in seen:
                 tracks.append(track_info)
                 seen.add(track_info.id)
@@ -184,7 +177,7 @@ class ProcessUseCase:
         prefetched_track: Track | None = None,
         force: bool = False,
     ) -> dict[str, Path]:
-        """处理单个文件，返回 {spec_key: canonical_path}。"""
+        """处理单个文件：解码 → 路由 → 元数据 → 歌词文件，返回 {spec_key: canonical_path}。"""
         track_info = prefetched_track
         track_id = prefetched_track.id if prefetched_track else None
         if track_info is None:
@@ -209,14 +202,11 @@ class ProcessUseCase:
                 except Exception:
                     pass
 
-        # 判断是否已是 canonical 文件（形态 <ws>/media_store/<tid>/audio/<tid>.ext）
-        is_canonical = (
-            raw_file.parent.name == "audio"
-            and raw_file.parent.parent.parent == self.paths.media_store
-            and raw_file.stem.isdigit()
-        )
+        audio_specs = {(p.format, p.bitrate) for p in self.presets.values()}
+        track_dir = self.paths.media_store / str(track_id)
+        # 判断是否已是 canonical 文件（形态 <ws>/media_store/<tid>/<tid>[_bitrate].ext，扁平布局）
+        is_canonical = raw_file.parent == track_dir and raw_file.stem.split("_")[0] == str(track_id)
 
-        audio_specs = build_audio_specs(self.cfg.presets)
         if is_canonical:
             audio_map: dict[str, Path] = {}
             existing_spec = self._spec_from_canonical(raw_file)
@@ -225,13 +215,7 @@ class ProcessUseCase:
             for spec in audio_specs:
                 key = audio_spec_key(*spec)
                 if key not in audio_map:
-                    result = self.organizer.route_audio(
-                        raw_file,
-                        track_info,
-                        self.paths.media_store / str(track_id) / "audio",
-                        {spec},
-                        force=force,
-                    )
+                    result = self.organizer.route_audio(raw_file, track_info, track_dir, {spec}, force=force)
                     if spec in result:
                         audio_map[key] = result[spec]
         else:
@@ -241,108 +225,51 @@ class ProcessUseCase:
                 is_ncm=raw_file.suffix.lower() == ".ncm",
             )
             decoded = self.decryptor.decrypt_if_needed(downloaded, self.paths.cache / "decoded")
-            raw_result = self.organizer.route_audio(
-                decoded, track_info, self.paths.media_store / str(track_id) / "audio", audio_specs, force=force
-            )
+            raw_result = self.organizer.route_audio(decoded, track_info, track_dir, audio_specs, force=force)
             audio_map = {audio_spec_key(fmt, br): p for (fmt, br), p in raw_result.items()}
 
-        # 获取歌词（一次 API 调用）
-        lyrics = self.api.get_track_lyrics(track_id)
+        # 离线歌词：从 SQLite 读取，不再调用歌词 API
+        payload = self.recorder.state.get_lyrics(track_id)
+        lines = lyrics_from_json(payload) if payload else ()
 
-        # 确定每个 canonical 文件的合并策略
-        spec_presets: dict[str, list[Preset]] = {}
-        for preset in self.cfg.presets:
-            key = audio_spec_key(preset.format, preset.bitrate)
-            spec_presets.setdefault(key, []).append(preset)
+        # 每个 canonical 文件按共享 spec 的 preset 并集写元数据
+        spec_presets: dict[str, list[BasePreset]] = {}
+        for preset in self.presets.values():
+            spec_presets.setdefault(audio_spec_key(preset.format, preset.bitrate), []).append(preset)
 
-        # 写元数据（每个 canonical 文件一次）
         for spec_key, canon_path in audio_map.items():
             presets_for_spec = spec_presets.get(spec_key, [])
-            embed_cover = any(p.embed_cover for p in presets_for_spec)
-            cover_max_size = max((p.cover_max_size for p in presets_for_spec), default=0)
-            mf_union: set[str] = set()
-            for p in presets_for_spec:
-                mf_union |= set(p.metadata_fields)
-
-            self.metadata.write(
-                canon_path,
-                track_info,
-                metadata=MetadataSpec(
-                    embed_cover=embed_cover,
-                    cover_max_size=cover_max_size,
-                    fields=tuple(sorted(mf_union)),
-                ),
-                cover_timeout=self.cfg.network_cover_timeout,
+            merged = MetadataSpec(
+                embed_cover=any(p.metadata.embed_cover for p in presets_for_spec),
+                cover_max_size=max((p.metadata.cover_max_size for p in presets_for_spec), default=0),
+                fields=tuple(sorted(set().union(*(set(p.metadata.fields) for p in presets_for_spec)))),
             )
+            self.metadata.write(canon_path, track_info, metadata=merged, cover_timeout=self.cfg.network_cover_timeout)
 
-        # LRC 文件（按 preset 独立）
-        for preset in self.cfg.presets:
-            if not preset.write_lrc_file:
+        # 歌词文件按 preset 独立（每 preset 一个 build_lyrics 输出）
+        for preset_name, preset in self.presets.items():
+            lyric_text = preset.build_lyrics(lines)
+            if not lyric_text:
                 continue
-            spec_key = audio_spec_key(preset.format, preset.bitrate)
-            canon_path = audio_map.get(spec_key)
-            if not canon_path:
-                continue
-            lyric_text = self._build_lyrics_for_preset(lyrics, preset)
-            lrc_path = canon_path.with_name(f"{track_id}.{preset.name}.lrc")
-            _write_lrc(lrc_path, lyric_text, encodings=preset.lrc_encodings)
+            lrc_path = track_dir / f"{track_id}.{preset_name}.lrc"
+            _write_lrc(lrc_path, lyric_text, encodings=preset.lyrics_encodings)
 
         # 清理临时文件
-        if not is_canonical:
-            if not self.cfg.keep_downloads:
-                if raw_file.exists():
-                    raw_file.unlink(missing_ok=True)
+        if not is_canonical and not self.cfg.keep_downloads:
+            raw_file.unlink(missing_ok=True)
 
         return audio_map
 
-    def _pick_best_lyric(self, lyrics: dict[str, str], presets: list[Preset]) -> str | None:
-        if not presets:
-            return None
-
-        def score(p: Preset) -> int:
-            s = 0
-            if p.use_karaoke:
-                s += 100
-            if p.include_translation:
-                s += 10
-            if p.include_romaji:
-                s += 1
-            return s
-
-        best = max(presets, key=score)
-        fmt = best.translation_format
-
-        if best.use_karaoke and lyrics.get("yrc"):
-            lyr_obj = KaraokeLyrics(lyrics)
-        else:
-            lyr_obj = StandardLyrics(lyrics)
-
-        if best.include_translation and best.include_romaji:
-            return lyr_obj.merge_all(format=fmt)
-        if best.include_translation:
-            return lyr_obj.merge_translation(format=fmt)
-        if best.include_romaji:
-            return lyr_obj.merge_romaji(format=fmt)
-        return lyr_obj.original
-
-    def _build_lyrics_for_preset(self, lyrics: dict[str, str], preset: Preset) -> str:
-        if preset.use_karaoke and lyrics.get("yrc"):
-            lyr_obj = KaraokeLyrics(lyrics)
-        else:
-            lyr_obj = StandardLyrics(lyrics)
-
-        if preset.include_translation and preset.include_romaji:
-            return lyr_obj.merge_all(format=preset.translation_format)
-        if preset.include_translation:
-            return lyr_obj.merge_translation(format=preset.translation_format)
-        if preset.include_romaji:
-            return lyr_obj.merge_romaji(format=preset.translation_format)
-        return lyr_obj.original
-
-    def _spec_from_canonical(self, path: Path) -> tuple[str | None, str | None] | None:
+    def _spec_from_canonical(self, path: Path) -> tuple[AudioFormat | None, str | None] | None:
         name = path.stem
         suffix = path.suffix.lower()
-        fmt_map = {".flac": "flac", ".mp3": "mp3", ".m4a": "aac", ".ogg": "ogg", ".opus": "opus"}
+        fmt_map = {
+            ".flac": AudioFormat.FLAC,
+            ".mp3": AudioFormat.MP3,
+            ".m4a": AudioFormat.AAC,
+            ".ogg": AudioFormat.OGG,
+            ".opus": AudioFormat.OPUS,
+        }
         fmt = fmt_map.get(suffix)
         if fmt is None:
             return None
@@ -353,52 +280,26 @@ class ProcessUseCase:
         return (fmt, None)
 
     # ------------------------------------------------------------------
-    # Library 硬链接
-    # ------------------------------------------------------------------
-
-    def _link_track(
-        self,
-        audio_map: dict[str, Path],
-        track: Track,
-        playlist_names: list[str],
-    ) -> None:
-        names = playlist_names or [self.cfg.default_playlist_name]
-        for preset in self.cfg.presets:
-            spec_key = audio_spec_key(preset.format, preset.bitrate)
-            audio_src = audio_map.get(spec_key)
-            if not audio_src:
-                continue
-            link_stem = format_track_name(preset.filename_template, track)
-            for pl_name in names:
-                dst_dir = self.cfg.preset_dir(preset.name) / pl_name
-                dst_dir.mkdir(parents=True, exist_ok=True)
-                create_link(audio_src, dst_dir / f"{link_stem}{audio_src.suffix}")
-                if preset.write_lrc_file:
-                    lrc_src = audio_src.with_name(f"{track.id}.{preset.name}.lrc")
-                    if lrc_src.exists():
-                        create_link(lrc_src, dst_dir / f"{link_stem}.lrc")
-
-    # ------------------------------------------------------------------
     # 已处理状态（processed_files.json 已被 SQLite processed_tracks 替代）
     # ------------------------------------------------------------------
 
     def _filter_pending(
         self,
-        tasks: list[tuple[Path, Track, list[str]]],
+        tasks: list[tuple[Path, Track]],
         force: bool,
-    ) -> tuple[list[tuple[Path, Track, list[str]]], int]:
+    ) -> tuple[list[tuple[Path, Track]], int]:
         if force:
             return tasks, 0
 
-        required_specs = {audio_spec_key(fmt, br) for fmt, br in build_audio_specs(self.cfg.presets)}
-        pending: list[tuple[Path, Track, list[str]]] = []
+        required_specs = {legacy_spec_key(fmt, br) for fmt, br in build_audio_specs(self.cfg.presets)}
+        pending: list[tuple[Path, Track]] = []
         skipped = 0
-        for raw_file, track, playlist_names in tasks:
+        for raw_file, track in tasks:
             if self.recorder.state.is_processed(track.id, required_specs):
                 skipped += 1
                 logger.info("跳过已处理文件（spec 已覆盖）：track_id=%s", track.id)
                 continue
-            pending.append((raw_file, track, playlist_names))
+            pending.append((raw_file, track))
         return pending, skipped
 
     def _mark_processed(self, audio_map: dict[str, Path], track: Track | None = None) -> None:
@@ -409,108 +310,8 @@ class ProcessUseCase:
         if track is not None:
             # processed_tracks 外键引用 tracks，先确保曲目存在
             self.recorder.state.upsert_track(track)
-        self.recorder.state.record_processed(track_id, compute_preset_hash(self.cfg.presets), time.time())
-
-    # ------------------------------------------------------------------
-    # 本地处理（msv process 独立模式）
-    # ------------------------------------------------------------------
-
-    def _process_local(self, force: bool, progress: ProgressReporter | None = None) -> ProcessResult:
-        pending: list[tuple[Path, int]] = []
-
-        cache_files = [f for f in self._iter_downloads() if not f.stem.isdigit()]
-        for raw_file in cache_files:
-            track_id = self._guess_track_id(raw_file)
-            if track_id is None:
-                logger.info("跳过文件：无法推断 track_id，文件=%s", raw_file.name)
-                continue
-            pending.append((raw_file, track_id))
-
-        seen_ids = {pid for _, pid in pending}
-        for canon_path, track_id in self._scan_canonical_files():
-            if track_id not in seen_ids:
-                pending.append((canon_path, track_id))
-                seen_ids.add(track_id)
-
-        if not pending:
-            logger.info("下载目录中无待处理文件")
-            return ProcessResult()
-
-        playlist_index = {
-            str(pl.id): {"name": pl.name, "track_count": len(pl.track_ids)}
-            for pl in self.recorder.state.list_playlists()
-        }
-        logger.info("正在获取曲目详情与歌单数据...")
-        detail_map = self.api.get_tracks_detail([track_id for _, track_id in pending])
-        track_playlist_map = self._build_track_playlist_map()
-        tasks: list[tuple[Path, Track, list[str]]] = []
-        for raw_file, track_id in pending:
-            track_info = detail_map.get(track_id) or self._fallback_track(track_id, raw_file.stem)
-            pids = track_playlist_map.get(track_id, [])
-            names = self._resolve_playlist_names(pids, playlist_index)
-            tasks.append((raw_file, track_info, names))
-
-        return self._run_process_batch(tasks, "处理中", force, progress)
-
-    def _build_track_playlist_map(self) -> dict[int, list[int]]:
-        mapping: dict[int, list[int]] = {}
-        playlist_ids = [pl.id for pl in self.recorder.state.list_playlists()]
-        if playlist_ids:
-            logger.info("正在获取 %s 个歌单的曲目列表...", len(playlist_ids))
-        for pid in playlist_ids:
-            try:
-                tracks = self.api.get_playlist_tracks(pid)
-            except Exception:
-                logger.info("获取歌单曲目失败 playlist_id=%s，跳过分类", pid)
-                continue
-            for track in tracks:
-                mapping.setdefault(track.id, []).append(pid)
-        return mapping
-
-    def _iter_downloads(self) -> Iterable[Path]:
-        allowed = {".ncm", ".flac", ".mp3", ".m4a", ".aac", ".wav"}
-        if not self.paths.cache.exists():
-            return
-        for file_path in self.paths.cache.iterdir():
-            if file_path.is_file() and file_path.suffix.lower() in allowed:
-                yield file_path
-
-    def _scan_canonical_files(self) -> list[tuple[Path, int]]:
-        media_root = self.paths.media_store
-        if not media_root.is_dir():
-            return []
-        seen: set[int] = set()
-        result: list[tuple[Path, int]] = []
-        for track_dir in sorted(media_root.iterdir()):
-            if not track_dir.is_dir() or not track_dir.name.isdigit():
-                continue
-            track_id = int(track_dir.name)
-            audio_dir = track_dir / "audio"
-            if not audio_dir.is_dir():
-                continue
-            for file_path in sorted(audio_dir.iterdir()):
-                if not file_path.is_file() or file_path.suffix.lower() not in (".flac", ".mp3"):
-                    continue
-                stem = file_path.stem.split("_")[0]
-                if stem != track_dir.name:
-                    continue
-                if track_id in seen:
-                    continue
-                result.append((file_path, track_id))
-                seen.add(track_id)
-        return result
-
-    def _resolve_playlist_names(
-        self,
-        playlist_ids: list[int],
-        playlist_index: Mapping[str, Mapping[str, object]],
-    ) -> list[str]:
-        names: list[str] = []
-        for pid in playlist_ids:
-            entry = playlist_index.get(str(pid))
-            name = str(entry["name"]) if entry and entry.get("name") else str(pid)
-            names.append(safe_filename(name))
-        return names or [self.cfg.default_playlist_name]
+        # 固定标记（不再依赖 domain/preset.py 的 compute_preset_hash）
+        self.recorder.state.record_processed(track_id, "preset-script", time.time())
 
     def _guess_track_id(self, file_path: Path, index: Mapping[str, object] | None = None) -> int | None:
         """从 SQLite pending_files 反查 raw 文件所属 track_id。"""
@@ -529,12 +330,16 @@ class ProcessUseCase:
         return Track(id=track_id, name=fallback_name, artists=[], album="Unknown Album", cover_url=None, raw={})
 
 
-def _write_lrc(target: Path, lyric_text: str, encodings: tuple[str, ...] = ("utf-8",)) -> Path:
+def _write_lrc(
+    target: Path,
+    lyric_text: str,
+    encodings: tuple[LyricEncoding, ...] = (LyricEncoding.UTF_8,),
+) -> Path:
     content = lyric_text or ""
-    fallback_encodings = tuple(e for e in encodings if str(e).strip())
-    if not fallback_encodings:
-        fallback_encodings = ("utf-8",)
-    for encoding in fallback_encodings:
+    encoding_values = tuple(e.value for e in encodings if isinstance(e, LyricEncoding))
+    if not encoding_values:
+        encoding_values = ("utf-8",)
+    for encoding in encoding_values:
         try:
             target.write_bytes(content.encode(encoding))
             return target

@@ -199,7 +199,6 @@ class PipelineUseCase:
         only_pull = command == "pull"
         only_process = command == "process"
 
-        playlist_index: dict[str, dict[str, object]] = {}
         downloaded: tuple = ()
         pruned = 0
         track_count = 0
@@ -216,15 +215,13 @@ class PipelineUseCase:
             track_count = sync_result.track_count
             playlist_count = sync_result.playlist_count
             dry_run_plan = sync_result.dry_run_plan
-            playlist_index = self.sync_service.playlist_index
 
-        # sync 的 dry-run 不跑 process 阶段（新下载文件尚未落地），process --dry-run 仍执行本地扫描预览
+        # sync 的 dry-run 不跑 process 阶段（新下载文件尚未落地）
         processed = 0
         if not only_pull and (not self.dry_run or only_process):
             process_result = self.process_service.run_process(
                 downloaded=downloaded,
                 force=self.cfg.force,
-                playlist_index=playlist_index,
                 progress=progress,
             )
             processed = process_result.processed

@@ -104,13 +104,12 @@ def test_process_records_media_assets_to_sqlite(tmp_path: Path) -> None:
     cfg.media_store_dir.mkdir(parents=True)
     cfg.cache_dir.mkdir(parents=True)
     cfg.presets = []  # 简化：只把 canonical 文件本身登记为媒体资产
-    canonical = cfg.media_store_dir / "333" / "audio" / "333.flac"
+    canonical = cfg.media_store_dir / "333" / "333.flac"
     canonical.parent.mkdir(parents=True, exist_ok=True)
     canonical.write_bytes(b"fake flac")
     repo = _repository(cfg)
 
     api = MagicMock()
-    api.get_track_lyrics.return_value = {}
     item = DownloadedTrack(track=_make_track(333), source_file=str(canonical), is_ncm=False, playlist_ids=[])
     svc = ProcessUseCase(cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=1, dry_run=False, state=repo)
     svc.run_process(downloaded=[item], force=False)
@@ -126,28 +125,43 @@ def test_process_records_media_assets_to_sqlite(tmp_path: Path) -> None:
 
 
 def test_process_routes_audio_to_media_store_dir(tmp_path: Path) -> None:
-    """route_audio 的输出目录是 media_store/<tid>/audio/（canonical 落位）。"""
+    """route_audio 的输出目录是 media_store/<tid>/（扁平化，无 audio/ 子目录）。"""
+    from musicvault.preset_api.v1 import AudioFormat, BasePreset
+
     cfg = _make_cfg(tmp_path)
     cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
 
+    class _Mp3Preset(BasePreset):
+        format = AudioFormat.MP3
+        bitrate = "192k"
+
     api = MagicMock()
-    api.get_track_lyrics.return_value = {}
     raw = cfg.cache_dir / "333.mp3"
     raw.write_bytes(b"fake mp3")
     decryptor = MagicMock()
     decryptor.decrypt_if_needed.return_value = raw
     organizer = MagicMock()
-    output = cfg.media_store_dir / "333" / "audio" / "333_192k.mp3"
-    organizer.route_audio.return_value = {("mp3", "192k"): output}
-    # route_audio 是 mock：把其返回的 canonical 文件真实落盘，供 LRC 写入与资产登记（sha256）读取
+    output = cfg.media_store_dir / "333" / "333_192k.mp3"
+    organizer.route_audio.return_value = {(AudioFormat.MP3, "192k"): output}
+    # route_audio 是 mock：把其返回的 canonical 文件真实落盘，供资产登记（sha256）读取
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(b"fake mp3")
     item = DownloadedTrack(track=_make_track(333), source_file=str(raw), is_ncm=False, playlist_ids=[])
-    svc = ProcessUseCase(cfg, api, decryptor, organizer, MagicMock(), workers=1, dry_run=False, state=repo)
+    svc = ProcessUseCase(
+        cfg,
+        api,
+        decryptor,
+        organizer,
+        MagicMock(),
+        workers=1,
+        dry_run=False,
+        state=repo,
+        presets={"portable": _Mp3Preset()},
+    )
     svc.run_process(downloaded=[item], force=False)
 
-    assert organizer.route_audio.call_args.args[2] == cfg.media_store_dir / "333" / "audio"
+    assert organizer.route_audio.call_args.args[2] == cfg.media_store_dir / "333"
 
 
 def test_sync_with_stale_song_id_does_not_crash(tmp_path: Path) -> None:
@@ -290,13 +304,12 @@ def test_process_no_longer_writes_processed_json(tmp_path: Path) -> None:
     cfg.media_store_dir.mkdir(parents=True)
     cfg.cache_dir.mkdir(parents=True)
     cfg.presets = []  # 简化：只把 canonical 文件本身登记为媒体资产
-    canonical = cfg.media_store_dir / "333" / "audio" / "333.flac"
+    canonical = cfg.media_store_dir / "333" / "333.flac"
     canonical.parent.mkdir(parents=True, exist_ok=True)
     canonical.write_bytes(b"fake flac")
     repo = _repository(cfg)
 
     api = MagicMock()
-    api.get_track_lyrics.return_value = {}
     item = DownloadedTrack(track=_make_track(333), source_file=str(canonical), is_ncm=False, playlist_ids=[])
     svc = ProcessUseCase(cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=1, dry_run=False, state=repo)
     svc.run_process(downloaded=[item], force=False)
@@ -306,17 +319,15 @@ def test_process_no_longer_writes_processed_json(tmp_path: Path) -> None:
 
 def test_second_process_skips_when_specs_covered(tmp_path: Path) -> None:
     """media_assets 覆盖全部必需 spec 且 processed_tracks 有记录 → 第二次跳过。"""
-    from musicvault.domain.preset import compute_preset_hash
-
     cfg = _make_cfg(tmp_path)
     cfg.media_store_dir.mkdir(parents=True)
     cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
     # 预置：track 333 的 media_assets 覆盖默认 presets 的全部 spec（FLAC + MP3-192k）
-    flac = cfg.media_store_dir / "333" / "audio" / "333.flac"
+    flac = cfg.media_store_dir / "333" / "333.flac"
     flac.parent.mkdir(parents=True, exist_ok=True)
     flac.write_bytes(b"fake flac")
-    mp3 = cfg.media_store_dir / "333" / "audio" / "333_192k.mp3"
+    mp3 = cfg.media_store_dir / "333" / "333_192k.mp3"
     mp3.write_bytes(b"fake mp3")
     SourceStateRecorder(repo).record_source_state(
         [_make_track(333)],
@@ -325,10 +336,9 @@ def test_second_process_skips_when_specs_covered(tmp_path: Path) -> None:
             build_audio_asset_from_file(333, "MP3-192k", mp3),
         ],
     )
-    repo.record_processed(333, compute_preset_hash(cfg.presets), 0.0)
+    repo.record_processed(333, "preset-script", 0.0)
 
     api = MagicMock()
-    api.get_track_lyrics.return_value = {}
     organizer = MagicMock()
     item = DownloadedTrack(track=_make_track(333), source_file=str(flac), is_ncm=False, playlist_ids=[])
     svc = ProcessUseCase(cfg, api, MagicMock(), organizer, MagicMock(), workers=1, dry_run=False, state=repo)

@@ -327,7 +327,7 @@ class MetadataSpec:
 
     @classmethod
     def basic(cls, **kwargs) -> "MetadataSpec":
-        """基础元数据：嵌入封面但不写额外字段；构造函数可覆盖任意项。"""
+        """基础元数据：嵌入封面；fields 为空时写入器按全部可用字段写入（空集=不限制）；构造函数可覆盖任意项。"""
         return cls(
             embed_cover=kwargs.pop("embed_cover", True),
             cover_max_size=kwargs.pop("cover_max_size", 0),
@@ -337,7 +337,7 @@ class MetadataSpec:
 
     @classmethod
     def none(cls, **kwargs) -> "MetadataSpec":
-        """不嵌入封面、不写额外字段；构造函数可覆盖任意项。"""
+        """不嵌入封面；fields 为空时写入器按全部可用字段写入（空集=不限制）；构造函数可覆盖任意项。"""
         return cls(
             embed_cover=kwargs.pop("embed_cover", False),
             cover_max_size=kwargs.pop("cover_max_size", 0),

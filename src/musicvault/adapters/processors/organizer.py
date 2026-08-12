@@ -39,15 +39,12 @@ class Organizer:
         suffix = src.suffix.lower()
         result: dict[tuple[AudioFormat | None, str | None], Path] = {}
 
-        # 兼容 str 输入（Task 12 前 process_use_case 仍传字符串 format）：统一归一化为枚举后再计算
-        normalized_specs = {(_coerce_format(fmt), bitrate) for fmt, bitrate in audio_specs}
-        same_format_counts = _count_same_formats(normalized_specs)
+        same_format_counts = _count_same_formats(audio_specs)
 
         for fmt, bitrate in audio_specs:
-            fmt_enum = _coerce_format(fmt)
             spec = (fmt, bitrate)
-            ext = _format_to_ext(fmt_enum, suffix)
-            filename = _spec_to_filename(track.id, fmt_enum, bitrate, same_format_counts.get(fmt_enum, 0), source_suffix=suffix)
+            ext = _format_to_ext(fmt, suffix)
+            filename = _spec_to_filename(track.id, fmt, bitrate, same_format_counts.get(fmt, 0), source_suffix=suffix)
             target = output_dir / filename
 
             if target.exists():
@@ -57,17 +54,17 @@ class Organizer:
                     result[spec] = target
                     continue
 
-            if fmt_enum is None or ext == suffix:
+            if fmt is None or ext == suffix:
                 _copy(src, target)
-            elif suffix in {".flac", ".wav", ".ape"} and fmt_enum is AudioFormat.FLAC:
+            elif suffix in {".flac", ".wav", ".ape"} and fmt is AudioFormat.FLAC:
                 if suffix == ".flac":
                     _copy(src, target)
                 else:
                     self._transcode_to_flac(src, target)
-            elif suffix in {".flac", ".wav", ".ape"} and fmt_enum is not AudioFormat.FLAC:
-                self._transcode_lossy(src, target, fmt_enum, bitrate or "192k")
+            elif suffix in {".flac", ".wav", ".ape"} and fmt is not AudioFormat.FLAC:
+                self._transcode_lossy(src, target, fmt, bitrate or "192k")
             else:
-                self._transcode_lossy(src, target, fmt_enum, bitrate or "192k")
+                self._transcode_lossy(src, target, fmt, bitrate or "192k")
 
             result[spec] = target
 
@@ -99,13 +96,6 @@ class Organizer:
         if proc.returncode != 0:
             stderr = (proc.stderr or b"").decode("utf-8", errors="replace")
             raise RuntimeError(f"ffmpeg 转码失败：文件={src}，错误={stderr}")
-
-
-def _coerce_format(fmt: AudioFormat | str | None) -> AudioFormat | None:
-    """将字符串 format 归一化为枚举（Task 12 改为纯枚举后可移除）。"""
-    if fmt is None or isinstance(fmt, AudioFormat):
-        return fmt
-    return AudioFormat(fmt)
 
 
 def _format_to_ext(fmt: AudioFormat | None, source_suffix: str) -> str:
