@@ -181,7 +181,9 @@ class PresetRegistry:
             )
         previous = self._registrations.get(registration.name) or self._target_registrations.get(registration.name)
         if previous is not None:
-            raise PresetLoadError(f"发现同名 sync_target '{registration.name}'：{previous.source} 与 {registration.source}")
+            raise PresetLoadError(
+                f"发现同名 sync_target '{registration.name}'：{previous.source} 与 {registration.source}"
+            )
         self._target_registrations[registration.name] = registration
         return registration
 
@@ -215,8 +217,12 @@ class PresetRegistry:
         # 兼容现有 TargetSynchronizer 脚本：register() 语义 = register_target
         if isinstance(registration, str):
             registration = TargetRegistration(
-                name=registration, factory=factory, api_version=api_version, enabled=enabled,
-                source=source or self._loading_source or "<runtime>", target=target,
+                name=registration,
+                factory=factory,
+                api_version=api_version,
+                enabled=enabled,
+                source=source or self._loading_source or "<runtime>",
+                target=target,
             )
         elif source is not None or target is not None:
             raise TypeError("传入 TargetRegistration 时不能重复指定 source 或 target")

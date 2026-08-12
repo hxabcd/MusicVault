@@ -37,13 +37,6 @@ def _handle_double_sigint(signum: int, frame: object) -> None:
     raise KeyboardInterrupt
 
 
-def _silence_libs() -> None:
-    for name in ("urllib3.connectionpool", "App"):
-        muted = logging.getLogger(name)
-        muted.setLevel(logging.WARNING)
-        muted.propagate = False
-
-
 def _configure_logs(verbose: bool = False) -> None:
     if verbose:
         logging.basicConfig(
@@ -58,7 +51,9 @@ def _configure_logs(verbose: bool = False) -> None:
             format="%(message)s",
             stream=sys.stderr,
         )
-    _silence_libs()
+    from musicvault.shared.silence import silence_loggers
+
+    silence_loggers("urllib3.connectionpool", "App")
 
     global logger
     logger = logging.getLogger(__name__)

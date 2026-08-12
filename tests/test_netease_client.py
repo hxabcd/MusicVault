@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 
 import pytest
@@ -109,6 +110,34 @@ def fake_sdk(monkeypatch):
         FakeNeteaseCloudMusicApi,
     )
     yield FakeSdkRecorder()
+
+
+def test_engine_stdout_is_silenced(capfd, monkeypatch):
+    """SDK（DLL 原生引擎）写 stdout 的日志不泄漏到程序输出
+
+    真实引擎用 C 层 printf 直写进程 stdout 文件描述符（fd 1），
+    这里用 os.write(1, ...) 模拟，capfd 从 fd 层捕获验证。
+    """
+
+    class NoisySdk(FakeNeteaseCloudMusicApi):
+        def __init__(self, env=None):
+            os.write(1, b"[ENGINE] init log\n")
+            super().__init__(env)
+
+        def _respond(self, name, **kwargs):
+            os.write(1, f"[ENGINE] route: {name}\n".encode())
+            return super()._respond(name, **kwargs)
+
+    monkeypatch.setattr("musicvault.adapters.providers.netease_client.NeteaseCloudMusicApi", NoisySdk)
+    FakeNeteaseCloudMusicApi.responses["login_status"] = FakeResponse(
+        {"data": {"profile": {"userId": 42, "nickname": "tester"}}}
+    )
+
+    client = NeteaseClient()
+    client.get_login_status()  # 触发 SDK 构造 + 一次请求
+
+    captured = capfd.readouterr()
+    assert "[ENGINE]" not in captured.out
 
 
 def test_parse_cookie_str():

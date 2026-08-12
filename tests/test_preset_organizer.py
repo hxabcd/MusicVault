@@ -49,8 +49,10 @@ class TestRouteAudioSingleSpec:
 
             org = Organizer(ffmpeg_threads=1, ffmpeg_path="")
             result = org.route_audio(
-                src, _make_track(3), output,
-                {(AudioFormat.MP3, "320k"), (AudioFormat.MP3, "192k"), (AudioFormat.MP3, "128k")}
+                src,
+                _make_track(3),
+                output,
+                {(AudioFormat.MP3, "320k"), (AudioFormat.MP3, "192k"), (AudioFormat.MP3, "128k")},
             )
 
             assert (AudioFormat.MP3, "320k") in result
@@ -70,8 +72,7 @@ class TestRouteAudioSingleSpec:
 
             org = Organizer(ffmpeg_threads=1, ffmpeg_path="")
             result = org.route_audio(
-                src, _make_track(4), output,
-                {(AudioFormat.MP3, "320k"), (AudioFormat.MP3, "192k")}
+                src, _make_track(4), output, {(AudioFormat.MP3, "320k"), (AudioFormat.MP3, "192k")}
             )
 
             assert len(result) == 2

@@ -11,10 +11,11 @@ from typing import Any
 # SDK 源码 docstring 含无效转义序列（\*），导入时会刷屏 SyntaxWarning，提前静默
 warnings.filterwarnings("ignore", category=SyntaxWarning, module=r"MusicLibrary")
 
-from MusicLibrary.neteaseCloudMusicApi import NeteaseCloudMusicApi, NcmProcessEnv  # noqa: E402
+from MusicLibrary.neteaseCloudMusicApi import NcmProcessEnv, NeteaseCloudMusicApi  # noqa: E402
 
 from musicvault.domain.models import Track  # noqa: E402
 from musicvault.preset_api.v1 import Quality  # noqa: E402
+from musicvault.shared.silence import silence_engine_stdout  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,8 @@ def _retry_api(func, *args, **kwargs):
             delay = _API_RETRY_BACKOFF[min(attempt, len(_API_RETRY_BACKOFF) - 1)]
             time.sleep(delay)
         try:
-            return func(*args, **kwargs)
+            with silence_engine_stdout():  # 请求时引擎打印 [ROUTE] 等日志
+                return func(*args, **kwargs)
         except (NcmApiError, OSError, TimeoutError) as exc:
             if attempt == _API_RETRIES - 1:
                 raise
@@ -94,7 +96,8 @@ class NeteaseClient:
         """获取当前线程的 SDK 实例，懒创建并注入 cookie"""
         api = getattr(self._local, "api", None)
         if api is None:
-            api = NeteaseCloudMusicApi(NcmProcessEnv())
+            with silence_engine_stdout():  # 引擎初始化时打印 [INIT] 等日志
+                api = NeteaseCloudMusicApi(NcmProcessEnv())
             if self._cookie:
                 api.set_cookie(_parse_cookie_str(self._cookie))
             self._local.api = api
@@ -232,11 +235,7 @@ class NeteaseClient:
         track_count = int(playlist.get("trackCount") or 0)
 
         if track_count > len(tracks):
-            ids = [
-                t["id"]
-                for t in (playlist.get("trackIds") or [])
-                if isinstance(t, dict) and t.get("id")
-            ]
+            ids = [t["id"] for t in (playlist.get("trackIds") or []) if isinstance(t, dict) and t.get("id")]
             if ids:
                 # 补全路径直接返回 Track 列表（保持歌单顺序）
                 detail_map = self.get_tracks_detail(ids)
@@ -319,14 +318,7 @@ class NeteaseClient:
         def _lyric(key: str) -> str:
             return (body.get(key) or {}).get("lyric", "")
 
-        return {
-            "lrc": _lyric("lrc"),
-            "tlyric": _lyric("tlyric"),
-            "romalrc": _lyric("romalrc"),
-            "yrc": _lyric("yrc"),
-            "ytlrc": _lyric("ytlrc"),
-            "yromalrc": _lyric("yromalrc"),
-        }
+        return {k: _lyric(k) for k in ("lrc", "tlyric", "romalrc", "yrc", "ytlrc", "yromalrc")}
 
     @staticmethod
     def _chunk_ids(track_ids: list[int], chunk_size: int) -> list[list[int]]:
