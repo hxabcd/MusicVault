@@ -119,7 +119,8 @@ def test_build_runtime_builtin_scripts_disabled(tmp_path: Path) -> None:
 
     assert runtime.presets.preset_registrations() == ()
     assert runtime.presets.target_registrations() == ()
-    assert runtime.state.list_registered_presets() == []
+    # preset 注册只存在于内存注册表（动态发现），不再写入 SQLite
+    assert runtime.source_state.create_snapshot().tracks == ()
 
 
 def test_build_distribute_pipeline_passes_preset_instances_to_engine(tmp_path: Path, monkeypatch) -> None:

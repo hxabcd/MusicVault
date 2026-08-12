@@ -5,7 +5,7 @@ from pathlib import Path
 
 from musicvault.adapters.filesystem.workspace import WorkspacePaths
 from musicvault.adapters.providers.netease_client import NeteaseClient
-from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
+from musicvault.adapters.state.sqlite import SQLiteProcessStateRepository, SQLiteSourceStateRepository, SQLiteState
 from musicvault.adapters.targets.filesystem import FilesystemTarget
 from musicvault.application.pipeline_use_case import PipelineUseCase
 from musicvault.application.playlist_use_case import PlaylistUseCase
@@ -21,40 +21,28 @@ class Runtime:
     """composition root 创建的具体运行时依赖。"""
 
     paths: WorkspacePaths
-    state: SQLiteStateRepository
+    source_state: SQLiteSourceStateRepository
+    process_state: SQLiteProcessStateRepository
     presets: PresetRegistry
 
 
 def build_runtime(config: Config) -> Runtime:
     paths = WorkspacePaths(config.workspace_path)
     paths.ensure()
-    state = SQLiteStateRepository(SQLiteState(paths.state_db))
+    database = SQLiteState(paths.state_db)
+    source_state = SQLiteSourceStateRepository(database)
+    process_state = SQLiteProcessStateRepository(database)
     presets = PresetRegistry()
     if config.builtin_scripts_enabled:
         register_builtin_presets(presets, config.library_dir, config.default_playlist_name)
     directories = [Path(directory) for directory in config.preset_directories]
     presets.load_directories(directories)
-    # preset 与 sync_target 两类注册分 kind 写入 preset_registry
-    for registration in presets.preset_registrations():
-        state.register_preset(
-            name=registration.name,
-            source=registration.source,
-            api_version=registration.api_version,
-            enabled=registration.enabled,
-            # PresetRegistration 暂无 script_hash 字段，统一写 None。
-            script_hash=None,
-            kind="preset",
-        )
-    for registration in presets.target_registrations():
-        state.register_preset(
-            name=registration.name,
-            source=registration.source,
-            api_version=registration.api_version,
-            enabled=registration.enabled,
-            script_hash=None,
-            kind="target",
-        )
-    return Runtime(paths=paths, state=state, presets=presets)
+    return Runtime(
+        paths=paths,
+        source_state=source_state,
+        process_state=process_state,
+        presets=presets,
+    )
 
 
 def build_source_client(config: Config, download_quality: Quality | None = None) -> NeteaseClient:
@@ -97,10 +85,12 @@ def build_pipeline(
     download_quality = Quality.maximum(p.quality for p in presets.values())
     if source is None:
         source = build_source_client(config, download_quality)
+    database = SQLiteState(config.state_db_file)
     return PipelineUseCase(
         cfg=config,
         api=source,
-        state=SQLiteStateRepository(SQLiteState(config.state_db_file)),
+        state=SQLiteSourceStateRepository(database),
+        process_state=SQLiteProcessStateRepository(database),
         dry_run=dry_run,
         presets=presets,
         registry=registry,
@@ -112,7 +102,7 @@ def build_playlist_use_case(config: Config) -> PlaylistUseCase:
     """组装歌单/单曲管理用例（add/remove/list 命令专用）。"""
     return PlaylistUseCase(
         cfg=config,
-        state=SQLiteStateRepository(SQLiteState(config.state_db_file)),
+        state=SQLiteSourceStateRepository(SQLiteState(config.state_db_file)),
     )
 
 
@@ -134,7 +124,7 @@ class DistributePipeline:
             for r in self.runtime.presets.preset_registrations(enabled_only=True)
         }
         return self.engine.run(
-            self.runtime.state.create_snapshot(),
+            self.runtime.source_state.create_snapshot(),
             self.runtime.presets.registrations(enabled_only=True),
             selected=selected,
             presets=presets,
