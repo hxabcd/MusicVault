@@ -1035,7 +1035,7 @@ def test_hardlink_finalize_removes_stale_playlist_dirs(tmp_path):
     distributor = HardlinkDistributor(ArchivePreset(), "archive", library, "未分类")
     distributor.finalize(context)
     assert not stale.exists()
-    assert (library / "未分类").exists() or not (library / "未分类").exists()  # 未分类保留与否均可，但绝不被删
+    assert (library / "未分类").exists()  # 未分类目录绝不被 finalize 删除
 
 
 def test_register_builtin_registers_both_kinds():
