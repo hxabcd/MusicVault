@@ -150,53 +150,81 @@ class PresetRegistry:
 
     def __init__(self) -> None:
         self._registrations: dict[str, PresetRegistration] = {}
+        self._target_registrations: dict[str, TargetRegistration] = {}
         self._loading_source: str | None = None
 
-    def register(
-        self,
-        registration: PresetRegistration | str,
-        factory: Any = None,
-        *,
-        api_version: str = API_VERSION,
-        enabled: bool = True,
-        source: str | None = None,
-        target: TargetDescriptor | None = None,
-    ) -> PresetRegistration:
-        if isinstance(registration, str):
-            registration = PresetRegistration(
-                name=registration,
-                factory=factory,
-                api_version=api_version,
-                enabled=enabled,
-                source=source or self._loading_source or "<runtime>",
-                target=target,
-            )
-        elif source is not None or target is not None:
-            raise TypeError("传入 PresetRegistration 时不能重复指定 source 或 target")
-        elif registration.source == "<runtime>" and self._loading_source is not None:
-            registration = replace(registration, source=self._loading_source)
+    def register_preset(self, registration: PresetRegistration) -> PresetRegistration:
         if registration.api_version != API_VERSION:
             raise PresetLoadError(
                 f"preset '{registration.name}' 使用不兼容的 API {registration.api_version}，"
                 f"当前支持 {API_VERSION}（来源：{registration.source}）"
             )
-        previous = self._registrations.get(registration.name)
+        previous = self._registrations.get(registration.name) or self._target_registrations.get(registration.name)
         if previous is not None:
             raise PresetLoadError(f"发现同名 preset '{registration.name}'：{previous.source} 与 {registration.source}")
         self._registrations[registration.name] = registration
         return registration
 
+    def register_target(self, registration: TargetRegistration) -> TargetRegistration:
+        if registration.api_version != API_VERSION:
+            raise PresetLoadError(
+                f"sync_target '{registration.name}' 使用不兼容的 API {registration.api_version}，"
+                f"当前支持 {API_VERSION}（来源：{registration.source}）"
+            )
+        previous = self._registrations.get(registration.name) or self._target_registrations.get(registration.name)
+        if previous is not None:
+            raise PresetLoadError(f"发现同名 sync_target '{registration.name}'：{previous.source} 与 {registration.source}")
+        self._target_registrations[registration.name] = registration
+        return registration
+
+    def preset_registrations(self, *, enabled_only: bool = False) -> tuple[PresetRegistration, ...]:
+        values = sorted(self._registrations.values(), key=lambda item: item.name)
+        return tuple(item for item in values if item.enabled) if enabled_only else tuple(values)
+
+    def target_registrations(self, *, enabled_only: bool = False) -> tuple[TargetRegistration, ...]:
+        values = sorted(self._target_registrations.values(), key=lambda item: item.name)
+        return tuple(item for item in values if item.enabled) if enabled_only else tuple(values)
+
+    def create_preset(self, name: str) -> Any:
+        registration = self._registrations.get(name)
+        if registration is None:
+            raise PresetLoadError(f"未找到 preset：{name}")
+        return registration.create()
+
+    def create_target(self, name: str) -> Any:
+        registration = self._target_registrations.get(name)
+        if registration is None:
+            raise PresetLoadError(f"未找到 sync_target：{name}")
+        missing = [dep for dep in registration.depends_on if dep not in self._registrations]
+        if missing:
+            raise PresetLoadError(
+                f"sync_target '{name}' 依赖的 preset 未注册：{', '.join(missing)}（来源：{registration.source}）"
+            )
+        presets = {dep: self.create_preset(dep) for dep in registration.depends_on}
+        return registration.factory(presets)
+
+    def register(self, registration, factory=None, *, api_version=API_VERSION, enabled=True, source=None, target=None):
+        # 兼容现有 TargetSynchronizer 脚本：register() 语义 = register_target
+        if isinstance(registration, str):
+            registration = TargetRegistration(
+                name=registration, factory=factory, api_version=api_version, enabled=enabled,
+                source=source or self._loading_source or "<runtime>", target=target,
+            )
+        elif source is not None or target is not None:
+            raise TypeError("传入 TargetRegistration 时不能重复指定 source 或 target")
+        elif registration.source == "<runtime>" and self._loading_source is not None:
+            registration = replace(registration, source=self._loading_source)
+        return self.register_target(registration)
+
     def get(self, name: str) -> PresetRegistration:
-        try:
-            return self._registrations[name]
-        except KeyError as error:
-            raise PresetLoadError(f"未找到 preset：{name}") from error
+        registration = self._registrations.get(name) or self._target_registrations.get(name)
+        if registration is None:
+            raise PresetLoadError(f"未找到 preset：{name}")
+        return registration
 
     def registrations(self, *, enabled_only: bool = False) -> tuple[PresetRegistration, ...]:
-        values = sorted(self._registrations.values(), key=lambda item: item.name)
-        if enabled_only:
-            values = [item for item in values if item.enabled]
-        return tuple(values)
+        # 兼容现有调用：返回 target 注册列表
+        return self.target_registrations(enabled_only=enabled_only)
 
     def load_directories(self, directories: Iterable[str | Path]) -> tuple[PresetRegistration, ...]:
         for directory in sorted((Path(item) for item in directories), key=lambda item: str(item.resolve())):
@@ -342,6 +370,17 @@ class TargetRegistration:
             raise PresetLoadError(f"sync_target 名称非法：{self.name}")
         if self.target is None:
             object.__setattr__(self, "target", TargetDescriptor(identifier=self.name))
+
+    def create(self) -> Any:
+        # 兼容旧 TargetSynchronizer 消费路径（SyncEngine/get().create()）：无参创建实例；
+        # 依赖注入路径（create_target）直接调用 factory(presets)。
+        if inspect.isclass(self.factory):
+            return self.factory()
+        if all(hasattr(self.factory, method) for method in ("prepare", "sync_item", "finalize")):
+            return self.factory
+        if callable(self.factory):
+            return self.factory()
+        raise PresetLoadError(f"sync_target '{self.name}' 的 factory 不可调用：{self.source}")
 
 
 def audio_spec_key(fmt: AudioFormat | None, bitrate: str | None) -> str:
