@@ -53,7 +53,9 @@ class HardlinkDistributor:
         if not owned_names:
             owned_names = {safe_filename(self.default_name)}
 
-        self._remove_stale_links(asset.path, lrc, owned_names)
+        if not context.dry_run:
+            # 删除类副作用不进入 OperationExecutor 记录，dry-run 下必须跳过。
+            self._remove_stale_links(asset.path, lrc, owned_names)
         stem = format_track_name(self.filename_template, track)
         for dirname in owned_names:
             dst_dir = self.target_root / dirname
@@ -85,6 +87,9 @@ class HardlinkDistributor:
             return None
 
     def finalize(self, context) -> None:
+        if context.dry_run:
+            # 目录删除不进入 OperationExecutor 记录，dry-run 下必须跳过。
+            return None
         snapshot_names = {safe_filename(pl.name) for pl in context.playlists}
         default = safe_filename(self.default_name)
         if not self.target_root.is_dir():
