@@ -1,3 +1,3 @@
-from musicvault.adapters.state.sqlite import SQLiteState, SQLiteStateRepository
+from musicvault.adapters.state.sqlite import SQLiteProcessStateRepository, SQLiteSourceStateRepository, SQLiteState
 
-__all__ = ["SQLiteState", "SQLiteStateRepository"]
+__all__ = ["SQLiteState", "SQLiteSourceStateRepository", "SQLiteProcessStateRepository"]
