@@ -87,12 +87,20 @@ class PresetContext:
     dry_run: bool = False
     target_descriptor: TargetDescriptor | None = None
     media_resolver: MediaResolver | None = None
+    media_store_root: Path | None = None
     _executor: OperationExecutor = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._executor = OperationExecutor(self.target, dry_run=self.dry_run)
         if self.media_resolver is None:
             self.media_resolver = SnapshotMediaResolver(self.snapshot)
+
+    def lyrics_file(self, track_id: int, preset_name: str) -> Path | None:
+        """返回 media_store/<tid>/{tid}.{preset_name}.lrc（存在才返回）；root 未配置返回 None。"""
+        if self.media_store_root is None:
+            return None
+        candidate = self.media_store_root / str(track_id) / f"{track_id}.{preset_name}.lrc"
+        return candidate if candidate.is_file() else None
 
     @property
     def tracks(self) -> tuple[Track, ...]:

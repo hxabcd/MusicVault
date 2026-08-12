@@ -19,11 +19,11 @@ def test_build_runtime_persists_registered_presets(tmp_path: Path) -> None:
     assert len(registered) == len(runtime.presets.registrations())
 
     by_name = {item.name: item for item in registered}
-    playlist_links = by_name["playlist_links"]
-    assert playlist_links.source == "builtin:playlist_links"
-    assert playlist_links.api_version == "v1"
-    assert playlist_links.enabled is True
-    assert playlist_links.script_hash is None
+    hardlink = by_name["hardlink"]
+    assert hardlink.source == "builtin:hardlink"
+    assert hardlink.api_version == "v1"
+    assert hardlink.enabled is True
+    assert hardlink.script_hash is None
 
 
 def test_build_runtime_persists_external_preset_directory(tmp_path: Path) -> None:
