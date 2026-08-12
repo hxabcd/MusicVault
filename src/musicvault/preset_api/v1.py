@@ -355,6 +355,8 @@ class MetadataSpec:
 class BasePreset:
     """preset 声明基类：音频规格、歌词编码与元数据粒度。"""
 
+    # 注册名：与 PresetRegistration.name 一致；脚本未声明时为空串（运行时仅做键名校验）
+    name: str = ""
     quality: Quality = Quality.HIRES
     format: AudioFormat | None = None
     bitrate: str | None = None

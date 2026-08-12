@@ -69,7 +69,22 @@ class ProcessUseCase:
         # 歌词/元数据/音频规格只按注入的 preset 实例（v1 脚本）执行，无领域 Preset 回退
         if presets is None:
             raise PresetLoadError("ProcessUseCase 缺少 preset 实例索引（presets 参数）：请经 build_pipeline 组装注入")
+        self._validate_preset_keys(presets)
         self.presets = presets
+
+    @staticmethod
+    def _validate_preset_keys(presets: Mapping[str, BasePreset]) -> None:
+        """校验注入键与 preset.name 一致：LRC 文件名与分发侧按注册名拼路径，键名漂移会静默失配。
+
+        脚本未声明 name（空串）时不校验，仅防止「声明了名字却用别名键注入」的拼写错误。
+        """
+        for key, preset in presets.items():
+            preset_name = getattr(preset, "name", "")
+            if preset_name and preset_name != key:
+                raise PresetLoadError(
+                    f"preset 索引键 '{key}' 与 preset.name '{preset_name}' 不一致："
+                    "LRC 文件名与分发侧按注册名拼路径，请用注册名作为注入键"
+                )
 
     # ------------------------------------------------------------------
     # 公开入口

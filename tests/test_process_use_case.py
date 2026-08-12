@@ -232,3 +232,22 @@ def test_run_process_without_downloads_returns_empty(tmp_path: Path) -> None:
     assert result.skipped == 0
     assert result.failed == 0
     organizer.route_audio.assert_not_called()
+
+
+def test_preset_dict_key_must_match_preset_name(tmp_path: Path) -> None:
+    """presets 注入键必须与 preset.name 一致：LRC 文件名与分发按注册名对应，键名漂移会静默失配。"""
+    from musicvault.preset_api.v1 import PresetLoadError
+
+    cfg = _make_cfg(tmp_path)
+    cfg.media_store_dir.mkdir(parents=True)
+    repo = _repository(cfg)
+
+    class _NamedPreset(BasePreset):
+        format = AudioFormat.FLAC
+        name = "archive"
+
+    with pytest.raises(PresetLoadError, match="archive"):
+        _process_svc(cfg, repo, organizer=MagicMock(), presets={"wrong-key": _NamedPreset()})
+
+    # 键名一致则正常构造
+    _process_svc(cfg, repo, organizer=MagicMock(), presets={"archive": _NamedPreset()})
