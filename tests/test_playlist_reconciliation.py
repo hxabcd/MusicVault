@@ -5,10 +5,9 @@ from unittest.mock import MagicMock
 
 from musicvault.adapters.state.sqlite import SQLiteProcessStateRepository, SQLiteSourceStateRepository, SQLiteState
 from musicvault.application.source_state import SourceStateRecorder
-from musicvault.core.config import Config
-from musicvault.domain.models import Track
-from musicvault.domain.models import Playlist
 from musicvault.application.sync_use_case import SyncUseCase
+from musicvault.core.config import Config
+from musicvault.domain.models import Playlist, Track
 
 # ---------------------------------------------------------------------------
 # 同步状态加载（SQLite 快照派生，替代旧 synced_tracks.json 格式解析）

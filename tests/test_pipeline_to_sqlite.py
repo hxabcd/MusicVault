@@ -6,12 +6,12 @@ from unittest.mock import MagicMock
 from musicvault.adapters.state.sqlite import SQLiteProcessStateRepository, SQLiteSourceStateRepository, SQLiteState
 from musicvault.adapters.targets.filesystem import FilesystemTarget
 from musicvault.application.bootstrap import build_runtime
+from musicvault.application.process_use_case import ProcessUseCase
 from musicvault.application.source_state import SourceStateRecorder, build_audio_asset_from_file
 from musicvault.application.sync_engine import SyncEngine
+from musicvault.application.sync_use_case import SyncUseCase
 from musicvault.core.config import Config
 from musicvault.domain.models import DownloadedTrack, Track
-from musicvault.application.process_use_case import ProcessUseCase
-from musicvault.application.sync_use_case import SyncUseCase
 
 
 def _make_cfg(tmp_path: Path) -> Config:

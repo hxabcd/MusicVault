@@ -9,6 +9,7 @@ from rich.table import Table
 
 from musicvault.application.pipeline_use_case import PipelineResult
 from musicvault.application.sync_engine import SyncRunResult
+from musicvault.domain.models import Track
 from musicvault.domain.operations import OperationStatus
 from musicvault.preset_api.v1 import PresetRegistration, TargetRegistration
 from musicvault.shared.tui_progress import BatchProgress, console, ok
@@ -47,11 +48,11 @@ def render_sync_summary(track_count: int, playlist_count: int, added: int, prune
 
 def render_dry_run_plan(plan: dict) -> None:
     """dry-run 计划预览（原 SyncUseCase._print_dry_run_plan）。"""
-    with_url: list = plan.get("with_url") or []
-    no_url: list = plan.get("no_url") or []
-    pruned: list = plan.get("pruned") or []
-    moves: list = plan.get("moves") or []
-    renames: list = plan.get("renames") or []
+    with_url: list[Track] = plan.get("with_url") or []
+    no_url: list[Track] = plan.get("no_url") or []
+    pruned: list[Track] = plan.get("pruned") or []
+    moves: list[Track] = plan.get("moves") or []
+    renames: list[tuple[Track, str, str]] = plan.get("renames") or []
     stale_index: int = plan.get("stale_index") or 0
 
     if with_url:
@@ -77,7 +78,7 @@ def render_dry_run_plan(plan: dict) -> None:
         console.print(f"  [yellow]将清理 {stale_index} 条本地文件缺失的过期索引[/yellow]")
 
 
-def _render_track_list(tracks: Sequence[object], *, header: str, color: str) -> None:
+def _render_track_list(tracks: Sequence[Track], *, header: str, color: str) -> None:
     """dry-run 曲目列表：Rich 表格（序号 + 曲目）。"""
     console.print(f"  [{color}]{header}[/{color}] [cyan]{len(tracks)}[/cyan] 首：")
     table = Table(show_header=False, box=None, padding=(0, 1), collapse_padding=True)

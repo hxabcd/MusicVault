@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Mapping
 
 from musicvault.adapters.filesystem.workspace import WorkspacePaths
 from musicvault.adapters.processors.decryptor import Decryptor
@@ -16,6 +16,9 @@ from musicvault.application.source_state import SourceStateRecorder, build_audio
 from musicvault.core.config import Config
 from musicvault.domain.lyrics import lyrics_from_json
 from musicvault.domain.models import DownloadedTrack, MediaAsset, Track
+from musicvault.ports.process_state import ProcessStateRepository
+from musicvault.ports.source import SourceClient
+from musicvault.ports.source_state import SourceStateRepository
 from musicvault.preset_api.v1 import (
     AudioFormat,
     BasePreset,
@@ -24,9 +27,6 @@ from musicvault.preset_api.v1 import (
     PresetLoadError,
     audio_spec_key,
 )
-from musicvault.ports.process_state import ProcessStateRepository
-from musicvault.ports.source import SourceClient
-from musicvault.ports.source_state import SourceStateRepository
 from musicvault.shared.utils import workspace_rel_path
 
 logger = logging.getLogger(__name__)

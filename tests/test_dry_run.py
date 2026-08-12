@@ -4,12 +4,11 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from musicvault.adapters.state.sqlite import SQLiteProcessStateRepository, SQLiteSourceStateRepository, SQLiteState
-from musicvault.application.source_state import SourceStateRecorder
-from musicvault.core.config import Config
-from musicvault.domain.models import DownloadedTrack, Track
-from musicvault.domain.models import Playlist
 from musicvault.application.process_use_case import ProcessUseCase
+from musicvault.application.source_state import SourceStateRecorder
 from musicvault.application.sync_use_case import SyncUseCase
+from musicvault.core.config import Config
+from musicvault.domain.models import DownloadedTrack, Playlist, Track
 
 
 def _make_cfg(tmp_path: Path) -> Config:

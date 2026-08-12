@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 from musicvault.adapters.filesystem.workspace import WorkspacePaths
 from musicvault.adapters.processors.decryptor import Decryptor
