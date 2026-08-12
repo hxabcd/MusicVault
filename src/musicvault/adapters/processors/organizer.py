@@ -8,8 +8,18 @@ from musicvault.domain.models import Track
 from musicvault.preset_api.v1 import AudioFormat
 from musicvault.shared.output import warn as output_warn
 
-_LOSSY_SUFFIX_MAP = {AudioFormat.MP3: ".mp3", AudioFormat.AAC: ".m4a", AudioFormat.OGG: ".ogg", AudioFormat.OPUS: ".opus"}
-_LOSSY_CODEC_MAP = {AudioFormat.MP3: "libmp3lame", AudioFormat.AAC: "aac", AudioFormat.OGG: "libvorbis", AudioFormat.OPUS: "libopus"}
+_LOSSY_SUFFIX_MAP = {
+    AudioFormat.MP3: ".mp3",
+    AudioFormat.AAC: ".m4a",
+    AudioFormat.OGG: ".ogg",
+    AudioFormat.OPUS: ".opus",
+}
+_LOSSY_CODEC_MAP = {
+    AudioFormat.MP3: "libmp3lame",
+    AudioFormat.AAC: "aac",
+    AudioFormat.OGG: "libvorbis",
+    AudioFormat.OPUS: "libopus",
+}
 
 
 class Organizer:
@@ -39,12 +49,10 @@ class Organizer:
         suffix = src.suffix.lower()
         result: dict[tuple[AudioFormat | None, str | None], Path] = {}
 
-        same_format_counts = _count_same_formats(audio_specs)
-
         for fmt, bitrate in audio_specs:
             spec = (fmt, bitrate)
             ext = _format_to_ext(fmt, suffix)
-            filename = _spec_to_filename(track.id, fmt, bitrate, same_format_counts.get(fmt, 0), source_suffix=suffix)
+            filename = _spec_to_filename(track.id, fmt, bitrate, source_suffix=suffix)
             target = output_dir / filename
 
             if target.exists():
@@ -55,15 +63,13 @@ class Organizer:
                     continue
 
             if fmt is None or ext == suffix:
+                # 保持原格式（format=None 或源扩展名与目标一致）→ 直接复制
                 _copy(src, target)
             elif suffix in {".flac", ".wav", ".ape"} and fmt is AudioFormat.FLAC:
-                if suffix == ".flac":
-                    _copy(src, target)
-                else:
-                    self._transcode_to_flac(src, target)
-            elif suffix in {".flac", ".wav", ".ape"} and fmt is not AudioFormat.FLAC:
-                self._transcode_lossy(src, target, fmt, bitrate or "192k")
+                # FLAC 目标：源已是 flac 时由上一分支复制，其余无损源转码为 flac
+                self._transcode_to_flac(src, target)
             else:
+                # 有损目标：一律经 ffmpeg 转码（含有损源转有损目标）
                 self._transcode_lossy(src, target, fmt, bitrate or "192k")
 
             result[spec] = target
@@ -75,8 +81,15 @@ class Organizer:
         if not self._ffmpeg_path:
             raise RuntimeError(f"转码失败：未找到 ffmpeg，文件={src.name}")
         cmd = [
-            self._ffmpeg_path, "-y", "-threads", str(self.ffmpeg_threads),
-            "-i", str(src), "-codec:a", "flac", str(dst),
+            self._ffmpeg_path,
+            "-y",
+            "-threads",
+            str(self.ffmpeg_threads),
+            "-i",
+            str(src),
+            "-codec:a",
+            "flac",
+            str(dst),
         ]
         proc = subprocess.run(cmd, capture_output=True, text=False)
         if proc.returncode != 0:
@@ -89,8 +102,17 @@ class Organizer:
             raise RuntimeError(f"转码失败：未找到 ffmpeg，文件={src.name}")
         codec = _LOSSY_CODEC_MAP.get(fmt, "libmp3lame")
         cmd = [
-            self._ffmpeg_path, "-y", "-threads", str(self.ffmpeg_threads),
-            "-i", str(src), "-codec:a", codec, "-b:a", bitrate, str(dst),
+            self._ffmpeg_path,
+            "-y",
+            "-threads",
+            str(self.ffmpeg_threads),
+            "-i",
+            str(src),
+            "-codec:a",
+            codec,
+            "-b:a",
+            bitrate,
+            str(dst),
         ]
         proc = subprocess.run(cmd, capture_output=True, text=False)
         if proc.returncode != 0:
@@ -104,20 +126,13 @@ def _format_to_ext(fmt: AudioFormat | None, source_suffix: str) -> str:
     return _LOSSY_SUFFIX_MAP.get(fmt, f".{fmt.value}")
 
 
-def _spec_to_filename(track_id: int, fmt: AudioFormat | None, bitrate: str | None, same_format_count: int, source_suffix: str = ".mp3") -> str:
+def _spec_to_filename(track_id: int, fmt: AudioFormat | None, bitrate: str | None, source_suffix: str = ".mp3") -> str:
     if fmt is None:
         return f"{track_id}{source_suffix}"
     ext = _LOSSY_SUFFIX_MAP.get(fmt, f".{fmt.value}")
     if bitrate:
         return f"{track_id}_{bitrate}{ext}"
     return f"{track_id}{ext}"
-
-
-def _count_same_formats(specs: set[tuple[AudioFormat | None, str | None]]) -> dict[AudioFormat | None, int]:
-    counts: dict[AudioFormat | None, int] = {}
-    for fmt, _ in specs:
-        counts[fmt] = counts.get(fmt, 0) + 1
-    return counts
 
 
 def _copy(src: Path, dst: Path) -> None:

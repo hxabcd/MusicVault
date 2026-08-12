@@ -30,7 +30,7 @@ def test_initialize_creates_versioned_minimal_schema(tmp_path: Path) -> None:
         tables = {
             row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
         }
-    assert version == 1
+    assert version == 2
     assert {
         "tracks",
         "playlists",
@@ -87,6 +87,37 @@ def test_unique_media_asset_is_replaced_not_duplicated(tmp_path: Path) -> None:
     assert assets[0].path == tmp_path / "b.mp3"
 
 
+def test_preset_registry_kind_column_defaults_to_target(tmp_path: Path) -> None:
+    """preset_registry 的 kind 列默认 'target'：旧行（v1 时代写入）迁移后兼容。"""
+    path = tmp_path / "state.db"
+    # 模拟 v1 时代写入的行：无 kind 列
+    database = SQLiteState(path)
+    with database.connect() as connection:
+        connection.execute(
+            "CREATE TABLE preset_registry (name TEXT PRIMARY KEY, source TEXT NOT NULL,"
+            " api_version TEXT NOT NULL, enabled INTEGER NOT NULL, script_hash TEXT)"
+        )
+    SQLiteState(path).initialize()  # 迁移到 v2：补 kind 列
+
+    with database.connect() as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(preset_registry)").fetchall()}
+    assert "kind" in columns
+    repo = SQLiteStateRepository(SQLiteState(path))
+    repo.register_preset(name="old", source="builtin:old", api_version="v1")
+    assert repo.list_registered_presets()[0].kind == "target"
+
+
+def test_register_preset_with_kind_roundtrip(tmp_path: Path) -> None:
+    """register_preset 按 kind 登记：preset/target 两类注册可区分。"""
+    repo = SQLiteStateRepository(SQLiteState(tmp_path / "state.db"))
+    repo.register_preset(name="archive", source="builtin:archive", api_version="v1", kind="preset")
+    repo.register_preset(name="hardlink", source="builtin:hardlink", api_version="v1", kind="target")
+
+    by_name = {item.name: item for item in repo.list_registered_presets()}
+    assert by_name["archive"].kind == "preset"
+    assert by_name["hardlink"].kind == "target"
+
+
 def test_initialize_rejects_newer_database_version(tmp_path: Path) -> None:
     path = tmp_path / "state.db"
     SQLiteState(path).initialize()
@@ -117,9 +148,7 @@ def test_deleting_playlist_cascades_playlist_tracks(tmp_path: Path) -> None:
         connection.execute("DELETE FROM playlists WHERE id = 10")
 
     with repo.database.connect() as connection:
-        remaining = connection.execute(
-            "SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = 10"
-        ).fetchone()[0]
+        remaining = connection.execute("SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = 10").fetchone()[0]
     assert remaining == 0
 
 

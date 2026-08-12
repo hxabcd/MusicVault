@@ -130,9 +130,9 @@ class MetadataSpec:
     @classmethod
     def full(cls) -> "MetadataSpec":   # 封面 + 全部字段
     @classmethod
-    def basic(cls) -> "MetadataSpec":   # 封面 + 常用字段（标题、艺术家、专辑)
+    def basic(cls) -> "MetadataSpec":   # 封面 + fields=()（空集=不限制，写入器按全部可用字段写入）
     @classmethod
-    def none(cls) -> "MetadataSpec":    # 无封面 + 无字段
+    def none(cls) -> "MetadataSpec":    # 无封面 + 无字段（同 basic，仅 embed_cover=False）
     # 构造函数可覆盖任意项：MetadataSpec.basic(embed_cover=False)
 ```
 

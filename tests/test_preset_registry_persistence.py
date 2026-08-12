@@ -11,12 +11,12 @@ def _make_cfg(tmp_path: Path) -> Config:
 
 
 def test_build_runtime_persists_registered_presets(tmp_path: Path) -> None:
-    """build_runtime 加载完 preset 后应把每个 registration 写入 preset_registry。"""
+    """build_runtime 应把 preset 与 sync_target 两类 registration 都写入 preset_registry（带 kind）。"""
     cfg = _make_cfg(tmp_path)
     runtime = build_runtime(cfg)
 
     registered = runtime.state.list_registered_presets()
-    assert len(registered) == len(runtime.presets.registrations())
+    assert len(registered) == len(runtime.presets.preset_registrations()) + len(runtime.presets.target_registrations())
 
     by_name = {item.name: item for item in registered}
     hardlink = by_name["hardlink"]
@@ -24,6 +24,8 @@ def test_build_runtime_persists_registered_presets(tmp_path: Path) -> None:
     assert hardlink.api_version == "v1"
     assert hardlink.enabled is True
     assert hardlink.script_hash is None
+    assert hardlink.kind == "target"
+    assert by_name["archive"].kind == "preset"
 
 
 def test_build_runtime_persists_external_preset_directory(tmp_path: Path) -> None:

@@ -76,5 +76,4 @@ def _make_config(tmp_path: Path) -> Config:
     cfg.state_db_file = tmp_path / "state.db"
     cfg.media_store_dir = tmp_path / "media_store"
     cfg.library_dir = tmp_path / "library"
-    cfg.preset_dir = lambda name: tmp_path / "library" / name
     return cfg

@@ -188,10 +188,10 @@ def test_process_writes_lrc_with_preset_encodings(tmp_path: Path) -> None:
 
 
 def test_filter_pending_uses_preset_param_specs(tmp_path: Path) -> None:
-    """_filter_pending 的必需 spec 来自 presets 参数（v1 枚举），而非 cfg.presets。
+    """_filter_pending 的必需 spec 只来自 presets 参数（v1 枚举），无任何领域 Preset 回退。
 
     presets 只声明 MP3-192k：media_assets 覆盖该 spec 且有处理记录 → 第二次跳过；
-    若按 cfg.presets（默认含 FLAC）计算，FLAC 未覆盖会误判为待处理。
+    若再叠加默认 FLAC 计算，FLAC 未覆盖会误判为待处理。
     """
     from musicvault.application.source_state import build_audio_asset_from_file
 

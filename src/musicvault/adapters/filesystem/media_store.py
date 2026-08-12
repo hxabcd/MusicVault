@@ -10,7 +10,12 @@ from musicvault.shared.utils import same_file_content, sha256_file
 
 
 class FileMediaStore:
-    """media_store 的文件系统适配器，不暴露其目录布局给 preset。"""
+    """media_store 的文件系统适配器，不暴露其目录布局给 preset。
+
+    已废弃：media_store 扁平化（media_store/<tid>/）后当前无调用方，
+    put 按 <tid>/<asset_type>/<filename> 旧布局写入（audio/ 段遗留）；
+    新路径规则见 workspace 注释，写入统一由 process/sync 用例直接落盘。
+    """
 
     def __init__(self, paths: WorkspacePaths) -> None:
         self.paths = paths

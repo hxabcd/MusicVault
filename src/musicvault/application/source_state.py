@@ -11,10 +11,10 @@ from musicvault.shared.utils import sha256_file
 
 
 class SourceStateRecorder:
-    """把旧流水线产生的源侧状态持久化到 StateRepository（SQLite）。
+    """把 fetch/pull/process 阶段产生的源侧状态持久化到 StateRepository（SQLite）。
 
-    这是旧 `sync`/`process` 接入新状态接缝的第一步：结果写入 SQLite，
-    供 `target-sync` 通过 SourceSnapshot 消费，而不再只落在旧 JSON 状态文件中。
+    结果写入 SQLite，供 distribute 阶段通过 SourceSnapshot 消费，
+    而不再只落在旧 JSON 状态文件中。
     """
 
     def __init__(self, state: StateRepository) -> None:

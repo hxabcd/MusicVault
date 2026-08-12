@@ -103,7 +103,6 @@ def test_process_records_media_assets_to_sqlite(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     cfg.media_store_dir.mkdir(parents=True)
     cfg.cache_dir.mkdir(parents=True)
-    cfg.presets = []  # 简化：只把 canonical 文件本身登记为媒体资产
     canonical = cfg.media_store_dir / "333" / "333.flac"
     canonical.parent.mkdir(parents=True, exist_ok=True)
     canonical.write_bytes(b"fake flac")
@@ -111,7 +110,10 @@ def test_process_records_media_assets_to_sqlite(tmp_path: Path) -> None:
 
     api = MagicMock()
     item = DownloadedTrack(track=_make_track(333), source_file=str(canonical), is_ncm=False, playlist_ids=[])
-    svc = ProcessUseCase(cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=1, dry_run=False, state=repo)
+    # 无 preset 声明：只把 canonical 文件本身登记为媒体资产
+    svc = ProcessUseCase(
+        cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=1, dry_run=False, state=repo, presets={}
+    )
     svc.run_process(downloaded=[item], force=False)
 
     snapshot = repo.create_snapshot()
@@ -309,7 +311,6 @@ def test_process_no_longer_writes_processed_json(tmp_path: Path) -> None:
     cfg = _make_cfg(tmp_path)
     cfg.media_store_dir.mkdir(parents=True)
     cfg.cache_dir.mkdir(parents=True)
-    cfg.presets = []  # 简化：只把 canonical 文件本身登记为媒体资产
     canonical = cfg.media_store_dir / "333" / "333.flac"
     canonical.parent.mkdir(parents=True, exist_ok=True)
     canonical.write_bytes(b"fake flac")
@@ -317,7 +318,9 @@ def test_process_no_longer_writes_processed_json(tmp_path: Path) -> None:
 
     api = MagicMock()
     item = DownloadedTrack(track=_make_track(333), source_file=str(canonical), is_ncm=False, playlist_ids=[])
-    svc = ProcessUseCase(cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=1, dry_run=False, state=repo)
+    svc = ProcessUseCase(
+        cfg, api, MagicMock(), MagicMock(), MagicMock(), workers=1, dry_run=False, state=repo, presets={}
+    )
     svc.run_process(downloaded=[item], force=False)
 
     assert not (cfg.workspace_path / "state").exists()

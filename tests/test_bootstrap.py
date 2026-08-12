@@ -87,14 +87,13 @@ def test_build_source_client_accepts_explicit_quality(monkeypatch) -> None:
 
 def test_build_pipeline_injects_registry_preset_instances(tmp_path: Path) -> None:
     """build_pipeline 从注册表构造 BasePreset 实例索引并注入 ProcessUseCase，
-    不再回退 cfg.presets 的领域 Preset（回退会 AttributeError 崩溃）。"""
+    不再有 cfg.presets 领域 Preset 回退路径（Task 17 已移除）。"""
     cfg = Config(workspace=str(tmp_path / "ws"))
 
     service = build_pipeline(cfg, source=MagicMock(), dry_run=True)
 
     assert set(service.process_service.presets) == {"archive"}
     assert isinstance(service.process_service.presets["archive"], ArchivePreset)
-    assert service.process_service.presets["archive"] is not cfg.presets[0]
 
 
 # -- build_runtime / build_distribute_pipeline：内置注册与 preset 索引传递 ----------------
@@ -112,8 +111,19 @@ def test_build_runtime_builtin_target_root_is_library_dir(tmp_path: Path) -> Non
     assert distributor.default_name == "其他"
 
 
+def test_build_runtime_builtin_scripts_disabled(tmp_path: Path) -> None:
+    """builtin_scripts_enabled=False 时 build_runtime 不注册内置 archive/hardlink。"""
+    cfg = Config(workspace=str(tmp_path / "ws"), builtin_scripts_enabled=False)
+
+    runtime = build_runtime(cfg)
+
+    assert runtime.presets.preset_registrations() == ()
+    assert runtime.presets.target_registrations() == ()
+    assert runtime.state.list_registered_presets() == []
+
+
 def test_build_distribute_pipeline_passes_preset_instances_to_engine(tmp_path: Path, monkeypatch) -> None:
-    """distribute 链路：TargetSyncPipeline.run 从注册表构造 presets 索引并注入 SyncEngine.run。"""
+    """distribute 链路：DistributePipeline.run 从注册表构造 presets 索引并注入 SyncEngine.run。"""
     cfg = Config(workspace=str(tmp_path / "ws"))
     captured: dict = {}
 

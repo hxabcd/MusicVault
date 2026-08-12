@@ -11,7 +11,7 @@ from typing import Any
 from musicvault.domain.models import Track
 from musicvault.domain.models import MediaAsset, Playlist, SourceSnapshot
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS tracks (
@@ -88,7 +88,11 @@ CREATE TABLE IF NOT EXISTS lyrics (
 );
 """
 
-_MIGRATIONS: dict[int, str] = {1: _SCHEMA_SQL}
+# v2：preset_registry 加 kind 列（preset/target 两类注册；旧行默认 'target' 兼容）。
+# 注意：v1 建表 SQL 保持原样（新库也经 v1 建表 → v2 补列，避免迁移链重复加列）。
+_MIGRATION_V2 = "ALTER TABLE preset_registry ADD COLUMN kind TEXT NOT NULL DEFAULT 'target';"
+
+_MIGRATIONS: dict[int, str] = {1: _SCHEMA_SQL, 2: _MIGRATION_V2}
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +104,7 @@ class RegisteredPreset:
     api_version: str
     enabled: bool
     script_hash: str | None
+    kind: str = "target"
 
 
 class SQLiteState:
@@ -334,14 +339,15 @@ class SQLiteStateRepository:
         enabled: bool = True,
         script_hash: str | None = None,
         *,
+        kind: str = "target",
         connection: sqlite3.Connection | None = None,
     ) -> None:
-        values = (name, source, api_version, int(enabled), script_hash)
-        sql = """INSERT INTO preset_registry(name, source, api_version, enabled, script_hash)
-                 VALUES (?, ?, ?, ?, ?)
+        values = (name, source, api_version, int(enabled), script_hash, kind)
+        sql = """INSERT INTO preset_registry(name, source, api_version, enabled, script_hash, kind)
+                 VALUES (?, ?, ?, ?, ?, ?)
                  ON CONFLICT(name) DO UPDATE SET source=excluded.source,
                  api_version=excluded.api_version, enabled=excluded.enabled,
-                 script_hash=excluded.script_hash"""
+                 script_hash=excluded.script_hash, kind=excluded.kind"""
         if connection is None:
             with self.transaction() as owned:
                 owned.execute(sql, values)
@@ -358,6 +364,7 @@ class SQLiteStateRepository:
                 api_version=str(row["api_version"]),
                 enabled=bool(row["enabled"]),
                 script_hash=row["script_hash"],
+                kind=str(row["kind"]),
             )
             for row in rows
         ]

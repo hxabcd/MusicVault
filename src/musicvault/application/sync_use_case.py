@@ -66,10 +66,8 @@ class SyncUseCase:
         self.dry_run = dry_run
         # workspace 各生命周期区域路径的唯一来源（cache/media_store/library/logs）
         self.paths = WorkspacePaths(cfg.workspace_path)
-        # 把本次 sync 的源侧状态写入 SQLite，供 target-sync 消费
+        # 把本次 sync 的源侧状态写入 SQLite，供 distribute 阶段消费
         self.recorder = SourceStateRecorder(state)
-        # 歌单索引：run_fetch 正常路径末尾填充；无歌单早退时保持空（run_pipeline 直接消费）
-        self.playlist_index: dict[str, dict[str, object]] = {}
 
     def load_synced_state(self) -> dict[int, list[int]]:
         """从 SQLite 快照派生 {track_id: [playlist_ids]} 映射。
@@ -108,7 +106,6 @@ class SyncUseCase:
             self.recorder.state.upsert_playlist(Playlist(pid, new_name, ()))
             logger.info("歌单 %s 已改名为 '%s'（仅登记 SQLite，library 由 distribute 幂等重建）", pid, new_name)
 
-        self.playlist_index = remote.playlist_index
         self._record_source_state(
             remote.all_tracks, remote.playlist_track_order, remote.playlist_index, remote.song_ids
         )
@@ -128,7 +125,6 @@ class SyncUseCase:
 
         self.api.login_with_cookie(cookie)
         remote = self._fetch_remote(playlist_ids)
-        self.playlist_index = remote.playlist_index
         unique = list(remote.all_tracks.values())
         logger.info("歌单曲目合计：%s 首（去重后）", len(unique))
 
@@ -338,19 +334,9 @@ class SyncUseCase:
 
         removed_count = 0
         for track_id in stale_ids:
-            # 收集 canonical 文件 inode（保留供扩展；library 链接清理已移交 distribute）
-            canonical_inodes: set[tuple[int, int]] = set()
+            # 扁平布局：删除 media_store/<tid>/ 整个目录（各格式、bitrate 变体、.lrc）
             track_dir = self.paths.media_store / str(track_id)
             if track_dir.is_dir():
-                for f in list(track_dir.iterdir()):
-                    if not f.is_file():
-                        continue
-                    try:
-                        st = f.stat()
-                        canonical_inodes.add((st.st_dev, st.st_ino))
-                    except OSError:
-                        continue
-                # 扁平布局：删除 media_store/<tid>/ 整个目录（各格式、bitrate 变体、.lrc）
                 shutil.rmtree(track_dir)
 
             state_map.pop(track_id, None)

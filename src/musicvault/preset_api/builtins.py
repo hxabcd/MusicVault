@@ -109,7 +109,8 @@ def register_builtin_presets(
     registry.register_preset(PresetRegistration(name="archive", factory=ArchivePreset, source="builtin:archive"))
 
     def hardlink_factory(presets: Mapping[str, object] | None = None):
-        # SyncEngine 走 registration.create() 无参路径（Task 6 注明），无依赖注入时回退内置 archive。
+        # 依赖注入路径（SyncEngine/registry.create_target）必传 preset 索引；
+        # 无参兼容路径（TargetRegistration.create()）回退内置 archive。
         preset = presets["archive"] if presets else ArchivePreset()
         return HardlinkDistributor(preset, "archive", target_root_path, default_playlist_name)
 

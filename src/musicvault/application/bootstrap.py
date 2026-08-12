@@ -30,11 +30,12 @@ def build_runtime(config: Config) -> Runtime:
     paths.ensure()
     state = SQLiteStateRepository(SQLiteState(paths.state_db))
     presets = PresetRegistry()
-    if config.builtin_playlist_links_enabled:
+    if config.builtin_scripts_enabled:
         register_builtin_presets(presets, config.library_dir, config.default_playlist_name)
     directories = [Path(directory) for directory in config.preset_directories]
     presets.load_directories(directories)
-    for registration in presets.registrations():
+    # preset 与 sync_target 两类注册分 kind 写入 preset_registry
+    for registration in presets.preset_registrations():
         state.register_preset(
             name=registration.name,
             source=registration.source,
@@ -42,6 +43,16 @@ def build_runtime(config: Config) -> Runtime:
             enabled=registration.enabled,
             # PresetRegistration 暂无 script_hash 字段，统一写 None。
             script_hash=None,
+            kind="preset",
+        )
+    for registration in presets.target_registrations():
+        state.register_preset(
+            name=registration.name,
+            source=registration.source,
+            api_version=registration.api_version,
+            enabled=registration.enabled,
+            script_hash=None,
+            kind="target",
         )
     return Runtime(paths=paths, state=state, presets=presets)
 
@@ -78,7 +89,7 @@ def build_pipeline(
     从 preset 声明推导下载音质（最高档）传给源端客户端。
     """
     registry = PresetRegistry()
-    if config.builtin_playlist_links_enabled:
+    if config.builtin_scripts_enabled:
         register_builtin_presets(registry, config.library_dir, config.default_playlist_name)
     directories = [Path(directory) for directory in config.preset_directories]
     registry.load_directories(directories)
@@ -106,14 +117,14 @@ def build_playlist_use_case(config: Config) -> PlaylistUseCase:
 
 
 @dataclass(frozen=True, slots=True)
-class TargetSyncPipeline:
+class DistributePipeline:
     """distribute 链路的组装：运行时 + 同步引擎；CLI 只负责参数与输出。"""
 
     runtime: Runtime
     engine: SyncEngine
 
     def run(self, selected: set[str] | None = None) -> SyncRunResult:
-        """执行目标同步；selected 为空集时运行全部启用 preset。"""
+        """执行分发；selected 为空集时运行全部启用 sync_target。"""
         if selected:
             missing = sorted(selected - {item.name for item in self.runtime.presets.registrations()})
             if missing:
@@ -130,7 +141,7 @@ class TargetSyncPipeline:
         )
 
 
-def build_distribute_pipeline(config: Config, *, dry_run: bool = False) -> TargetSyncPipeline:
+def build_distribute_pipeline(config: Config, *, dry_run: bool = False) -> DistributePipeline:
     """组装 distribute 链路：运行时 + 目标端 + 同步引擎。"""
     runtime = build_runtime(config)
     engine = SyncEngine(
@@ -138,4 +149,4 @@ def build_distribute_pipeline(config: Config, *, dry_run: bool = False) -> Targe
         dry_run=dry_run,
         media_store_root=runtime.paths.media_store,
     )
-    return TargetSyncPipeline(runtime=runtime, engine=engine)
+    return DistributePipeline(runtime=runtime, engine=engine)
