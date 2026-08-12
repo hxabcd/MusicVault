@@ -276,6 +276,69 @@ def test_run_process_reprocesses_canonical_for_new_spec(tmp_path: Path) -> None:
     assert again.processed == 0
 
 
+def test_run_process_scan_survives_track_detail_api_failure(tmp_path: Path) -> None:
+    """存量 canonical 的 get_track_detail 抛异常（网络故障重试耗尽）→ 单曲计入 failed，其余曲目继续处理。
+
+    spec 覆盖不足的存量曲目逐首打详情 API（preset 规格变更后首次 sync 的场景），
+    修复前任一曲目失败会冒泡崩溃整个 run_process；修复后单曲降级、不阻塞整体。
+    """
+    from musicvault.application.source_state import build_audio_asset_from_file
+
+    cfg = _make_cfg(tmp_path)
+    cfg.media_store_dir.mkdir(parents=True)
+    repo = _repository(cfg)
+    repo.save_lyrics(333, lyrics_to_json((LyricLine(1000, 0, "hello"),)), 0.0)
+
+    # 曲目 333：详情 API 抛异常（类似 _retry_api 重试耗尽后重新抛出）
+    bad = cfg.media_store_dir / "333" / "333.flac"
+    bad.parent.mkdir(parents=True, exist_ok=True)
+    bad.write_bytes(b"fake flac")
+    repo.upsert_track(_make_track(333))
+    repo.upsert_media_asset(build_audio_asset_from_file(333, "FLAC", bad))
+    repo.record_processed(333, "preset-script", 0.0)
+
+    # 曲目 999：详情 API 正常（返回 None 走 fallback Track），应被正常处理
+    good = cfg.media_store_dir / "999" / "999.flac"
+    good.parent.mkdir(parents=True, exist_ok=True)
+    good.write_bytes(b"fake flac")
+    repo.upsert_track(_make_track(999))
+    repo.upsert_media_asset(build_audio_asset_from_file(999, "FLAC", good))
+    repo.record_processed(999, "preset-script", 0.0)
+
+    class _Mp3Preset(BasePreset):
+        format = AudioFormat.MP3
+        bitrate = "192k"
+
+    def _route(src, track, output_dir, audio_specs, force=False):
+        out = output_dir / f"{track.id}_192k.mp3"
+        out.write_bytes(b"fake mp3")
+        return {(AudioFormat.MP3, "192k"): out}
+
+    def _detail(track_id: int) -> Track | None:
+        if track_id == 333:
+            raise OSError("网络故障（重试耗尽）")
+        return None
+
+    organizer = MagicMock()
+    organizer.route_audio.side_effect = _route
+    api = MagicMock()
+    api.get_track_detail.side_effect = _detail
+    svc = _process_svc(cfg, repo, organizer=organizer, api=api, presets={"mp3": _Mp3Preset()})
+
+    result = svc.run_process(downloaded=[], force=False)
+    assert result.processed == 1  # 999 正常处理
+    assert result.failed == 1  # 333 详情失败计入 failed
+    assert result.skipped == 0
+    assert (cfg.media_store_dir / "999" / "999_192k.mp3").exists()
+    assert not (cfg.media_store_dir / "333" / "333_192k.mp3").exists()
+
+    # 再次运行不崩溃：999 已被覆盖跳过，333 仍逐首降级为 failed
+    again = svc.run_process(downloaded=[], force=False)
+    assert again.processed == 0
+    assert again.skipped == 1
+    assert again.failed == 1
+
+
 def test_run_process_force_reprocesses_covered_canonical(tmp_path: Path) -> None:
     """force 重处理语义：spec 已覆盖的存量 canonical 非 force 跳过，force 时无条件重处理。"""
     from musicvault.application.source_state import build_audio_asset_from_file

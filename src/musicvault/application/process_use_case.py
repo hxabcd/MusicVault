@@ -103,20 +103,35 @@ class ProcessUseCase:
         required_specs = {audio_spec_key(p.format, p.bitrate) for p in self.presets.values()}
         seen_ids = {item.track.id for item in downloaded}
         scan_skipped = 0
+        scan_failed = 0
         for canon_path, track_id in self._scan_canonical_files():
             if track_id in seen_ids:
                 continue
             if not force and self.recorder.state.is_processed(track_id, required_specs):
                 scan_skipped += 1
                 continue
-            track_info = self._safe_track(track_id, canon_path.stem)
+            try:
+                track_info = self._safe_track(track_id, canon_path.stem)
+            except Exception as exc:
+                # 存量曲目详情 API 失败（重试耗尽后抛 NcmApiError/OSError/TimeoutError）：
+                # 单曲降级计入 failed 并跳过，不阻塞其余曲目（与 _process_file 失败语义一致）。
+                # 只捕获 Exception，KeyboardInterrupt 等 BaseException 照常向上冒泡。
+                scan_failed += 1
+                logger.error(
+                    "存量曲目详情获取失败（跳过）：track_id=%s %s，原因：%s",
+                    track_id,
+                    canon_path.name,
+                    exc,
+                    exc_info=True,
+                )
+                continue
             tasks.append((canon_path, track_info))
             seen_ids.add(track_id)
         result = self._run_process_batch(tasks, "处理中", force, progress)
         return ProcessResult(
             processed=result.processed,
             skipped=result.skipped + scan_skipped,
-            failed=result.failed,
+            failed=result.failed + scan_failed,
         )
 
     def _scan_canonical_files(self) -> list[tuple[Path, int]]:
