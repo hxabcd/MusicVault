@@ -3,7 +3,6 @@ from musicvault.preset_api.v1 import (
     PresetLoadError,
     PresetRegistration,
     PresetRegistry,
-    TargetRegistration,
 )
 
 
@@ -13,35 +12,29 @@ def test_register_and_create_preset():
     assert registry.create_preset("a") == {}
 
 
-def test_target_dependency_injection():
+def test_duplicate_preset_names_rejected():
     registry = PresetRegistry()
-    registry.register_preset(PresetRegistration(name="a", factory=dict))
-    captured: dict = {}
-
-    def factory(presets):
-        captured["presets"] = presets
-        return object()
-
-    registry.register_target(TargetRegistration(name="t", factory=factory, depends_on=("a",)))
-    registry.create_target("t")
-    assert captured["presets"] == {"a": {}}
+    registry.register_preset(PresetRegistration(name="x", factory=dict, source="a.py"))
+    with pytest.raises(PresetLoadError, match="同名") as error:
+        registry.register_preset(PresetRegistration(name="x", factory=dict, source="b.py"))
+    assert "a.py" in str(error.value)
+    assert "b.py" in str(error.value)
 
 
-def test_missing_dependency_raises():
+def test_incompatible_api_version_rejected():
     registry = PresetRegistry()
-    registry.register_target(TargetRegistration(name="t", factory=lambda p: p, depends_on=("nope",)))
-    with pytest.raises(PresetLoadError, match="nope"):
-        registry.create_target("t")
+    with pytest.raises(PresetLoadError, match="API"):
+        registry.register_preset(
+            PresetRegistration(
+                name="old",
+                factory=lambda: object(),
+                api_version="v0",
+                source="old.py",
+            )
+        )
 
 
-def test_duplicate_names_rejected_across_kinds():
+def test_unknown_preset_create_raises():
     registry = PresetRegistry()
-    registry.register_preset(PresetRegistration(name="x", factory=dict))
-    with pytest.raises(PresetLoadError):
-        registry.register_target(TargetRegistration(name="x", factory=dict))
-
-
-def test_legacy_register_maps_to_target():
-    registry = PresetRegistry()
-    registry.register("t", factory=lambda: object())
-    assert [r.name for r in registry.target_registrations()] == ["t"]
+    with pytest.raises(PresetLoadError, match="未找到"):
+        registry.create_preset("missing")

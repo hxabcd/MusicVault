@@ -7,7 +7,7 @@ from pathlib import Path
 from musicvault.domain.models import SourceSnapshot
 from musicvault.domain.operations import OperationResult, OperationStatus
 from musicvault.ports.target import TargetOperations
-from musicvault.preset_api.v1 import PresetContext, TargetRegistration
+from musicvault.target_api.v1 import TargetContext, TargetRegistration
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,7 +107,7 @@ class SyncEngine:
                     error=f"sync_target '{registration.name}' 依赖的 preset 未提供：{', '.join(missing)}",
                 )
             synchronizer = registration.factory({dep: presets[dep] for dep in registration.depends_on})
-            context = PresetContext(
+            context = TargetContext(
                 snapshot=snapshot,
                 target=self.target,
                 dry_run=self.dry_run,

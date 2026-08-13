@@ -13,7 +13,7 @@ import pytest
 
 from musicvault.domain.models import MediaAsset, SourceSnapshot, Track
 from musicvault.ports.media import MediaRequest
-from musicvault.preset_api._media import SnapshotMediaResolver
+from musicvault.target_api._media import SnapshotMediaResolver
 
 
 def _snapshot(*assets: MediaAsset) -> SourceSnapshot:

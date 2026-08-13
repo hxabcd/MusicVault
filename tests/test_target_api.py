@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from musicvault.domain.models import SourceSnapshot, Track
+from musicvault.domain.models import MediaAsset, SourceSnapshot, Track
 from musicvault.domain.operations import OperationStatus
 from musicvault.target_api.builtins import register_builtin_targets
 from musicvault.target_api.v1 import (
@@ -149,6 +149,32 @@ def test_context_copy_records_operation(tmp_path: Path) -> None:
 
     assert result.status is OperationStatus.SUCCEEDED
     assert target.copies == [(source, tmp_path / "dst.txt")]
+
+
+def test_context_copy_failure_is_recorded() -> None:
+    """callback 抛异常 → FAILED 结果而非向上传播。"""
+
+    class BoomTarget(RecordingTarget):
+        def copy(self, source, destination) -> None:
+            del source, destination
+            raise ValueError("模拟失败")
+
+    context = TargetContext(snapshot=SourceSnapshot.from_data((), (), ()), target=BoomTarget())
+    result = context.copy(Path("a"), Path("b"))
+    assert result.status is OperationStatus.FAILED
+    assert "模拟失败" in result.error
+
+
+def test_context_properties_expose_snapshot() -> None:
+    """tracks / media_assets 属性透传快照内容。"""
+    track = Track(id=1, name="歌", artists=[], album="")
+    asset = MediaAsset(track_id=1, asset_type="audio", spec="FLAC", path=Path("x.flac"))
+    snapshot = SourceSnapshot.from_data((track,), (), (asset,))
+    context = TargetContext(snapshot=snapshot, target=RecordingTarget())
+
+    assert context.tracks == (track,)
+    assert context.media_assets == (asset,)
+    assert context.playlists == ()
 
 
 def test_context_lyrics_file_returns_none_without_root() -> None:

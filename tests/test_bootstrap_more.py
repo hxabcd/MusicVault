@@ -75,5 +75,5 @@ def test_distribute_run_rejects_unknown_selected(tmp_path: Path) -> None:
     cfg = Config(workspace=str(tmp_path / "ws"))
     pipeline = build_distribute_pipeline(cfg)
 
-    with pytest.raises(RuntimeError, match="未找到指定 preset"):
+    with pytest.raises(RuntimeError, match="未找到指定 sync_target"):
         pipeline.run(selected={"no_such_target"})

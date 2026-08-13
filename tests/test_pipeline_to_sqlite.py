@@ -256,7 +256,7 @@ def test_synced_state_feeds_target_sync_closed_loop(tmp_path: Path) -> None:
         FilesystemTarget(runtime.paths.library), dry_run=False, media_store_root=runtime.paths.media_store
     ).run(
         repo.create_snapshot(),
-        runtime.presets.registrations(enabled_only=True),
+        runtime.targets.target_registrations(enabled_only=True),
         presets=presets,
     )
 

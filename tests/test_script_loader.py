@@ -59,6 +59,8 @@ def test_same_directory_loads_both_kinds(tmp_path: Path) -> None:
 
     assert [r.name for r in presets.preset_registrations()] == ["my_preset"]
     assert [r.name for r in targets.target_registrations()] == ["my_target"]
+    assert presets.preset_registrations()[0].source == str(tmp_path / "p.py")
+    assert targets.target_registrations()[0].source == str(tmp_path / "t.py")
 
 
 def test_rejects_duplicate_names_with_both_sources(tmp_path: Path) -> None:
@@ -104,6 +106,37 @@ def test_script_missing_dependency_is_wrapped(tmp_path: Path) -> None:
         load_script_directories([tmp_path], presets, targets)
 
     assert str(script) in str(error.value)
+
+
+def test_script_preset_load_error_is_preserved(tmp_path: Path) -> None:
+    """register() 内部抛 PresetLoadError 时不包裹。"""
+    script = tmp_path / "reject.py"
+    script.write_text(
+        "from musicvault.preset_api.v1 import PresetLoadError\n"
+        "def register(registry):\n"
+        "    raise PresetLoadError('脚本主动拒绝')\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PresetLoadError, match="脚本主动拒绝") as error:
+        presets, targets = _registries()
+        load_script_directories([tmp_path], presets, targets)
+
+    assert str(script) not in str(error.value)  # 原错误透传而非包裹
+
+
+def test_script_spec_unavailable_raises(tmp_path: Path, monkeypatch) -> None:
+    """spec 无法构造（loader 为 None）→ PresetLoadError。"""
+    script = tmp_path / "missing.py"
+    script.write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "musicvault.application.script_loader.importlib.util.spec_from_file_location",
+        lambda _name, _script: None,
+    )
+
+    with pytest.raises(PresetLoadError, match="无法加载"):
+        presets, targets = _registries()
+        load_script_directories([tmp_path], presets, targets)
 
 
 def test_multiple_directories_load_order_is_deterministic(tmp_path: Path) -> None:

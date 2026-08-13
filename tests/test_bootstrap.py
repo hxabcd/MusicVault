@@ -105,7 +105,9 @@ def test_build_runtime_builtin_target_root_is_library_dir(tmp_path: Path) -> Non
     cfg = Config(workspace=str(tmp_path / "ws"), default_playlist_name="其他")
 
     runtime = build_runtime(cfg)
-    distributor = runtime.presets.create_target("hardlink")
+    distributor = runtime.targets.create_target(
+        "hardlink", presets={"archive": runtime.presets.create_preset("archive")}
+    )
 
     assert distributor.target_root == cfg.library_dir
     assert distributor.default_name == "其他"
@@ -118,7 +120,7 @@ def test_build_runtime_builtin_scripts_disabled(tmp_path: Path) -> None:
     runtime = build_runtime(cfg)
 
     assert runtime.presets.preset_registrations() == ()
-    assert runtime.presets.target_registrations() == ()
+    assert runtime.targets.target_registrations() == ()
     # preset 注册只存在于内存注册表（动态发现），不再写入 SQLite
     assert runtime.source_state.create_snapshot().tracks == ()
 

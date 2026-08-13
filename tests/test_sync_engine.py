@@ -6,7 +6,7 @@ from musicvault.adapters.targets.filesystem import FilesystemTarget
 from musicvault.application.sync_engine import SyncEngine
 from musicvault.domain.models import Track
 from musicvault.domain.models import SourceSnapshot
-from musicvault.preset_api.v1 import TargetRegistration
+from musicvault.target_api.v1 import TargetRegistration
 
 
 def _snapshot() -> SourceSnapshot:

@@ -15,7 +15,8 @@ from musicvault.application.pipeline_use_case import PipelineUseCase
 from musicvault.core.config import Config
 from musicvault.domain.models import DownloadedTrack, Playlist, Track
 from musicvault.domain.operations import OperationResult, OperationStatus
-from musicvault.preset_api.v1 import AudioFormat, BasePreset, PresetContext, PresetRegistry, TargetRegistration
+from musicvault.preset_api.v1 import AudioFormat, BasePreset
+from musicvault.target_api.v1 import TargetContext, TargetRegistry, TargetRegistration
 
 
 def _make_cfg(tmp_path: Path) -> Config:
@@ -45,14 +46,14 @@ class _RecordingSync:
     """记录收到 context 的同步器：所有生命周期操作直接成功。"""
 
     def __init__(self) -> None:
-        self.contexts: list[PresetContext] = []
+        self.contexts: list[TargetContext] = []
 
     def __call__(self, deps: dict[str, object]) -> _RecordingSync:
         """SyncEngine 以 factory(deps) 方式构造同步器；直接返回自身。"""
         del deps
         return self
 
-    def prepare(self, context: PresetContext) -> OperationResult:
+    def prepare(self, context: TargetContext) -> OperationResult:
         self.contexts.append(context)
         return OperationResult(name="prepare", status=OperationStatus.SUCCEEDED)
 
@@ -88,8 +89,8 @@ def _real_downloader(_: Config) -> MagicMock:
     return downloader
 
 
-def _registry_with(recording: _RecordingSync) -> PresetRegistry:
-    registry = PresetRegistry()
+def _registry_with(recording: _RecordingSync) -> TargetRegistry:
+    registry = TargetRegistry()
     registry.register_target(TargetRegistration(name="links", factory=recording, source="test"))
     return registry
 
@@ -116,7 +117,7 @@ def _pipeline(
     *,
     api: MagicMock | None = None,
     dry_run: bool = False,
-    registry: PresetRegistry | None = None,
+    targets: TargetRegistry | None = None,
     target=None,
 ) -> PipelineUseCase:
     repo = _repository(cfg)
@@ -129,7 +130,7 @@ def _pipeline(
         process_state=_process_repository(cfg),
         dry_run=dry_run,
         presets={"mp3": _Mp3Preset()},
-        registry=registry,
+        targets=targets,
         target=target if target is not None else MagicMock(),
     )
 
@@ -139,7 +140,7 @@ def test_run_pipeline_full_flow(tmp_path: Path, monkeypatch) -> None:
     cfg = _make_cfg(tmp_path)
     _patch_processors(monkeypatch, cfg)
     recording = _RecordingSync()
-    svc = _pipeline(cfg, registry=_registry_with(recording))
+    svc = _pipeline(cfg, targets=_registry_with(recording))
 
     result = svc.run_pipeline("cookie")
 
@@ -163,7 +164,7 @@ def test_run_pipeline_only_distribute_skips_download(tmp_path: Path, monkeypatch
     _patch_processors(monkeypatch, cfg)
     recording = _RecordingSync()
     api = _api()
-    svc = _pipeline(cfg, api=api, registry=_registry_with(recording))
+    svc = _pipeline(cfg, api=api, targets=_registry_with(recording))
 
     result = svc.run_pipeline("cookie", only_distribute=True)
 
@@ -185,7 +186,7 @@ def test_run_pipeline_no_distribute_skips_distribute(tmp_path: Path, monkeypatch
     cfg = _make_cfg(tmp_path)
     _patch_processors(monkeypatch, cfg)
     recording = _RecordingSync()
-    svc = _pipeline(cfg, registry=_registry_with(recording))
+    svc = _pipeline(cfg, targets=_registry_with(recording))
 
     result = svc.run_pipeline("cookie", distribute=False)
 
@@ -200,7 +201,7 @@ def test_run_pipeline_dry_run_skips_fetch_and_process(tmp_path: Path, monkeypatc
     cfg = _make_cfg(tmp_path)
     _patch_processors(monkeypatch, cfg)
     recording = _RecordingSync()
-    svc = _pipeline(cfg, dry_run=True, registry=_registry_with(recording))
+    svc = _pipeline(cfg, dry_run=True, targets=_registry_with(recording))
 
     result = svc.run_pipeline("cookie")
 
@@ -217,10 +218,10 @@ def test_run_pipeline_dry_run_skips_fetch_and_process(tmp_path: Path, monkeypatc
 
 
 def test_run_pipeline_without_registry_skips_distribute(tmp_path: Path, monkeypatch) -> None:
-    """registry/target 为 None 时 distribute 阶段静默跳过。"""
+    """targets/target 为 None 时 distribute 阶段静默跳过。"""
     cfg = _make_cfg(tmp_path)
     _patch_processors(monkeypatch, cfg)
-    svc = _pipeline(cfg, registry=None, target=None)
+    svc = _pipeline(cfg, targets=None, target=None)
 
     result = svc.run_pipeline("cookie")
 
@@ -235,7 +236,7 @@ def test_run_pipeline_only_distribute_dry_run(tmp_path: Path, monkeypatch) -> No
     cfg = _make_cfg(tmp_path)
     _patch_processors(monkeypatch, cfg)
     recording = _RecordingSync()
-    svc = _pipeline(cfg, dry_run=True, registry=_registry_with(recording))
+    svc = _pipeline(cfg, dry_run=True, targets=_registry_with(recording))
 
     result = svc.run_pipeline("cookie", only_distribute=True)
 

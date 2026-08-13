@@ -13,16 +13,17 @@ import pytest
 
 from musicvault.adapters.targets.filesystem import FilesystemTarget
 from musicvault.domain.models import MediaAsset, Playlist, SourceSnapshot, Track
-from musicvault.preset_api.builtins import ArchivePreset, HardlinkDistributor, register_builtin_presets
-from musicvault.preset_api.v1 import PresetContext, PresetRegistration, PresetRegistry
+from musicvault.preset_api.builtins import ArchivePreset
+from musicvault.target_api.builtins import HardlinkDistributor, register_builtin_targets
+from musicvault.target_api.v1 import TargetContext, TargetRegistry
 
 
 def _track(track_id: int = 1) -> Track:
     return Track(id=track_id, name="song", artists=[], album="")
 
 
-def _context(snapshot: SourceSnapshot, media_store_root: Path, library: Path) -> PresetContext:
-    return PresetContext(snapshot=snapshot, target=FilesystemTarget(library), media_store_root=media_store_root)
+def _context(snapshot: SourceSnapshot, media_store_root: Path, library: Path) -> TargetContext:
+    return TargetContext(snapshot=snapshot, target=FilesystemTarget(library), media_store_root=media_store_root)
 
 
 def _write_audio(media_store: Path, track_id: int = 1) -> Path:
@@ -120,15 +121,13 @@ def test_finalize_without_target_root_returns_none(tmp_path: Path) -> None:
     assert distributor.finalize(context) is None
 
 
-def test_create_target_rejects_non_base_preset_archive(tmp_path: Path) -> None:
-    """hardlink 依赖的 archive 非 BasePreset → TypeError。"""
-    registry = PresetRegistry()
-    register_builtin_presets(registry, tmp_path / "library")
-    # 覆盖 archive 注册为返回普通对象的 factory
-    registry._registrations["archive"] = PresetRegistration(name="archive", factory=lambda: object(), source="test")
+def test_create_target_rejects_archive_without_declarations(tmp_path: Path) -> None:
+    """hardlink 依赖的 archive 缺少 format/bitrate 声明 → TypeError。"""
+    registry = TargetRegistry()
+    register_builtin_targets(registry, tmp_path / "library")
 
-    with pytest.raises(TypeError, match="类型不合法"):
-        registry.create_target("hardlink")
+    with pytest.raises(TypeError, match="缺少 format/bitrate"):
+        registry.create_target("hardlink", presets={"archive": object()})
 
 
 def test_archive_preset_build_lyrics_enhanced(tmp_path: Path) -> None:

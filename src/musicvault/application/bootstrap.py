@@ -9,11 +9,14 @@ from musicvault.adapters.state.sqlite import SQLiteProcessStateRepository, SQLit
 from musicvault.adapters.targets.filesystem import FilesystemTarget
 from musicvault.application.pipeline_use_case import PipelineUseCase
 from musicvault.application.playlist_use_case import PlaylistUseCase
+from musicvault.application.script_loader import load_script_directories
 from musicvault.application.sync_engine import SyncEngine, SyncRunResult
 from musicvault.core.config import Config
 from musicvault.ports.source import SourceClient
 from musicvault.preset_api.builtins import register_builtin_presets
 from musicvault.preset_api.v1 import PresetRegistry, Quality
+from musicvault.target_api.builtins import register_builtin_targets
+from musicvault.target_api.v1 import TargetRegistry
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +27,7 @@ class Runtime:
     source_state: SQLiteSourceStateRepository
     process_state: SQLiteProcessStateRepository
     presets: PresetRegistry
+    targets: TargetRegistry
 
 
 def build_runtime(config: Config) -> Runtime:
@@ -33,15 +37,18 @@ def build_runtime(config: Config) -> Runtime:
     source_state = SQLiteSourceStateRepository(database)
     process_state = SQLiteProcessStateRepository(database)
     presets = PresetRegistry()
+    targets = TargetRegistry()
     if config.builtin_scripts_enabled:
-        register_builtin_presets(presets, config.library_dir, config.default_playlist_name)
+        register_builtin_presets(presets)
+        register_builtin_targets(targets, config.library_dir, config.default_playlist_name)
     directories = [Path(directory) for directory in config.preset_directories]
-    presets.load_directories(directories)
+    load_script_directories(directories, presets, targets)
     return Runtime(
         paths=paths,
         source_state=source_state,
         process_state=process_state,
         presets=presets,
+        targets=targets,
     )
 
 
@@ -77,10 +84,12 @@ def build_pipeline(
     从 preset 声明推导下载音质（最高档）传给源端客户端。
     """
     registry = PresetRegistry()
+    targets = TargetRegistry()
     if config.builtin_scripts_enabled:
-        register_builtin_presets(registry, config.library_dir, config.default_playlist_name)
+        register_builtin_presets(registry)
+        register_builtin_targets(targets, config.library_dir, config.default_playlist_name)
     directories = [Path(directory) for directory in config.preset_directories]
-    registry.load_directories(directories)
+    load_script_directories(directories, registry, targets)
     presets = {r.name: registry.create_preset(r.name) for r in registry.preset_registrations(enabled_only=True)}
     download_quality = Quality.maximum(p.quality for p in presets.values())
     if source is None:
@@ -93,7 +102,7 @@ def build_pipeline(
         process_state=SQLiteProcessStateRepository(database),
         dry_run=dry_run,
         presets=presets,
-        registry=registry,
+        targets=targets,
         target=FilesystemTarget(WorkspacePaths(config.workspace_path).library),
     )
 
@@ -116,16 +125,16 @@ class DistributePipeline:
     def run(self, selected: set[str] | None = None) -> SyncRunResult:
         """执行分发；selected 为空集时运行全部启用 sync_target。"""
         if selected:
-            missing = sorted(selected - {item.name for item in self.runtime.presets.registrations()})
+            missing = sorted(selected - {item.name for item in self.runtime.targets.target_registrations()})
             if missing:
-                raise RuntimeError(f"未找到指定 preset：{', '.join(missing)}")
+                raise RuntimeError(f"未找到指定 sync_target：{', '.join(missing)}")
         presets = {
             r.name: self.runtime.presets.create_preset(r.name)
             for r in self.runtime.presets.preset_registrations(enabled_only=True)
         }
         return self.engine.run(
             self.runtime.source_state.create_snapshot(),
-            self.runtime.presets.registrations(enabled_only=True),
+            self.runtime.targets.target_registrations(enabled_only=True),
             selected=selected,
             presets=presets,
         )

@@ -19,7 +19,8 @@ from musicvault.ports.process_state import ProcessStateRepository
 from musicvault.ports.source import SourceClient
 from musicvault.ports.source_state import SourceStateRepository
 from musicvault.ports.target import TargetOperations
-from musicvault.preset_api.v1 import BasePreset, PresetRegistry
+from musicvault.preset_api.v1 import BasePreset
+from musicvault.target_api.v1 import TargetRegistry
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,13 +47,13 @@ class PipelineUseCase:
         process_state: ProcessStateRepository,
         dry_run: bool = False,
         presets: Mapping[str, BasePreset] | None = None,
-        registry: PresetRegistry | None = None,
+        targets: TargetRegistry | None = None,
         target: TargetOperations | None = None,
     ) -> None:
         self.cfg = cfg
         self.api = api
         self.dry_run = dry_run
-        self.registry = registry
+        self.targets = targets
         self.target = target
         # preset 实例索引：process 阶段消费（歌词/元数据/规格），distribute 阶段注入 SyncEngine
         self.presets = presets
@@ -151,9 +152,9 @@ class PipelineUseCase:
         """distribute 阶段：按注册表目标分发 SQLite 快照到 library（SyncEngine 驱动）。
 
         返回 SyncRunResult 供 PipelineResult.distribute 携带（CLI 渲染分发结果）；
-        registry/target 未注入时返回 None（旧链路仅拉取/处理的使用场景）。
+        targets/target 未注入时返回 None（旧链路仅拉取/处理的使用场景）。
         """
-        if self.registry is None or self.target is None:
+        if self.targets is None or self.target is None:
             return None
         engine = SyncEngine(
             target=self.target,
@@ -162,6 +163,6 @@ class PipelineUseCase:
         )
         return engine.run(
             self.recorder.state.create_snapshot(),
-            self.registry.target_registrations(enabled_only=True),
+            self.targets.target_registrations(enabled_only=True),
             presets=self.presets,
         )

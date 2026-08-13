@@ -14,7 +14,7 @@ from musicvault.application.sync_engine import PresetRunResult, SyncEngine, Sync
 from musicvault.cli.main import main
 from musicvault.domain.models import SourceSnapshot, Track
 from musicvault.domain.operations import OperationStatus
-from musicvault.preset_api.v1 import TargetRegistration
+from musicvault.target_api.v1 import TargetRegistration
 
 
 def _snapshot() -> SourceSnapshot:

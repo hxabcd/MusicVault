@@ -219,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.command == "preset":
                 render_presets(runtime.presets.preset_registrations())
             else:
-                render_targets(runtime.presets.target_registrations())
+                render_targets(runtime.targets.target_registrations())
         except Exception as error:  # noqa: BLE001 - CLI 将加载失败转换为非零退出码
             output_error(f"preset/target 加载失败：{error}")
             return 2

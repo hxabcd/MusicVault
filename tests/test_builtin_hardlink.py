@@ -11,8 +11,10 @@ from pathlib import Path
 
 from musicvault.domain.models import MediaAsset, Playlist, SourceSnapshot, Track
 from musicvault.domain.operations import OperationStatus
-from musicvault.preset_api.builtins import ArchivePreset, HardlinkDistributor, register_builtin_presets
-from musicvault.preset_api.v1 import AudioFormat, PresetContext, PresetRegistry
+from musicvault.preset_api.builtins import ArchivePreset, register_builtin_presets
+from musicvault.preset_api.v1 import AudioFormat, PresetRegistry
+from musicvault.target_api.builtins import HardlinkDistributor, register_builtin_targets
+from musicvault.target_api.v1 import TargetContext, TargetRegistry
 
 
 class FakeTarget:
@@ -35,8 +37,8 @@ class FakeTarget:
         del destination, content, encoding
 
 
-def _make_context(snapshot: SourceSnapshot, media_store_root: Path, *, dry_run: bool = False) -> PresetContext:
-    return PresetContext(snapshot=snapshot, target=FakeTarget(), dry_run=dry_run, media_store_root=media_store_root)
+def _make_context(snapshot: SourceSnapshot, media_store_root: Path, *, dry_run: bool = False) -> TargetContext:
+    return TargetContext(snapshot=snapshot, target=FakeTarget(), dry_run=dry_run, media_store_root=media_store_root)
 
 
 def _snapshot(track: Track, playlists: tuple[Playlist, ...], assets: tuple[MediaAsset, ...]) -> SourceSnapshot:
@@ -182,8 +184,13 @@ def test_hardlink_finalize_dry_run_keeps_stale_dirs(tmp_path: Path) -> None:
     assert stale.exists()  # dry-run 不删除快照外目录
 
 
-def test_register_builtin_registers_both_kinds() -> None:
+def test_register_builtin_presets_registers_archive() -> None:
     registry = PresetRegistry()
-    register_builtin_presets(registry, Path("library"))
-    names = {r.name for r in registry.preset_registrations()} | {r.name for r in registry.target_registrations()}
-    assert names == {"archive", "hardlink"}
+    register_builtin_presets(registry)
+    assert {r.name for r in registry.preset_registrations()} == {"archive"}
+
+
+def test_register_builtin_targets_registers_hardlink() -> None:
+    registry = TargetRegistry()
+    register_builtin_targets(registry, Path("library"))
+    assert {r.name for r in registry.target_registrations()} == {"hardlink"}

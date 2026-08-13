@@ -11,8 +11,9 @@ from musicvault.application.pipeline_use_case import PipelineResult
 from musicvault.application.sync_engine import SyncRunResult
 from musicvault.domain.models import Track
 from musicvault.domain.operations import OperationStatus
-from musicvault.preset_api.v1 import PresetRegistration, TargetRegistration
+from musicvault.preset_api.v1 import PresetRegistration
 from musicvault.shared.tui_progress import BatchProgress, console, ok
+from musicvault.target_api.v1 import TargetRegistration
 
 
 class BatchProgressAdapter:
