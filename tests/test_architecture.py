@@ -94,3 +94,10 @@ def test_target_api_does_not_import_preset_api() -> None:
             if module == "musicvault.preset_api" or module.startswith("musicvault.preset_api."):
                 offenders.append((path, module))
     assert not offenders, f"target_api 违规 import preset_api：{offenders}"
+
+
+def test_preset_api_has_no_orphan_executor_or_media() -> None:
+    """preset_api 不应残留已迁移到 target_api 的 _executor/_media 死代码。"""
+    preset_root = SRC / "preset_api"
+    orphans = [p.name for p in list(preset_root.glob("_executor.py")) + list(preset_root.glob("_media.py"))]
+    assert not orphans, f"preset_api 残留已迁移死代码：{orphans}"

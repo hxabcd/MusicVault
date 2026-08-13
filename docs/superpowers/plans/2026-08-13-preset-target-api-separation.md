@@ -64,7 +64,7 @@
 **Interfaces:**
 - Consumes: `musicvault.domain.models.TargetDescriptor`、`musicvault.domain.operations.Operation`（重导出）、`musicvault.ports.target.TargetOperations`、`musicvault.ports.media.MediaRequest`、`musicvault.shared.utils.format_track_name/safe_filename`
 - Produces:
-  - `target_api.v1.TargetRegistry.register_target(registration) / target_registrations(enabled_only=False) / create_target(name)`
+  - `target_api.v1.TargetRegistry.register_target(registration) / target_registrations(enabled_only=False) / create_target(name, presets)`
   - `target_api.v1.TargetContext(snapshot, target, dry_run=False, target_descriptor=None, media_store_root=None)`
   - `target_api.builtins.register_builtin_targets(registry, target_root, default_playlist_name="未分类")`
 
@@ -81,7 +81,7 @@ def test_target_registry_dependency_injection():
         return object()
     registry.register_target(TargetRegistration(name="t", factory=factory, depends_on=("a",)))
     with pytest.raises(PresetLoadError, match="a"):
-        registry.create_target("t")  # 依赖缺失 → 报错
+        registry.create_target("t", presets={})  # 依赖缺失 → 报错
 ```
 
 覆盖：`register_target`/`target_registrations`/`create_target` 依赖注入与缺失报错、同名拒绝、API 版本校验、`TargetContext` 构造与 `lyrics_file` 边界、`register_builtin_targets` 注册 hardlink。

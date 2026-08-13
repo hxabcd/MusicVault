@@ -6,7 +6,7 @@ from pathlib import Path
 
 from musicvault.domain.models import TargetDescriptor
 from musicvault.shared.utils import audio_spec_key, format_track_name, safe_filename
-from musicvault.target_api.v1 import TargetRegistration, TargetRegistry
+from musicvault.target_api.v1 import PresetLoadError, TargetRegistration, TargetRegistry
 
 
 class HardlinkDistributor:
@@ -89,8 +89,14 @@ def register_builtin_targets(
 ) -> None:
     target_root_path = Path(target_root)
 
-    def hardlink_factory(presets: Mapping[str, object]):
-        preset = presets["archive"]
+    def hardlink_factory(presets: Mapping[str, object] | None = None):
+        # 引擎注入路径恒传 preset 索引；无参路径（TargetRegistration.create）无法注入依赖，
+        # 显式报错而非裸 KeyError/TypeError。
+        if presets is None:
+            raise PresetLoadError("hardlink 需要依赖注入：请经 create_target/SyncEngine 提供 'archive' preset")
+        preset = presets.get("archive")
+        if preset is None:
+            raise PresetLoadError("hardlink 依赖的 'archive' preset 未注册")
         if not (hasattr(preset, "format") and hasattr(preset, "bitrate")):
             raise TypeError(f"hardlink 依赖的 'archive' preset 缺少 format/bitrate 声明：{type(preset).__name__}")
         return HardlinkDistributor(preset, "archive", target_root_path, default_playlist_name)

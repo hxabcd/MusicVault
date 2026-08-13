@@ -100,7 +100,7 @@ def register(registry):
 
 ### 依赖方向
 
-- `target_api` 只依赖 `domain` / `ports` / `shared.utils`（`builtins.py` 的 `format_track_name`、`safe_filename`），**不依赖 `preset_api`**。
+- `target_api` 只依赖 `domain` / `ports` / `shared.utils`（`builtins.py` 的 `format_track_name`、`safe_filename`、`audio_spec_key`），**不依赖 `preset_api`**。
 - `preset_api` 依赖方向不变（domain / ports / shared）。
 - `application`（bootstrap、script_loader、sync_engine、pipeline_use_case）可依赖两个公开包。
 - `adapters` 消费枚举现状不变（`metadata_writer` → MetadataSpec、`organizer` → AudioFormat、`netease_client` → Quality，均属 preset 侧）。

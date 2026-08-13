@@ -152,6 +152,10 @@ class TargetRegistry:
         self._registrations: dict[str, TargetRegistration] = {}
         self._loading_source: str | None = None
 
+    def set_loading_source(self, source: str | None) -> None:
+        """进入/退出脚本加载上下文时设置来源（由 script_loader 调用）。"""
+        self._loading_source = source
+
     def register_target(self, registration: TargetRegistration) -> TargetRegistration:
         if registration.api_version != API_VERSION:
             raise PresetLoadError(
@@ -173,6 +177,11 @@ class TargetRegistry:
         return tuple(item for item in values if item.enabled) if enabled_only else tuple(values)
 
     def create_target(self, name: str, presets: Mapping[str, object]) -> Any:
+        """按名称实例化 sync_target，校验 depends_on 依赖并注入 preset 实例。
+
+        供脚本作者运行时按需实例化；引擎内分发路径（SyncEngine / DistributePipeline）
+        直接调用 factory 注入，不经过本方法。
+        """
         registration = self._registrations.get(name)
         if registration is None:
             raise PresetLoadError(f"未找到 sync_target：{name}")
