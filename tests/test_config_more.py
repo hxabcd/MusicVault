@@ -47,7 +47,7 @@ def test_from_dict_tolerates_non_dict_sections() -> None:
     assert cfg.api_download_url_chunk_size == 200
     assert cfg.api_track_detail_chunk_size == 500
     assert cfg.alias_split_separators == "/、;；"
-    assert cfg.preset_directories == ()
+    assert cfg.script_directories == ()
     assert cfg.builtin_scripts_enabled is True
 
 
@@ -89,7 +89,7 @@ def test_load_existing_file_roundtrip(tmp_path: Path) -> None:
     cfg = Config.load(path)
     assert cfg.workspace == "./ws"
     assert cfg.builtin_scripts_enabled is False
-    assert cfg.preset_directories == ("./p1", "./p2")
+    assert cfg.script_directories == ("./p1", "./p2")
     cfg.cookie = "MUSIC_U=xyz"
     cfg.save()
     loaded = Config.load(path)

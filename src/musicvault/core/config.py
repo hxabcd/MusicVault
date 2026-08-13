@@ -31,7 +31,7 @@ class Config:
     api_download_url_chunk_size: int = 200
     api_track_detail_chunk_size: int = 500
     alias_split_separators: str = "/、;；"
-    preset_directories: tuple[str, ...] = ()
+    script_directories: tuple[str, ...] = ()
     builtin_scripts_enabled: bool = True
     _file: Path | None = field(default=None, init=False, repr=False)
 
@@ -105,21 +105,23 @@ class Config:
         if not isinstance(alias_cfg, dict):
             alias_cfg = {}
 
-        preset_system = raw.get("preset_system") or raw.get("preset") or {}
-        if not isinstance(preset_system, dict):
-            preset_system = {}
-        preset_dirs_raw = (
-            raw.get("preset_directories")
+        script_system = raw.get("script_system") or raw.get("preset_system") or raw.get("preset") or {}
+        if not isinstance(script_system, dict):
+            script_system = {}
+        script_dirs_raw = (
+            raw.get("script_directories")
+            if raw.get("script_directories") is not None
+            else raw.get("preset_directories")
             if raw.get("preset_directories") is not None
-            else preset_system.get("directories", [])
+            else script_system.get("directories", [])
         )
-        if not isinstance(preset_dirs_raw, list):
-            preset_dirs_raw = []
-        preset_directories = tuple(str(item).strip() for item in preset_dirs_raw if str(item).strip())
+        if not isinstance(script_dirs_raw, list):
+            script_dirs_raw = []
+        script_directories = tuple(str(item).strip() for item in script_dirs_raw if str(item).strip())
 
         # 旧声明式 presets 数组宽容忽略（preset 已脚本化，不解析不报错）；
-        # 旧 preset_system.playlist_links 迁移为 preset_system.builtin。
-        builtin_scripts_enabled = bool(preset_system.get("builtin", preset_system.get("playlist_links", True)))
+        # 旧 preset_system.playlist_links 迁移为 script_system.builtin。
+        builtin_scripts_enabled = bool(script_system.get("builtin", script_system.get("playlist_links", True)))
 
         return cls(
             cookie=str(raw.get("cookie") or "").strip(),
@@ -140,7 +142,7 @@ class Config:
             api_download_url_chunk_size=max(50, _parse_positive_int(api_cfg.get("download_url_chunk_size"), 200)),
             api_track_detail_chunk_size=max(50, _parse_positive_int(api_cfg.get("track_detail_chunk_size"), 500)),
             alias_split_separators=str(alias_cfg.get("split_separators") or "/、;；"),
-            preset_directories=preset_directories,
+            script_directories=script_directories,
             builtin_scripts_enabled=builtin_scripts_enabled,
         )
 
@@ -199,8 +201,8 @@ class Config:
             "alias": {
                 "split_separators": self.alias_split_separators,
             },
-            "preset_system": {
-                "directories": list(self.preset_directories),
+            "script_system": {
+                "directories": list(self.script_directories),
                 "builtin": self.builtin_scripts_enabled,
             },
         }

@@ -41,7 +41,7 @@ def build_runtime(config: Config) -> Runtime:
     if config.builtin_scripts_enabled:
         register_builtin_presets(presets)
         register_builtin_targets(targets, config.library_dir, config.default_playlist_name)
-    directories = [Path(directory) for directory in config.preset_directories]
+    directories = [Path(directory) for directory in config.script_directories]
     load_script_directories(directories, presets, targets)
     return Runtime(
         paths=paths,
@@ -88,7 +88,7 @@ def build_pipeline(
     if config.builtin_scripts_enabled:
         register_builtin_presets(registry)
         register_builtin_targets(targets, config.library_dir, config.default_playlist_name)
-    directories = [Path(directory) for directory in config.preset_directories]
+    directories = [Path(directory) for directory in config.script_directories]
     load_script_directories(directories, registry, targets)
     presets = {r.name: registry.create_preset(r.name) for r in registry.preset_registrations(enabled_only=True)}
     download_quality = Quality.maximum(p.quality for p in presets.values())

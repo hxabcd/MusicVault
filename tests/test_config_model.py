@@ -15,7 +15,7 @@ def test_load_creates_default_file() -> None:
         assert path.exists()
         assert cfg.workspace == "./workspace"
         assert cfg.builtin_scripts_enabled is True
-        assert cfg.preset_directories == ()
+        assert cfg.script_directories == ()
         assert not hasattr(cfg, "presets")
         assert not hasattr(cfg, "metadata_fields")
 
@@ -58,8 +58,17 @@ def test_metadata_fields_is_ignored() -> None:
         assert "metadata" not in loaded
 
 
-def test_preset_system_builtin_false() -> None:
-    """preset_system.builtin=false 解析为 builtin_scripts_enabled=False。"""
+def test_script_system_builtin_false() -> None:
+    """script_system.builtin=false 解析为 builtin_scripts_enabled=False。"""
+    with TemporaryDirectory() as tmp:
+        path = Path(tmp) / "config.json"
+        path.write_text(json.dumps({"script_system": {"builtin": False}}), encoding="utf-8")
+        cfg = Config.load(path)
+        assert cfg.builtin_scripts_enabled is False
+
+
+def test_legacy_preset_system_builtin_false() -> None:
+    """旧 preset_system.builtin=false 兼容读取。"""
     with TemporaryDirectory() as tmp:
         path = Path(tmp) / "config.json"
         path.write_text(json.dumps({"preset_system": {"builtin": False}}), encoding="utf-8")
@@ -67,11 +76,11 @@ def test_preset_system_builtin_false() -> None:
         assert cfg.builtin_scripts_enabled is False
 
 
-def test_preset_system_playlist_links_migrates_to_builtin() -> None:
-    """旧 preset_system.playlist_links 迁移为 preset_system.builtin。"""
+def test_script_system_playlist_links_migrates_to_builtin() -> None:
+    """旧 script_system.playlist_links 迁移为 builtin。"""
     with TemporaryDirectory() as tmp:
         path = Path(tmp) / "config.json"
-        path.write_text(json.dumps({"preset_system": {"playlist_links": False}}), encoding="utf-8")
+        path.write_text(json.dumps({"script_system": {"playlist_links": False}}), encoding="utf-8")
         cfg = Config.load(path)
         assert cfg.builtin_scripts_enabled is False
 
@@ -83,8 +92,8 @@ def test_to_dict_uses_builtin_key() -> None:
         cfg.builtin_scripts_enabled = False
         cfg.save()
         loaded = json.loads(path.read_text(encoding="utf-8"))
-        assert loaded["preset_system"]["builtin"] is False
-        assert "playlist_links" not in loaded["preset_system"]
+        assert loaded["script_system"]["builtin"] is False
+        assert "playlist_links" not in loaded["script_system"]
         # 声明式 presets 与 metadata.fields 不再序列化
         assert "presets" not in loaded
         assert "metadata" not in loaded
@@ -114,7 +123,7 @@ def test_roundtrip_global_fields() -> None:
         cfg.save()
         loaded = json.loads(path.read_text(encoding="utf-8"))
         assert loaded["cookie"] == "xyz"
-        assert loaded["preset_system"]["builtin"] is False
+        assert loaded["script_system"]["builtin"] is False
 
 
 def test_old_format_raises() -> None:
@@ -161,4 +170,4 @@ def test_all_global_fields_retained() -> None:
         assert cfg.ffmpeg_path == "/usr/bin/ffmpeg"
         assert cfg.api_download_url_chunk_size == 100
         assert cfg.alias_split_separators == "|"
-        assert cfg.preset_directories == ("./my_presets",)
+        assert cfg.script_directories == ("./my_presets",)
