@@ -87,7 +87,7 @@ msv distribute [--config CONFIG] [--workspace WORKSPACE] [--preset NAME]... [--d
 
 ### 目标分发闭环（preset 脚本）
 
-处理规格由 **preset 脚本**声明（音频规格、歌词输出函数、元数据粒度），**sync_target 脚本**引用 preset 并定义目标端写入逻辑。内置脚本为 `archive` preset + `hardlink` sync_target（按歌单目录硬链接重建 `library/`，幂等清理陈旧链接）；外部脚本通过配置中的 `preset_system.directories` 发现，并依赖版本化的 `musicvault.preset_api.v1`。`distribute` 命令与 `sync` 的 distribute 阶段在一次运行中为所有启用 sync_target 共享同一个 SQLite `SourceSnapshot`：
+处理规格由 **preset 脚本**声明（音频规格、歌词输出函数、元数据粒度），**sync_target 脚本**引用 preset 并定义目标端写入逻辑。内置脚本为 `archive` preset + `hardlink` sync_target（按歌单目录硬链接重建 `library/`，幂等清理陈旧链接）；外部脚本通过配置中的 `script_system.directories` 发现，preset 脚本依赖版本化的 `musicvault.preset_api.v1`，sync_target 脚本依赖 `musicvault.target_api.v1`。`distribute` 命令与 `sync` 的 distribute 阶段在一次运行中为所有启用 sync_target 共享同一个 SQLite `SourceSnapshot`：
 
 ```bash
 msv presets --workspace ./workspace
@@ -162,7 +162,7 @@ msv sync          # 开始同步
 
 首次运行后自动在项目目录生成 `config.json`。所有配置项均有默认值，可按需修改。
 
-处理行为不再由配置数组定义：**preset 已脚本化**（内置 `archive` + `hardlink`，开关为 `preset_system.builtin`；外部脚本目录为 `preset_system.directories`）。旧配置中的 `presets` 数组字段会被宽容忽略（不解析不报错），可手动删除。
+处理行为不再由配置数组定义：**preset 已脚本化**（内置 `archive` + `hardlink`，开关为 `script_system.builtin`；外部脚本目录为 `script_system.directories`）。旧配置中的 `presets` 数组字段会被宽容忽略（不解析不报错），可手动删除。
 
 ```json
 {
@@ -199,7 +199,7 @@ msv sync          # 开始同步
   "alias": {
     "split_separators": "/、;；"
   },
-  "preset_system": {
+  "script_system": {
     "directories": [],
     "builtin": true
   }
@@ -227,8 +227,8 @@ msv sync          # 开始同步
 | `api` | `download_url_chunk_size` | `200` | 下载 URL 批量请求大小 |
 | `api` | `track_detail_chunk_size` | `500` | 曲目详情批量请求大小 |
 | `alias` | `split_separators` | `"/、;；"` | 别名拆分分隔符字符集 |
-| `preset_system` | `directories` | `[]` | 外部 preset / sync_target 脚本目录列表 |
-| `preset_system` | `builtin` | `true` | 是否启用内置 `archive` preset + `hardlink` sync_target（旧键名 `playlist_links` 自动迁移） |
+| `script_system` | `directories` | `[]` | 外部 preset / sync_target 脚本目录列表 |
+| `script_system` | `builtin` | `true` | 是否启用内置 `archive` preset + `hardlink` sync_target（旧键名 `playlist_links` 自动迁移） |
 
 环境变量：
 

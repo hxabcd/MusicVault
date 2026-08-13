@@ -3,8 +3,9 @@
 覆盖 AGENTS.md 的依赖规则：
 - application 不直接 import sqlite3 / rich（具体依赖由 composition root 组装）
 - adapters 不依赖 application / ports（依赖方向 adapters → domain）
-- preset_api 是版本化公开 API：顶层不重导出 v1 符号，脚本只能走版本化命名空间；
+- preset_api / target_api 是版本化公开 API：顶层不重导出 v1 符号，脚本只能走版本化命名空间；
   adapters 允许消费其枚举（Quality/AudioFormat 等，见 Task 8/12）
+- target_api 不得依赖 preset_api（两个平行公开包）
 """
 
 from __future__ import annotations
@@ -58,16 +59,38 @@ def test_adapters_do_not_import_application_or_ports() -> None:
 
 def test_preset_api_top_level_exposes_only_v1() -> None:
     """顶层包不得重导出 v1 公开符号，脚本只能经版本化命名空间访问。"""
-    init = SRC / "preset_api" / "__init__.py"
+    _assert_top_level_exposes_only_v1("preset_api")
+
+
+def test_target_api_top_level_exposes_only_v1() -> None:
+    """target_api 顶层同构：只暴露 v1 命名空间。"""
+    _assert_top_level_exposes_only_v1("target_api")
+
+
+def _assert_top_level_exposes_only_v1(package: str) -> None:
+    init = SRC / package / "__init__.py"
     tree = ast.parse(init.read_text(encoding="utf-8"))
     imported: list[str] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("musicvault.preset_api"):
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith(f"musicvault.{package}"):
             imported.extend(alias.name for alias in node.names)
-    assert imported == ["v1"], f"preset_api 顶层 import 面应为仅 v1，实际：{imported}"
+    assert imported == ["v1"], f"{package} 顶层 import 面应为仅 v1，实际：{imported}"
 
-    import musicvault.preset_api as preset_api
+    import importlib
 
-    assert not hasattr(preset_api, "PresetRegistry")
-    assert not hasattr(preset_api, "PresetContext")
-    assert hasattr(preset_api, "v1")
+    api = importlib.import_module(f"musicvault.{package}")
+
+    assert not hasattr(api, "PresetRegistry")
+    assert not hasattr(api, "TargetContext")
+    assert hasattr(api, "v1")
+
+
+def test_target_api_does_not_import_preset_api() -> None:
+    """target_api 是平行公开包：不依赖 preset_api。"""
+    offenders: list[tuple[Path, str]] = []
+    target_root = SRC / "target_api"
+    for path in _py_files(target_root):
+        for module in _top_level_imports(path):
+            if module == "musicvault.preset_api" or module.startswith("musicvault.preset_api."):
+                offenders.append((path, module))
+    assert not offenders, f"target_api 违规 import preset_api：{offenders}"
