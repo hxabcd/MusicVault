@@ -214,7 +214,7 @@ def test_engine_missing_preset_dependency_marks_failed_without_calling_factory(t
 
 
 def test_engine_media_store_root_reaches_context(tmp_path: Path) -> None:
-    """SyncEngine.media_store_root 透传到 PresetContext（内置 hardlink 的歌词文件依赖）。"""
+    """SyncEngine.media_store_root 透传到 TargetContext（内置 hardlink 的歌词文件依赖）。"""
     seen: list[Path | None] = []
 
     class CapturingSynchronizer:
