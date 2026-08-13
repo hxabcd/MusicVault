@@ -47,7 +47,8 @@ def test_from_dict_tolerates_non_dict_sections() -> None:
     assert cfg.api_download_url_chunk_size == 200
     assert cfg.api_track_detail_chunk_size == 500
     assert cfg.alias_split_separators == "/、;；"
-    assert cfg.script_directories == ()
+    assert cfg.preset_directories == ()
+    assert cfg.target_directories == ()
     assert cfg.builtin_scripts_enabled is True
 
 
@@ -79,6 +80,44 @@ def test_save_without_path_raises() -> None:
         cfg.save()
 
 
+def test_script_system_missing_subkey_falls_back_to_preset_system() -> None:
+    """script_system 存在但缺子键时逐级回退到 preset_system 旧键，不丢值。"""
+    cfg = Config.from_dict(
+        {
+            "script_system": {"builtin": False},
+            "preset_system": {"directories": ["./old_presets"], "builtin": True},
+        }
+    )
+    assert cfg.preset_directories == ("./old_presets",)
+    assert cfg.target_directories == ("./old_presets",)
+    assert cfg.builtin_scripts_enabled is False
+
+
+def test_script_system_directories_precedes_preset_system_builtin() -> None:
+    """directories 与 builtin 各自独立逐级回退：新键子键优先，缺失才落旧键。"""
+    cfg = Config.from_dict(
+        {
+            "script_system": {"directories": ["./new_presets"]},
+            "preset_system": {"builtin": False},
+        }
+    )
+    assert cfg.preset_directories == ("./new_presets",)
+    assert cfg.target_directories == ("./new_presets",)
+    assert cfg.builtin_scripts_enabled is False
+
+
+def test_split_directories_read_independently() -> None:
+    """新键 preset_directories/target_directories 独立读取，优先于旧统一目录回退。"""
+    cfg = Config.from_dict(
+        {
+            "script_system": {"preset_directories": ["./my_presets"], "target_directories": ["./my_targets"]},
+            "preset_system": {"directories": ["./old_presets"]},
+        }
+    )
+    assert cfg.preset_directories == ("./my_presets",)
+    assert cfg.target_directories == ("./my_targets",)
+
+
 def test_load_existing_file_roundtrip(tmp_path: Path) -> None:
     """已存在文件加载后保存，往返字段一致。"""
     path = tmp_path / "config.json"
@@ -89,7 +128,8 @@ def test_load_existing_file_roundtrip(tmp_path: Path) -> None:
     cfg = Config.load(path)
     assert cfg.workspace == "./ws"
     assert cfg.builtin_scripts_enabled is False
-    assert cfg.script_directories == ("./p1", "./p2")
+    assert cfg.preset_directories == ("./p1", "./p2")
+    assert cfg.target_directories == ("./p1", "./p2")
     cfg.cookie = "MUSIC_U=xyz"
     cfg.save()
     loaded = Config.load(path)

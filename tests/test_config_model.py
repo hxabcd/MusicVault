@@ -15,7 +15,9 @@ def test_load_creates_default_file() -> None:
         assert path.exists()
         assert cfg.workspace == "./workspace"
         assert cfg.builtin_scripts_enabled is True
-        assert cfg.script_directories == ()
+        assert cfg.preset_directories == ()
+        assert cfg.target_directories == ()
+        assert not hasattr(cfg, "script_directories")
         assert not hasattr(cfg, "presets")
         assert not hasattr(cfg, "metadata_fields")
 
@@ -170,4 +172,5 @@ def test_all_global_fields_retained() -> None:
         assert cfg.ffmpeg_path == "/usr/bin/ffmpeg"
         assert cfg.api_download_url_chunk_size == 100
         assert cfg.alias_split_separators == "|"
-        assert cfg.script_directories == ("./my_presets",)
+        assert cfg.preset_directories == ("./my_presets",)
+        assert cfg.target_directories == ("./my_presets",)

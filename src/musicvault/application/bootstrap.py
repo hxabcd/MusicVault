@@ -9,7 +9,7 @@ from musicvault.adapters.state.sqlite import SQLiteProcessStateRepository, SQLit
 from musicvault.adapters.targets.filesystem import FilesystemTarget
 from musicvault.application.pipeline_use_case import PipelineUseCase
 from musicvault.application.playlist_use_case import PlaylistUseCase
-from musicvault.application.script_loader import load_script_directories
+from musicvault.application.script_loader import load_preset_directories, load_target_directories
 from musicvault.application.sync_engine import SyncEngine, SyncRunResult
 from musicvault.core.config import Config
 from musicvault.ports.source import SourceClient
@@ -41,8 +41,8 @@ def build_runtime(config: Config) -> Runtime:
     if config.builtin_scripts_enabled:
         register_builtin_presets(presets)
         register_builtin_targets(targets, config.library_dir, config.default_playlist_name)
-    directories = [Path(directory) for directory in config.script_directories]
-    load_script_directories(directories, presets, targets)
+    load_preset_directories([Path(directory) for directory in config.preset_directories], presets)
+    load_target_directories([Path(directory) for directory in config.target_directories], targets)
     return Runtime(
         paths=paths,
         source_state=source_state,
@@ -88,8 +88,8 @@ def build_pipeline(
     if config.builtin_scripts_enabled:
         register_builtin_presets(registry)
         register_builtin_targets(targets, config.library_dir, config.default_playlist_name)
-    directories = [Path(directory) for directory in config.script_directories]
-    load_script_directories(directories, registry, targets)
+    load_preset_directories([Path(directory) for directory in config.preset_directories], registry)
+    load_target_directories([Path(directory) for directory in config.target_directories], targets)
     presets = {r.name: registry.create_preset(r.name) for r in registry.preset_registrations(enabled_only=True)}
     download_quality = Quality.maximum(p.quality for p in presets.values())
     if source is None:

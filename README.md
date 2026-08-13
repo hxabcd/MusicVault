@@ -87,7 +87,7 @@ msv distribute [--config CONFIG] [--workspace WORKSPACE] [--preset NAME]... [--d
 
 ### 目标分发闭环（preset 脚本）
 
-处理规格由 **preset 脚本**声明（音频规格、歌词输出函数、元数据粒度），**sync_target 脚本**引用 preset 并定义目标端写入逻辑。内置脚本为 `archive` preset + `hardlink` sync_target（按歌单目录硬链接重建 `library/`，幂等清理陈旧链接）；外部脚本通过配置中的 `script_system.directories` 发现，preset 脚本依赖版本化的 `musicvault.preset_api.v1`，sync_target 脚本依赖 `musicvault.target_api.v1`。`distribute` 命令与 `sync` 的 distribute 阶段在一次运行中为所有启用 sync_target 共享同一个 SQLite `SourceSnapshot`：
+处理规格由 **preset 脚本**声明（音频规格、歌词输出函数、元数据粒度），**sync_target 脚本**引用 preset 并定义目标端写入逻辑。内置脚本为 `archive` preset + `hardlink` sync_target（按歌单目录硬链接重建 `library/`，幂等清理陈旧链接）；外部脚本通过配置中的 `script_system.preset_directories` / `script_system.target_directories` 分开发现，preset 脚本依赖版本化的 `musicvault.preset_api.v1`，sync_target 脚本依赖 `musicvault.target_api.v1`（编写指南见[编写 preset 与 sync_target 脚本](#编写-preset-与-sync_target-脚本)）。`distribute` 命令与 `sync` 的 distribute 阶段在一次运行中为所有启用 sync_target 共享同一个 SQLite `SourceSnapshot`：
 
 ```bash
 msv presets --workspace ./workspace
@@ -162,7 +162,7 @@ msv sync          # 开始同步
 
 首次运行后自动在项目目录生成 `config.json`。所有配置项均有默认值，可按需修改。
 
-处理行为不再由配置数组定义：**preset 已脚本化**（内置 `archive` + `hardlink`，开关为 `script_system.builtin`；外部脚本目录为 `script_system.directories`）。旧配置中的 `presets` 数组字段会被宽容忽略（不解析不报错），可手动删除。
+处理行为不再由配置数组定义：**preset 已脚本化**（内置 `archive` + `hardlink`，开关为 `script_system.builtin`；外部脚本目录为 `script_system.preset_directories` / `script_system.target_directories`）。旧配置中的 `presets` 数组字段会被宽容忽略（不解析不报错），可手动删除。
 
 ```json
 {
@@ -200,7 +200,8 @@ msv sync          # 开始同步
     "split_separators": "/、;；"
   },
   "script_system": {
-    "directories": [],
+    "preset_directories": [],
+    "target_directories": [],
     "builtin": true
   }
 }
@@ -227,12 +228,150 @@ msv sync          # 开始同步
 | `api` | `download_url_chunk_size` | `200` | 下载 URL 批量请求大小 |
 | `api` | `track_detail_chunk_size` | `500` | 曲目详情批量请求大小 |
 | `alias` | `split_separators` | `"/、;；"` | 别名拆分分隔符字符集 |
-| `script_system` | `directories` | `[]` | 外部 preset / sync_target 脚本目录列表 |
+| `script_system` | `preset_directories` | `[]` | 外部 preset 脚本目录列表 |
+| `script_system` | `target_directories` | `[]` | 外部 sync_target 脚本目录列表 |
 | `script_system` | `builtin` | `true` | 是否启用内置 `archive` preset + `hardlink` sync_target（旧键名 `playlist_links` 自动迁移） |
 
 环境变量：
 
 - `MUSIC_VAULT_CONFIG` — 指定配置文件路径（优先级高于 `--config` 选项的默认值）
+
+## 编写 preset 与 sync_target 脚本
+
+处理行为由两类外部 Python 脚本声明：**preset 脚本**描述「怎么处理」（音质/格式/歌词/元数据），**sync_target 脚本**描述「分发到哪」（目标端写入逻辑）。两类脚本分开存放：preset 脚本放 `script_system.preset_directories` 指定目录，sync_target 脚本放 `script_system.target_directories` 指定目录；`msv sync` / `msv distribute` 启动时分别加载。
+
+脚本约束：
+
+- 文件名不能以 `_` 开头（以 `_` 开头的文件会被跳过）。
+- 必须定义 `register(registry)` 函数；`registry` 即对应注册表——preset 脚本的 `register(presets)` 直接收到 `PresetRegistry`（调 `presets.register_preset`），sync_target 脚本的 `register(targets)` 收到 `TargetRegistry`（调 `targets.register_target`）。
+- 只能依赖版本化公开 API（`musicvault.preset_api.v1` / `musicvault.target_api.v1`），**不得** import 内部模块（含 `shared.utils`）；命名等小工具需自行实现。当前 API 版本为 `v1`（`API_VERSION`）。
+
+### 公开 API 速览（v1）
+
+| 包 | 符号 | 用途 |
+|---|---|---|
+| `preset_api.v1` | `BasePreset` / `PresetRegistration` / `PresetRegistry` | preset 声明与注册 |
+| `preset_api.v1` | `Quality` / `AudioFormat` / `LyricEncoding` / `MetadataSpec` / `audio_spec_key` | 处理规格枚举 |
+| `preset_api.render` | `standard_lrc_line` / `enhanced_lrc_line` / `plain_text_line` | 歌词渲染工具（单行） |
+| `target_api.v1` | `TargetRegistration` / `TargetRegistry` | sync_target 声明与注册 |
+| `target_api.v1` | `TargetSynchronizer` / `TargetContext` / `Operation` | 分发生命周期与上下文 |
+
+### 编写 preset 脚本
+
+preset 是 `BasePreset` 子类，用类属性声明音频规格、歌词输出函数与元数据粒度：
+
+```python
+# portable.py —— MP3 320k 便携 preset
+from musicvault.preset_api.v1 import (
+    API_VERSION,
+    AudioFormat,
+    BasePreset,
+    LyricEncoding,
+    MetadataSpec,
+    PresetRegistration,
+    Quality,
+)
+
+
+class PortablePreset(BasePreset):
+    quality = Quality.HIGHER          # 下载音质档位
+    format = AudioFormat.MP3          # 输出格式（None=保持源格式）
+    bitrate = "320k"                  # 输出码率（format=None 时忽略）
+    lyrics_encodings = (LyricEncoding.UTF_8,)
+    metadata = MetadataSpec.basic()   # 基础元数据 + 封面；full()=完整字段，none()=不嵌封面
+
+    def build_lyrics(self, line):
+        from musicvault.preset_api.render import standard_lrc_line
+
+        return standard_lrc_line(line, include_translation=True)
+
+
+def register(presets):
+    presets.register_preset(
+        PresetRegistration(name="portable", factory=PortablePreset, api_version=API_VERSION)
+    )
+```
+
+`build_lyrics(line)` 接收单行统一歌词格式（`LyricLine`），返回该行的目标文本（标准 LRC / 增强歌词 / 纯文本）；框架按行循环调用并拼接成 `.lrc` 文件内容，返回空字符串的行会被跳过、不输出。注册名须唯一；`PresetRegistration` 还支持 `enabled=False` 临时停用、`source` 标记来源。
+
+### 编写 sync_target 脚本
+
+sync_target 是实现 `TargetSynchronizer` 生命周期（`prepare` → `sync_item` → `finalize`）的分发器；`sync_item` 对快照中每个曲目调用一次。它通过 `depends_on` 声明依赖的 preset，注册时用 `factory(presets)` 接收注入的 preset 实例：
+
+```python
+# copy_to_dir.py —— 把 portable 产物复制到自定义目录
+import re
+from pathlib import Path
+
+from musicvault.target_api.v1 import (
+    API_VERSION,
+    TargetRegistration,
+    TargetSynchronizer,
+)
+
+_INVALID = re.compile(r'[<>:"/\\|?*\x00-\x1F]')
+
+
+def _safe_name(text: str) -> str:
+    return _INVALID.sub("_", text).strip(" .") or "untitled"
+
+
+class CopyDistributor(TargetSynchronizer):
+    def __init__(self, preset, preset_name, target_root):
+        self.preset = preset
+        self.preset_name = preset_name
+        self.target_root = Path(target_root)
+
+    def prepare(self, context):
+        return None
+
+    def sync_item(self, track, context):
+        spec = self.preset.format.value.upper() if self.preset.format else "ORIGINAL"
+        if self.preset.bitrate:
+            spec = f"{spec}-{self.preset.bitrate}"
+        asset = context.media_asset(track.id, spec=spec)
+        if asset is None:
+            return None
+        lrc = context.lyrics_file(track.id, self.preset_name)
+        stem = _safe_name(f"{track.artist_text} - {track.name}")
+        dst_dir = self.target_root / _safe_name(track.album)
+        context.copy(asset.path, dst_dir / f"{stem}{asset.path.suffix}")
+        if lrc is not None:
+            context.copy(lrc, dst_dir / f"{stem}.lrc")
+        return None
+
+    def finalize(self, context):
+        return None
+
+
+def register(targets):
+    targets.register_target(
+        TargetRegistration(
+            name="copy",
+            factory=lambda presets: CopyDistributor(
+                preset=presets["portable"],
+                preset_name="portable",
+                target_root=Path("./copy_out"),  # 外部脚本自行决定输出目录
+            ),
+            depends_on=("portable",),
+            api_version=API_VERSION,
+        )
+    )
+```
+
+`TargetContext` 是 sync_target 访问源数据的唯一入口：
+
+- 快照视图：`context.snapshot` / `context.tracks` / `context.playlists` / `context.media_assets`
+- 资产解析：`context.media_asset(track_id, asset_type="audio", spec=None)` 按规格取媒体资产；`context.lyrics_file(track_id, preset_name)` 取对应 preset 的歌词文件（不存在返回 `None`）
+- 写入操作：`context.link` / `context.copy` / `context.write_text` —— 写目标端必须经这些方法，操作会记录进 `context.operations`，且 `--dry-run` 下只计划不执行
+- 自定义操作：`context.custom_operation(...)` 声明结构化副作用（幂等、可重试、dry-run 语义）
+
+注意：内置 `hardlink` 的输出目录来自配置（`library/`）；**外部脚本拿不到配置对象**，输出目录需自行决定（硬编码、环境变量或基于工作目录）。
+
+### 加载与排错
+
+- 脚本加载失败会抛 `PresetLoadError`，消息含脚本路径与原因；同名注册（含跨目录）会报「发现同名 preset / sync_target」。
+- 用 `msv preset list` / `msv target list` 查看当前已注册的内置与外部脚本；`msv distribute --dry-run` 可预览 sync_target 的操作计划。
 
 ## 目录结构
 

@@ -57,6 +57,10 @@ class PresetRegistry:
         self._registrations: dict[str, PresetRegistration] = {}
         self._loading_source: str | None = None
 
+    def set_loading_source(self, source: str | None) -> None:
+        """进入/退出脚本加载上下文时设置来源（由 script_loader 调用）。"""
+        self._loading_source = source
+
     def register_preset(self, registration: PresetRegistration) -> PresetRegistration:
         if registration.api_version != API_VERSION:
             raise PresetLoadError(

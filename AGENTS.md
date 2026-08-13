@@ -33,7 +33,7 @@ uv python -m musicvault --help                  # CLI 冒烟
 - `adapters/` — 具体实现：`providers/netease_client.py`（SourceClient 的实现）、`state/sqlite.py`、`filesystem/`（workspace、media_store）、`processors/`（decryptor/downloader/lyrics/metadata_writer/organizer）、`targets/`。
 - `preset_api/` — 外部 preset 脚本唯一可依赖的版本化公开 API（当前 `v1`）：`BasePreset`/`PresetRegistration`/`PresetRegistry`（register_preset/preset_registrations/create_preset）、枚举（Quality/AudioFormat/LyricEncoding）、`MetadataSpec`、`audio_spec_key`、`render.py` 歌词渲染工具、`builtins.py`（ArchivePreset）；内部重构不得破坏其签名，脚本不得 import 内部模块。依赖方向放宽：`adapters/` 允许消费其枚举（见 tests/test_architecture.py）。
 - `target_api/` — 外部 sync_target 脚本唯一可依赖的版本化公开 API（当前 `v1`）：`TargetRegistration`/`TargetSynchronizer`/`TargetContext`/`TargetRegistry`（register_target/target_registrations/create_target，含 depends_on 依赖注入）、`Operation`、`builtins.py`（HardlinkDistributor）；平行于 `preset_api`，**不得** import `preset_api`。
-- `application/script_loader.py` — 外部脚本统一加载器：`load_script_directories(directories, presets, targets)` 遍历 `script_directories`，以单参数组合对象 `ScriptRegistries`（`.presets`/`.targets`）调用脚本 `register(registry)`；preset 脚本注册到 `registry.presets`，sync_target 脚本注册到 `registry.targets`。
+- `application/script_loader.py` — 外部脚本加载器：`load_preset_directories(directories, presets)` 与 `load_target_directories(directories, targets)` 分别遍历 `preset_directories` / `target_directories`，以对应注册表直接调用脚本 `register(registry)`；preset 脚本调 `presets.register_preset`，sync_target 脚本调 `targets.register_target`。
 - `cli/`（presentation）— 参数解析、交互登录、Rich 输出与退出码；不得自行组装具体依赖。
 - `core/` — 仅剩 `config.py`（声明式 presets 已退役）；`shared/` — Rich 输出、进度展示、工具函数。
 
@@ -49,7 +49,7 @@ uv python -m musicvault --help                  # CLI 冒烟
 命令：`init` / `sync` / `distribute` / `preset` / `target` / `add` / `remove`（`rm`）/ `list`（`ls`）/ `help`
 
 1. **sync 四阶段链路**：`cli` → `build_pipeline(config)` → `PipelineUseCase` 编排 `SyncUseCase`（fetch 拉取元数据 → pull 下载与歌词统一格式入库）→ `ProcessUseCase`（离线歌词、按 preset 声明转码/写元数据/写歌词文件）→ distribute 阶段（`SyncEngine` 驱动 sync_target 重建目标端）；`--no-distribute` / `--only-distribute` 控制分发，状态经 `SourceStateRecorder` 写入 SQLite。
-2. **distribute 独立命令**：`build_runtime(config)` 组装 → `PresetRegistry` + `TargetRegistry` 各自加载内置（archive preset + hardlink target，受 `script_system.builtin` 开关控制）与 `script_directories` 外部脚本（`load_script_directories` 统一分发）→ `build_distribute_pipeline` 的 `DistributePipeline.run` 按 `prepare → sync_item → finalize` 生命周期执行目标操作；`--dry-run` 不产生副作用；一次运行内所有 sync_target 共享同一 SQLite `SourceSnapshot`。
+2. **distribute 独立命令**：`build_runtime(config)` 组装 → `PresetRegistry` + `TargetRegistry` 各自加载内置（archive preset + hardlink target，受 `script_system.builtin` 开关控制）与外部脚本（`load_preset_directories` / `load_target_directories` 分别加载 `preset_directories` / `target_directories`）→ `build_distribute_pipeline` 的 `DistributePipeline.run` 按 `prepare → sync_item → finalize` 生命周期执行目标操作；`--dry-run` 不产生副作用；一次运行内所有 sync_target 共享同一 SQLite `SourceSnapshot`。
 
 workspace 布局：`cache/`（临时文件，含下载缓存与解密中间产物）、`media_store/<track_id>/`（长期媒体资产，canonical 文件与 `<tid>.<preset>.lrc` 扁平共存）、`library/`（可重建的目标视图，由 hardlink distribute 从 DB 重建）、`logs/`、`state.db`（SQLite，六表职责化 schema：源侧状态 + 处理管线状态；视为全新数据库、幂等建表；写入走事务）。
 

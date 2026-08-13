@@ -31,7 +31,8 @@ class Config:
     api_download_url_chunk_size: int = 200
     api_track_detail_chunk_size: int = 500
     alias_split_separators: str = "/、;；"
-    script_directories: tuple[str, ...] = ()
+    preset_directories: tuple[str, ...] = ()
+    target_directories: tuple[str, ...] = ()
     builtin_scripts_enabled: bool = True
     _file: Path | None = field(default=None, init=False, repr=False)
 
@@ -105,23 +106,54 @@ class Config:
         if not isinstance(alias_cfg, dict):
             alias_cfg = {}
 
-        script_system = raw.get("script_system") or raw.get("preset_system") or raw.get("preset") or {}
-        if not isinstance(script_system, dict):
-            script_system = {}
-        script_dirs_raw = (
-            raw.get("script_directories")
-            if raw.get("script_directories") is not None
-            else raw.get("preset_directories")
-            if raw.get("preset_directories") is not None
-            else script_system.get("directories", [])
+        script_system = raw.get("script_system") if isinstance(raw.get("script_system"), dict) else {}
+        preset_system = raw.get("preset_system") if isinstance(raw.get("preset_system"), dict) else {}
+        legacy_preset = raw.get("preset") if isinstance(raw.get("preset"), dict) else {}
+
+        # 兼容链逐级回退：新键存在但缺子键时不得跳过旧键取值。
+        # 拆分前统一目录 script_directories 作为 preset/target 两字段的公共回退。
+        def _legacy_unified_dirs():
+            raw_dirs = raw.get("script_directories")
+            if raw_dirs is None:
+                raw_dirs = script_system.get("directories")
+            if raw_dirs is None:
+                raw_dirs = preset_system.get("directories")
+            if raw_dirs is None:
+                raw_dirs = legacy_preset.get("directories")
+            return raw_dirs
+
+        def _first_dirs(*candidates: Any) -> tuple[str, ...]:
+            """取第一个为 list 的候选目录，非 list / 缺失视为未提供继续回退。"""
+            for value in candidates:
+                if isinstance(value, list):
+                    return tuple(str(item).strip() for item in value if str(item).strip())
+            return ()
+
+        preset_directories = _first_dirs(
+            raw.get("preset_directories"),
+            script_system.get("preset_directories"),
+            _legacy_unified_dirs(),
         )
-        if not isinstance(script_dirs_raw, list):
-            script_dirs_raw = []
-        script_directories = tuple(str(item).strip() for item in script_dirs_raw if str(item).strip())
+        target_directories = _first_dirs(
+            raw.get("target_directories"),
+            script_system.get("target_directories"),
+            _legacy_unified_dirs(),
+        )
 
         # 旧声明式 presets 数组宽容忽略（preset 已脚本化，不解析不报错）；
         # 旧 preset_system.playlist_links 迁移为 script_system.builtin。
-        builtin_scripts_enabled = bool(script_system.get("builtin", script_system.get("playlist_links", True)))
+        builtin_source = script_system.get("builtin")
+        if builtin_source is None:
+            builtin_source = preset_system.get("builtin")
+        if builtin_source is None:
+            builtin_source = script_system.get("playlist_links")
+        if builtin_source is None:
+            builtin_source = preset_system.get("playlist_links")
+        if builtin_source is None:
+            builtin_source = legacy_preset.get("playlist_links")
+        if builtin_source is None:
+            builtin_source = True
+        builtin_scripts_enabled = bool(builtin_source)
 
         return cls(
             cookie=str(raw.get("cookie") or "").strip(),
@@ -142,7 +174,8 @@ class Config:
             api_download_url_chunk_size=max(50, _parse_positive_int(api_cfg.get("download_url_chunk_size"), 200)),
             api_track_detail_chunk_size=max(50, _parse_positive_int(api_cfg.get("track_detail_chunk_size"), 500)),
             alias_split_separators=str(alias_cfg.get("split_separators") or "/、;；"),
-            script_directories=script_directories,
+            preset_directories=preset_directories,
+            target_directories=target_directories,
             builtin_scripts_enabled=builtin_scripts_enabled,
         )
 
@@ -202,7 +235,8 @@ class Config:
                 "split_separators": self.alias_split_separators,
             },
             "script_system": {
-                "directories": list(self.script_directories),
+                "preset_directories": list(self.preset_directories),
+                "target_directories": list(self.target_directories),
                 "builtin": self.builtin_scripts_enabled,
             },
         }
