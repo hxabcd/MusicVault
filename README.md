@@ -181,7 +181,7 @@ msv sync          # 开始同步
     "download_timeout": 30,
     "api_timeout": 15,
     "cover_timeout": 15,
-    "max_retries": 3
+    "max_retries": 2
   },
   "process": {
     "keep_downloads": false
@@ -221,7 +221,7 @@ msv sync          # 开始同步
 | `network` | `download_timeout` | `30` | 下载 HTTP 超时（秒） |
 | `network` | `api_timeout` | `15` | API 调用超时（秒） |
 | `network` | `cover_timeout` | `15` | 封面下载超时（秒） |
-| `network` | `max_retries` | `3` | 最大重试次数 |
+| `network` | `max_retries` | `2` | 每首曲目下载失败的重试次数（`0`=不重试）；连续重试达其 3 倍即中止整个 sync |
 | `process` | `keep_downloads` | `false` | 是否保留 `cache/` 中的原始下载文件（默认清理） |
 | `playlist` | `default_name` | `"未分类"` | 无歌单关联曲目的默认分类名 |
 | `ffmpeg` | `path` | `""` | ffmpeg 手动路径（空=自动从 PATH 检测） |

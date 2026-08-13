@@ -23,7 +23,7 @@ class Config:
     network_download_timeout: int = 30
     network_api_timeout: int = 15
     network_cover_timeout: int = 15
-    network_max_retries: int = 3
+    network_max_retries: int = 2
     text_cleaning_allowlist: str = ""
     keep_downloads: bool = False
     default_playlist_name: str = "未分类"
@@ -166,7 +166,7 @@ class Config:
             network_download_timeout=max(5, _parse_positive_int(network.get("download_timeout"), 30)),
             network_api_timeout=max(5, _parse_positive_int(network.get("api_timeout"), 15)),
             network_cover_timeout=max(5, _parse_positive_int(network.get("cover_timeout"), 15)),
-            network_max_retries=max(0, min(10, _parse_positive_int(network.get("max_retries"), 3))),
+            network_max_retries=max(0, min(10, _parse_positive_int(network.get("max_retries"), 2))),
             text_cleaning_allowlist=str(text_cleaning.get("allowlist", "")).strip(),
             keep_downloads=bool(process.get("keep_downloads", False)),
             default_playlist_name=str(playlist_cfg.get("default_name") or "未分类").strip() or "未分类",

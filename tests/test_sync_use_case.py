@@ -3,6 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
+from musicvault.adapters.processors.downloader import RetryBudgetExceeded
 from musicvault.adapters.state.sqlite import SQLiteProcessStateRepository, SQLiteSourceStateRepository, SQLiteState
 from musicvault.application.source_state import SourceStateRecorder
 from musicvault.application.sync_use_case import SyncUseCase
@@ -339,3 +342,48 @@ class TestFetchPullFlow:
 
         assert len(result.downloaded) == 1
         assert [track.id for track in repo.create_snapshot().tracks] == [111]
+
+
+class TestDownloadBatchCircuitBreaker:
+    """下载批次熔断：任一曲目抛 RetryBudgetExceeded 即中止整个批次。"""
+
+    def test_budget_trip_aborts_batch_and_saves_partials(self, tmp_path: Path) -> None:
+        """熔断后中止批次：已下载曲目落库保留，未执行曲目被取消，异常向上抛。"""
+        cfg = _make_cfg(tmp_path)
+        cfg.cache_dir.mkdir(parents=True)
+        repo = _repository(cfg)
+        proc_repo = _process_repository(cfg)
+
+        downloader = MagicMock()
+
+        def _download(track: Track, _: str, dest: Path) -> DownloadedTrack:
+            if track.id == 2:
+                raise RetryBudgetExceeded(4)
+            file = dest / f"{track.id}.mp3"
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(b"fake")
+            return DownloadedTrack(track=track, source_file=str(file), is_ncm=False)
+
+        downloader.download_track.side_effect = _download
+
+        svc = SyncUseCase(
+            cfg,
+            MagicMock(),
+            downloader,
+            workers=1,
+            dry_run=False,
+            state=repo,
+            process_state=proc_repo,
+        )
+        tasks = [
+            (_make_track(1), "http://example.com/1.mp3"),
+            (_make_track(2), "http://example.com/2.mp3"),
+            (_make_track(3), "http://example.com/3.mp3"),
+        ]
+
+        with pytest.raises(RetryBudgetExceeded, match="连续重试"):
+            svc._run_download_batch(tasks)
+
+        # 已成功的 track 1 落库保留（中止前收集到的部分结果）
+        snapshot = repo.create_snapshot()
+        assert [track.id for track in snapshot.tracks] == [1]

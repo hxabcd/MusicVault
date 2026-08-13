@@ -21,6 +21,7 @@ import pytest
 
 from musicvault.application.pipeline_use_case import PipelineResult
 from musicvault.application.sync_engine import SyncRunResult
+from musicvault.adapters.processors.downloader import RetryBudgetExceeded
 from musicvault.cli import main as main_module
 from musicvault.cli.main import main
 from musicvault.core.config import Config
@@ -264,6 +265,27 @@ def test_sync_only_distribute_dry_run_force_workspace(tmp_path: Path, monkeypatc
     assert recorder.dry_run is True
     assert str(recorder.cfg.workspace) == str(ws)
     assert recorder.cfg.force is True
+
+
+def test_sync_retry_budget_exceeded_returns_error(tmp_path: Path, monkeypatch, capfd) -> None:
+    """sync 熔断中止：CLI 将异常转换为错误消息并返回非零退出码。"""
+    monkeypatch.setattr("musicvault.cli.main.signal", _fake_signal_module())
+
+    class _FailingPipeline:
+        def build(self, cfg, dry_run=False):
+            return self
+
+        def run_pipeline(self, cookie, **kwargs):
+            raise RetryBudgetExceeded(6)
+
+    monkeypatch.setattr("musicvault.application.bootstrap.build_pipeline", _FailingPipeline().build)
+
+    code = main(["sync", "--config", str(tmp_path / "config.json"), "--cookie", "ck"])
+
+    assert code == 2
+    out = _all_output(capfd)
+    assert "同步失败" in out
+    assert "连续重试" in out
 
 
 def test_sync_first_login_without_playlists_shows_guidance(tmp_path: Path, monkeypatch, capfd) -> None:

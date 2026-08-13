@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from musicvault.adapters.filesystem.workspace import WorkspacePaths
-from musicvault.adapters.processors.downloader import Downloader
+from musicvault.adapters.processors.downloader import Downloader, RetryBudgetExceeded
 from musicvault.adapters.processors.lyrics import convert_lyrics_payload
 from musicvault.application.progress import ProgressReporter
 from musicvault.application.source_state import SourceStateRecorder
@@ -440,6 +440,7 @@ class SyncUseCase:
         total = len(tasks)
         workers = min(self.workers, total)
         results: list[DownloadedTrack] = []
+        aborted_exc: RetryBudgetExceeded | None = None
 
         if progress is not None:
             progress.begin(total=total, phase="下载中")
@@ -457,6 +458,13 @@ class SyncUseCase:
                             results.append(item)
                             if progress is not None:
                                 progress.advance(success=True, idx=idx, item_name=track.name)
+                        except RetryBudgetExceeded as exc:
+                            # 熔断：取消未执行任务、保留已下载曲目、中止整个批次
+                            aborted_exc = exc
+                            for f in future_map:
+                                f.cancel()
+                            logger.error("下载批次熔断：跨曲目连续重试超过上限，中止 sync")
+                            break
                         except Exception as exc:
                             if progress is not None:
                                 progress.advance(success=False, idx=idx, item_name=track.name)
@@ -470,6 +478,10 @@ class SyncUseCase:
             if progress is not None:
                 progress.end()
 
+        if aborted_exc is not None:
+            if results:
+                self._save_partial_downloads(results)
+            raise aborted_exc
         return results
 
     def _save_partial_downloads(self, results: list[DownloadedTrack]) -> None:

@@ -98,7 +98,7 @@ def _registry_with(recording: _RecordingSync) -> TargetRegistry:
 def _patch_processors(monkeypatch, cfg: Config, *, downloader=None, organizer=None) -> MagicMock:
     """替换 PipelineUseCase 内部硬编码的处理器类，隔离真实下载/转码/写标签。"""
     real_downloader = downloader or _real_downloader(cfg)
-    monkeypatch.setattr("musicvault.application.pipeline_use_case.Downloader", lambda: real_downloader)
+    monkeypatch.setattr("musicvault.application.pipeline_use_case.Downloader", lambda **_: real_downloader)
     monkeypatch.setattr("musicvault.application.pipeline_use_case.Decryptor", MagicMock)
     monkeypatch.setattr("musicvault.application.pipeline_use_case.MetadataWriter", MagicMock)
 
@@ -244,3 +244,14 @@ def test_run_pipeline_only_distribute_dry_run(tmp_path: Path, monkeypatch) -> No
     assert result.distribute is not None
     assert recording.contexts != []
     assert recording.contexts[0].dry_run is True
+
+
+def test_pipeline_wires_downloader_retry_config(tmp_path: Path) -> None:
+    """Downloader 接入配置：max_retries 取自 network_max_retries，熔断预算为其 3 倍。"""
+    cfg = _make_cfg(tmp_path)
+    cfg.network_max_retries = 5
+    svc = _pipeline(cfg)
+
+    downloader = svc.sync_service.downloader
+    assert downloader.max_retries == 5
+    assert downloader.retry_budget.limit == 15

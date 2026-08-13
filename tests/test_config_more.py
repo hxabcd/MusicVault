@@ -38,7 +38,7 @@ def test_from_dict_tolerates_non_dict_sections() -> None:
     assert cfg.process_workers is None
     assert cfg.network_download_timeout == 30
     assert cfg.network_api_timeout == 15
-    assert cfg.network_max_retries == 3
+    assert cfg.network_max_retries == 2
     assert cfg.text_cleaning_enabled is True
     assert cfg.text_cleaning_allowlist == ""
     assert cfg.keep_downloads is False
@@ -68,7 +68,7 @@ def test_from_dict_network_invalid_value_uses_default() -> None:
     """network 数值非法时回退默认值。"""
     cfg = Config.from_dict({"network": {"download_timeout": "abc", "max_retries": "x", "api_timeout": -5}})
     assert cfg.network_download_timeout == 30
-    assert cfg.network_max_retries == 3
+    assert cfg.network_max_retries == 2
     # 合法值下限保护：min(10, 5) / max(5, ...) 夹取
     assert cfg.network_api_timeout == 5
 

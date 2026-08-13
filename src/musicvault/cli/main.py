@@ -302,6 +302,9 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         output_info("已取消")
         return 130
+    except Exception as error:  # noqa: BLE001 - CLI 将同步失败转换为非零退出码
+        output_error(f"同步失败：{error}")
+        return 2
     return 0
 
 

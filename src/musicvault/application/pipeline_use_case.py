@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from musicvault.adapters.filesystem.workspace import WorkspacePaths
 from musicvault.adapters.processors.decryptor import Decryptor
-from musicvault.adapters.processors.downloader import Downloader
+from musicvault.adapters.processors.downloader import Downloader, RetryBudget
 from musicvault.adapters.processors.metadata_writer import MetadataWriter
 from musicvault.adapters.processors.organizer import Organizer
 from musicvault.application.process_use_case import ProcessUseCase
@@ -74,7 +74,10 @@ class PipelineUseCase:
         self.sync_service = SyncUseCase(
             cfg=cfg,
             api=api,
-            downloader=Downloader(),
+            downloader=Downloader(
+                max_retries=cfg.network_max_retries,
+                retry_budget=RetryBudget(limit=max(1, cfg.network_max_retries * 3)),
+            ),
             workers=max(1, download_workers),
             dry_run=dry_run,
             state=state,
