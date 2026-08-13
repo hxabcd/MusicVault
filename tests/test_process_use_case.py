@@ -13,7 +13,7 @@ from musicvault.application.process_use_case import ProcessUseCase
 from musicvault.core.config import Config
 from musicvault.domain.lyrics import LyricLine, lyrics_to_json
 from musicvault.domain.models import DownloadedTrack, Track
-from musicvault.preset_api.v1 import AudioFormat, BasePreset, LyricEncoding, MetadataSpec
+from musicvault.preset_api.v1 import AudioFormat, BasePreset, LyricEncoding, MetadataField, MetadataSpec
 
 
 def _make_cfg(tmp_path: Path) -> Config:
@@ -139,7 +139,7 @@ def test_process_empty_lyrics_skips_file(tmp_path: Path) -> None:
 
 
 def test_process_metadata_spec_union(tmp_path: Path) -> None:
-    """两个 preset 共享 spec：embed_cover 与 fields 按并集传给 metadata.write。"""
+    """两个 preset 共享 spec：embed_cover 与 fields 按并集（位或）传给 metadata.write。"""
     cfg = _make_cfg(tmp_path)
     cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
@@ -153,9 +153,9 @@ def test_process_metadata_spec_union(tmp_path: Path) -> None:
     canonical.write_bytes(b"fake flac")
 
     p1 = _DefaultLyricsPreset()
-    p1.metadata = MetadataSpec(embed_cover=True, cover_max_size=800, fields=("year",))
+    p1.metadata = MetadataSpec(embed_cover=True, cover_max_size=800, fields=MetadataField.YEAR)
     p2 = _DefaultLyricsPreset()
-    p2.metadata = MetadataSpec(embed_cover=False, cover_max_size=0, fields=("genre", "year"))
+    p2.metadata = MetadataSpec(embed_cover=False, cover_max_size=0, fields=MetadataField.GENRE | MetadataField.YEAR)
 
     recorder = _RecordingMetadata()
     organizer = MagicMock()
@@ -167,11 +167,11 @@ def test_process_metadata_spec_union(tmp_path: Path) -> None:
     _, merged = recorder.calls[0]
     assert merged.embed_cover is True
     assert merged.cover_max_size == 800
-    assert merged.fields == ("genre", "year")
+    assert merged.fields == (MetadataField.GENRE | MetadataField.YEAR)
 
 
-def test_process_writes_lrc_with_preset_encodings(tmp_path: Path) -> None:
-    """按 preset.lyrics_encodings 的 .value 序列尝试编码（GB18030 可回退）。"""
+def test_process_writes_lrc_with_preset_encoding(tmp_path: Path) -> None:
+    """按 preset.lyrics_encoding 的 codec 直写歌词文件（单编码）。"""
     cfg = _make_cfg(tmp_path)
     cfg.cache_dir.mkdir(parents=True)
     repo = _repository(cfg)
@@ -185,7 +185,7 @@ def test_process_writes_lrc_with_preset_encodings(tmp_path: Path) -> None:
     canonical.write_bytes(b"fake flac")
 
     preset = _DefaultLyricsPreset()
-    preset.lyrics_encodings = (LyricEncoding.GB18030,)
+    preset.lyrics_encoding = LyricEncoding.GB18030
     organizer = MagicMock()
     organizer.route_audio.return_value = {(AudioFormat.FLAC, None): canonical}
     svc = _process_svc(cfg, repo, organizer=organizer, presets={"custom": preset})
@@ -195,6 +195,33 @@ def test_process_writes_lrc_with_preset_encodings(tmp_path: Path) -> None:
     assert data.decode("gb18030") == "[00:01.000]中文歌词"
     with pytest.raises(UnicodeDecodeError):
         data.decode("utf-8")
+
+
+def test_process_skips_lrc_when_encoding_fails(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """有限字符集编码遇不可编码字符：告警并跳过该 preset 歌词文件（不写盘、不替换）。"""
+    cfg = _make_cfg(tmp_path)
+    cfg.cache_dir.mkdir(parents=True)
+    repo = _repository(cfg)
+    repo.upsert_track(_make_track(333))
+    repo.save_lyrics(333, lyrics_to_json((LyricLine(1000, 0, "歌词😀"),)), 0.0)
+
+    raw = cfg.cache_dir / "333.mp3"
+    raw.write_bytes(b"fake mp3")
+    canonical = cfg.media_store_dir / "333" / "333.flac"
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_bytes(b"fake flac")
+
+    preset = _DefaultLyricsPreset()
+    preset.lyrics_encoding = LyricEncoding.GBK
+    organizer = MagicMock()
+    organizer.route_audio.return_value = {(AudioFormat.FLAC, None): canonical}
+    svc = _process_svc(cfg, repo, organizer=organizer, presets={"custom": preset})
+
+    with caplog.at_level(logging.WARNING):
+        svc.run_process(downloaded=[_downloaded(333, raw)], force=False)
+
+    assert not (cfg.media_store_dir / "333" / "333.custom.lrc").exists()
+    assert any("歌词编码失败" in r.message for r in caplog.records)
 
 
 def test_filter_pending_uses_preset_param_specs(tmp_path: Path) -> None:
@@ -288,6 +315,63 @@ def test_run_process_reprocesses_canonical_for_new_spec(tmp_path: Path) -> None:
     assert again.processed == 0
 
 
+def test_run_process_reprocesses_missing_lyrics_for_same_spec_preset(tmp_path: Path) -> None:
+    """同规格 preset、spec 已覆盖但歌词文件缺失：存量曲目按歌词文件补齐重处理，不重复转码。"""
+    from musicvault.application.source_state import build_audio_asset_from_file
+
+    cfg = _make_cfg(tmp_path)
+    cfg.media_store_dir.mkdir(parents=True)
+    repo = _repository(cfg)
+    repo.upsert_track(_make_track(333))
+    repo.save_lyrics(333, lyrics_to_json((LyricLine(1000, 0, "hello"),)), 0.0)
+
+    canonical = cfg.media_store_dir / "333" / "333.flac"
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_bytes(b"fake flac")
+    repo.upsert_track(_make_track(333))
+    repo.upsert_media_asset(build_audio_asset_from_file(333, "FLAC", canonical))
+    _process_repository(cfg).mark_processed(333, 0.0)
+
+    preset = _CustomLyricsPreset("custom lrc")
+    organizer = MagicMock()
+    api = MagicMock()
+    api.get_track_detail.return_value = None  # 走 fallback Track
+    svc = _process_svc(cfg, repo, organizer=organizer, api=api, presets={"custom": preset})
+
+    result = svc.run_process(downloaded=[], force=False)
+
+    assert result.processed == 1
+    assert (cfg.media_store_dir / "333" / "333.custom.lrc").read_text(encoding="utf-8") == "custom lrc"
+    organizer.route_audio.assert_not_called()
+
+
+def test_run_process_no_lyrics_payload_skips_missing_lyrics(tmp_path: Path) -> None:
+    """无歌词原稿的存量曲目（本就不产出歌词文件）不因歌词文件缺失被误判为待处理。"""
+    from musicvault.application.source_state import build_audio_asset_from_file
+
+    cfg = _make_cfg(tmp_path)
+    cfg.media_store_dir.mkdir(parents=True)
+    repo = _repository(cfg)
+
+    canonical = cfg.media_store_dir / "333" / "333.flac"
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_bytes(b"fake flac")
+    repo.upsert_track(_make_track(333))
+    repo.upsert_media_asset(build_audio_asset_from_file(333, "FLAC", canonical))
+    _process_repository(cfg).mark_processed(333, 0.0)
+
+    organizer = MagicMock()
+    api = MagicMock()
+    api.get_track_detail.return_value = None
+    svc = _process_svc(cfg, repo, organizer=organizer, api=api, presets={"custom": _DefaultLyricsPreset()})
+
+    result = svc.run_process(downloaded=[], force=False)
+
+    assert result.processed == 0
+    assert result.skipped == 1
+    organizer.route_audio.assert_not_called()
+
+
 def test_run_process_scan_survives_track_detail_api_failure(tmp_path: Path) -> None:
     """存量 canonical 的 get_track_detail 抛异常（网络故障重试耗尽）→ 单曲计入 failed，其余曲目继续处理。
 
@@ -368,6 +452,8 @@ def test_run_process_force_reprocesses_covered_canonical(tmp_path: Path) -> None
     canonical.parent.mkdir(parents=True, exist_ok=True)
     canonical.write_bytes(b"fake flac")
     mp3.write_bytes(b"fake mp3")
+    # 预置 mp3 preset 的歌词文件：spec 与歌词文件齐全 → 非 force 才跳过
+    (cfg.media_store_dir / "333" / "333.mp3.lrc").write_text("fake lrc", encoding="utf-8")
     repo.upsert_track(_make_track(333))
     repo.upsert_media_asset(build_audio_asset_from_file(333, "FLAC", canonical))
     repo.upsert_media_asset(build_audio_asset_from_file(333, "MP3-192k", mp3))

@@ -18,7 +18,7 @@ from PIL import Image
 from musicvault.adapters.processors import metadata_writer as mw_module
 from musicvault.adapters.processors.metadata_writer import MetadataWriter
 from musicvault.domain.models import Track
-from musicvault.preset_api.v1 import MetadataSpec
+from musicvault.preset_api.v1 import MetadataField, MetadataSpec
 
 
 def _make_mp3(path: Path) -> None:
@@ -346,7 +346,7 @@ class TestWriteEdgeCases:
         assert len(tags.getall("APIC:Cover")) == 1
 
     def test_flac_comment_removed_when_field_dropped(self, tmp_path) -> None:
-        """字段白名单变化后旧 key 被删除（_set_vorbis_text 的 del 分支）。"""
+        """字段开关变化后旧 key 被删除（_set_vorbis_text 的 del 分支）。"""
         from mutagen.flac import FLAC
 
         audio = tmp_path / "1.flac"
@@ -354,11 +354,11 @@ class TestWriteEdgeCases:
         writer = MetadataWriter()
         track_with_raw = _track(tns=["别名"], publishTime=1_600_000_000_000)
 
-        writer.write(audio, track_with_raw, metadata=MetadataSpec(embed_cover=False, fields=("comment",)))
+        writer.write(audio, track_with_raw, metadata=MetadataSpec(embed_cover=False, fields=MetadataField.COMMENT))
         flac = FLAC(str(audio))
         assert flac["comment"] == ["别名"]
 
-        writer.write(audio, track_with_raw, metadata=MetadataSpec(embed_cover=False, fields=("year",)))
+        writer.write(audio, track_with_raw, metadata=MetadataSpec(embed_cover=False, fields=MetadataField.YEAR))
         flac = FLAC(str(audio))
         assert "comment" not in flac
         assert flac["date"] == ["2020"]

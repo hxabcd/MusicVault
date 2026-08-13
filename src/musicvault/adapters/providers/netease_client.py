@@ -168,12 +168,13 @@ class NeteaseClient:
 
     def check_qrcode(self, unikey: str) -> int:
         """检测二维码登录状态：801=等待扫码, 802=已扫码待确认, 803=登录成功, 800=已过期"""
-        resp = _retry_api(self._api().verify_qrcodestatus, qr=unikey)
+        resp = _retry_api(self._api().login_qr_check, key=unikey)
         body = self._check(resp)
         code = int(body.get("code") or 0)
         cookie = body.get("cookie")
         if code == 803 and cookie:
             self._last_cookie = str(cookie)
+            self._api().set_cookie(_parse_cookie_str(str(cookie)))
         return code
 
     def poll_qrcode(self, unikey: str, timeout: int = 120) -> LoginResult:
@@ -264,7 +265,7 @@ class NeteaseClient:
 
         for chunk in self._chunk_ids(track_ids, chunk_size=self.api_download_url_chunk_size):
             ids_csv = ",".join(str(tid) for tid in chunk)
-            resp = _retry_api(self._api().song_url_v1, id=ids_csv, level=self.download_quality.value)
+            resp = _retry_api(self._api().song_url_v1, id=ids_csv, level=self.download_quality.level)
             body = self._check(resp)
             data = body.get("data") or []
             if isinstance(data, dict):

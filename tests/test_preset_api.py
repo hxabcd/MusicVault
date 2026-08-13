@@ -8,6 +8,7 @@ from musicvault.preset_api.v1 import (
     AudioFormat,
     BasePreset,
     LyricEncoding,
+    MetadataField,
     MetadataSpec,
     PresetLoadError,
     PresetRegistration,
@@ -28,23 +29,56 @@ def test_registry_disabled_preset_is_filtered_when_requested() -> None:
 
 def test_quality_maximum():
     assert Quality.maximum([Quality.HIGHER, Quality.HIRES, Quality.EXHIGH]) is Quality.HIRES
+    assert Quality.maximum([Quality.HIRES, Quality.LOSSLESS]) is Quality.HIRES
     assert Quality.maximum([]) is Quality.HIRES
+
+
+def test_quality_int_enum_ordered_and_level():
+    assert Quality.HIRES.value == 5
+    assert Quality.LOSSLESS.value == 4
+    assert Quality.HIRES > Quality.LOSSLESS
+    assert Quality.HIRES.level == "hires"
+    assert Quality.LOSSLESS.level == "lossless"
+
+
+def test_metadata_field_flags():
+    assert MetadataField.NONE.value == 0
+    assert not MetadataField.NONE
+    assert MetadataField.BASIC == (MetadataField.TITLE | MetadataField.ARTIST | MetadataField.ALBUM)
+    assert MetadataField.ALL == (
+        MetadataField.BASIC
+        | MetadataField.YEAR
+        | MetadataField.TRACK_NUMBER
+        | MetadataField.DISC_NUMBER
+        | MetadataField.GENRE
+        | MetadataField.ALBUM_ARTIST
+        | MetadataField.COMPOSER
+        | MetadataField.LYRICIST
+        | MetadataField.COMMENT
+    )
+    assert MetadataField.TITLE in MetadataField.BASIC
+    assert MetadataField.YEAR not in MetadataField.BASIC
+    # 位掩码语义：两个成员 OR 后同时包含两者
+    combo = MetadataField.YEAR | MetadataField.GENRE
+    assert MetadataField.YEAR in combo
+    assert MetadataField.GENRE in combo
 
 
 def test_metadata_spec_presets_and_override():
     assert MetadataSpec.full().embed_cover is True
     assert MetadataSpec.none().embed_cover is False
-    assert MetadataSpec.none().fields == ()
+    assert MetadataSpec.none().fields == MetadataField.NONE
     assert MetadataSpec.basic().embed_cover is True
-    assert MetadataSpec.basic().fields == ()
+    assert MetadataSpec.basic().fields == MetadataField.BASIC
     assert MetadataSpec.basic(embed_cover=False).embed_cover is False
+    assert MetadataSpec.full().fields == MetadataField.ALL
 
 
 def test_base_preset_defaults():
     preset = BasePreset()
     assert preset.quality is Quality.HIRES
     assert preset.format is None
-    assert preset.lyrics_encodings == (LyricEncoding.UTF_8,)
+    assert preset.lyrics_encoding is LyricEncoding.UTF_8
     assert preset.metadata == MetadataSpec.basic()
     assert preset.build_lyrics(LyricLine(1000, 0, "hello")) == "[00:01.000]hello"
 

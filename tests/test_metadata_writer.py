@@ -11,7 +11,7 @@ from mutagen.mp3 import MP3
 
 from musicvault.adapters.processors.metadata_writer import MetadataWriter
 from musicvault.domain.models import Track
-from musicvault.preset_api.v1 import MetadataSpec
+from musicvault.preset_api.v1 import MetadataField, MetadataSpec
 
 
 def _make_mp3(path: Path) -> None:
@@ -97,25 +97,21 @@ class TestWriteMp3:
         assert tags["TEXT"].text == ["作词者"]
         assert tags["APIC:Cover"]
         assert not _id3_key_starts(tags, "USLT")
-        # 注意：full() 的字段白名单不含 "comment"，故 COMM 不写（fields 白名单语义）
+        # full() 含 comment（所有元数据），COMM 写别名/译名
+        assert tags.getall("COMM")[0].text == ["别名"]
 
-    def test_none_spec_writes_no_cover_no_extras(self, tmp_path, track_without_cover, writer) -> None:
-        """MetadataSpec.none() → 无 APIC/无 year 等 extra；基础标题/艺术家/专辑仍写。
-
-        注意：none() 的 fields=() 沿用"空集返回全部 extra"的保留语义，
-        裸曲目（raw={}）下 year/曲号/流派等均为 None 不写，
-        仅 album_artist 回退（TPE2=artist_text）会写出。
-        """
+    def test_none_spec_writes_no_cover_no_fields(self, tmp_path, track_without_cover, writer) -> None:
+        """MetadataSpec.none() → 无封面、无任何字段（连标题/艺术家/专辑也不写）。"""
         audio = tmp_path / "2.mp3"
         _make_mp3(audio)
 
         writer.write(audio, track_without_cover, metadata=MetadataSpec.none())
 
         tags = _read_tags(audio)
-        assert tags["TIT2"].text == ["无封面歌曲"]
-        assert tags["TPE1"].text == ["歌手"]
-        assert tags["TALB"].text == ["专辑"]
-        assert tags["TPE2"].text == ["歌手"]  # album_artist 回退 = artist_text（空集=全写语义）
+        assert "TIT2" not in tags
+        assert "TPE1" not in tags
+        assert "TALB" not in tags
+        assert "TPE2" not in tags
         assert "TDRC" not in tags
         assert "TRCK" not in tags
         assert "TPOS" not in tags
@@ -137,8 +133,8 @@ class TestWriteMp3:
 
         spy.assert_not_called()
 
-    def test_basic_spec_writes_full_extras(self, tmp_path, track, writer, cover_bytes, monkeypatch) -> None:
-        """MetadataSpec.basic()（fields=()）→ 现有语义：extra 全写（年份/曲号等）。"""
+    def test_basic_spec_writes_only_basic_fields(self, tmp_path, track, writer, cover_bytes, monkeypatch) -> None:
+        """MetadataSpec.basic() → 只写标题/艺术家/专辑，不写额外字段。"""
         audio = tmp_path / "4.mp3"
         _make_mp3(audio)
         monkeypatch.setattr(writer, "_download_cover", Mock(return_value=cover_bytes))
@@ -146,23 +142,26 @@ class TestWriteMp3:
         writer.write(audio, track, metadata=MetadataSpec.basic())
 
         tags = _read_tags(audio)
-        assert str(tags["TDRC"].text[0]) == "2020"
-        assert tags["TRCK"].text == ["3"]
-        assert tags["TPOS"].text == ["2"]
-        assert tags["TCON"].text == ["摇滚/流行"]
-        assert tags["TPE2"].text == ["专辑艺术家"]
-        assert tags["TCOM"].text == ["作曲者"]
-        assert tags["TEXT"].text == ["作词者"]
-        assert _id3_key_starts(tags, "COMM")
+        assert tags["TIT2"].text == ["测试歌曲"]
+        assert tags["TPE1"].text == ["歌手A/歌手B"]
+        assert tags["TALB"].text == ["测试专辑"]
+        assert "TDRC" not in tags
+        assert "TRCK" not in tags
+        assert "TPOS" not in tags
+        assert "TCON" not in tags
+        assert "TPE2" not in tags
+        assert "TCOM" not in tags
+        assert "TEXT" not in tags
+        assert not _id3_key_starts(tags, "COMM")
         assert "APIC:Cover" in tags
 
     def test_fields_subset_filters_extras(self, tmp_path, track, writer, cover_bytes, monkeypatch) -> None:
-        """fields 白名单只写指定 extra。"""
+        """fields 位掩码只写指定字段。"""
         audio = tmp_path / "5.mp3"
         _make_mp3(audio)
         monkeypatch.setattr(writer, "_download_cover", Mock(return_value=cover_bytes))
 
-        writer.write(audio, track, metadata=MetadataSpec(fields=("year", "track_number")))
+        writer.write(audio, track, metadata=MetadataSpec(fields=MetadataField.YEAR | MetadataField.TRACK_NUMBER))
 
         tags = _read_tags(audio)
         assert str(tags["TDRC"].text[0]) == "2020"
@@ -193,19 +192,20 @@ class TestWriteFlac:
         assert "lyrics" not in flac
         assert "description" not in flac
         assert len(flac.pictures) == 1
-        # 注意：full() 的字段白名单不含 "comment"，故不写（fields 白名单语义）
+        # full() 含 comment（所有元数据），comment 写别名/译名
+        assert flac["comment"] == ["别名"]
 
-    def test_none_spec_writes_no_cover_no_extras(self, tmp_path, track_without_cover, writer) -> None:
+    def test_none_spec_writes_no_cover_no_fields(self, tmp_path, track_without_cover, writer) -> None:
         audio = tmp_path / "2.flac"
         _make_flac(audio)
 
         writer.write(audio, track_without_cover, metadata=MetadataSpec.none())
 
         flac = FLAC(str(audio))
-        assert flac["title"] == ["无封面歌曲"]
-        assert flac["artist"] == ["歌手"]
-        assert flac["album"] == ["专辑"]
-        assert flac["albumartist"] == ["歌手"]  # album_artist 回退 = artist_text（空集=全写语义）
+        assert "title" not in flac
+        assert "artist" not in flac
+        assert "album" not in flac
+        assert "albumartist" not in flac
         assert "date" not in flac
         assert "tracknumber" not in flac
         assert "discnumber" not in flac

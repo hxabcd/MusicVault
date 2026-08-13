@@ -48,7 +48,7 @@ def _snapshot(track: Track, playlists: tuple[Playlist, ...], assets: tuple[Media
 def test_archive_preset_declares_flac_full_metadata() -> None:
     preset = ArchivePreset()
     assert preset.format == AudioFormat.FLAC
-    assert preset.quality.value == "hires"
+    assert preset.quality.level == "hires"
     assert preset.metadata.embed_cover is True
 
 

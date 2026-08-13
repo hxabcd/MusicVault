@@ -63,8 +63,8 @@ class FakeNeteaseCloudMusicApi:
     def login_qr_key(self, **kwargs):
         return self._respond("login_qr_key", **kwargs)
 
-    def verify_qrcodestatus(self, **kwargs):
-        return self._respond("verify_qrcodestatus", **kwargs)
+    def login_qr_check(self, **kwargs):
+        return self._respond("login_qr_check", **kwargs)
 
     def login_status(self, **kwargs):
         return self._respond("login_status", **kwargs)
@@ -303,11 +303,11 @@ def test_get_qrcode_unikey_and_url():
 
 
 def test_check_qrcode_returns_code_and_captures_cookie():
-    FakeNeteaseCloudMusicApi.responses["verify_qrcodestatus"] = FakeResponse({"code": 803, "cookie": "MUSIC_U=qr"})
+    FakeNeteaseCloudMusicApi.responses["login_qr_check"] = FakeResponse({"code": 803, "cookie": "MUSIC_U=qr"})
     client = NeteaseClient()
     assert client.check_qrcode("unikey1") == 803
     assert client.extract_cookie() == "MUSIC_U=qr"
-    assert FakeNeteaseCloudMusicApi.instances[0].calls[0][1] == {"qr": "unikey1"}
+    assert FakeNeteaseCloudMusicApi.instances[0].calls[0][1] == {"key": "unikey1"}
 
 
 def test_send_sms_code_ok_and_fail():

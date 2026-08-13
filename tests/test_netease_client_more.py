@@ -66,8 +66,8 @@ class FakeNeteaseCloudMusicApi:
     def login_qr_key(self, **kwargs):
         return self._respond("login_qr_key", **kwargs)
 
-    def verify_qrcodestatus(self, **kwargs):
-        return self._respond("verify_qrcodestatus", **kwargs)
+    def login_qr_check(self, **kwargs):
+        return self._respond("login_qr_check", **kwargs)
 
     def login_status(self, **kwargs):
         return self._respond("login_status", **kwargs)
@@ -224,7 +224,7 @@ def test_get_login_status_missing_user_id_raises() -> None:
 
 def test_poll_qrcode_success() -> None:
     """803 表示登录成功：读取登录态返回。"""
-    FakeNeteaseCloudMusicApi.responses["verify_qrcodestatus"] = FakeResponse({"code": 803, "cookie": "MUSIC_U=q"})
+    FakeNeteaseCloudMusicApi.responses["login_qr_check"] = FakeResponse({"code": 803, "cookie": "MUSIC_U=q"})
     FakeNeteaseCloudMusicApi.responses["login_status"] = FakeResponse(
         {"data": {"profile": {"userId": 1, "nickname": "n1"}}}
     )
@@ -233,16 +233,33 @@ def test_poll_qrcode_success() -> None:
     assert result.nickname == "n1"
 
 
+def test_poll_qrcode_injects_cookie_before_login_status() -> None:
+    """扫码成功捕获的 cookie 须注入 SDK 实例，否则 get_login_status 返回未登录。"""
+
+    def _login_status(**kwargs):
+        api = FakeNeteaseCloudMusicApi.instances[-1]
+        if api.cookie:
+            return FakeResponse({"data": {"profile": {"userId": 1, "nickname": "n1"}}})
+        return FakeResponse({"data": {"code": 200, "account": None, "profile": None}})
+
+    FakeNeteaseCloudMusicApi.responses["login_qr_check"] = FakeResponse({"code": 803, "cookie": "MUSIC_U=q"})
+    FakeNeteaseCloudMusicApi.responses["login_status"] = _login_status
+    result = NeteaseClient().poll_qrcode("unikey", timeout=10)
+    assert result.user_id == 1
+    assert result.nickname == "n1"
+    assert FakeNeteaseCloudMusicApi.instances[0].cookie == {"MUSIC_U": "q"}
+
+
 def test_poll_qrcode_expired_raises() -> None:
     """800 表示二维码过期 → RuntimeError。"""
-    FakeNeteaseCloudMusicApi.responses["verify_qrcodestatus"] = FakeResponse({"code": 800})
+    FakeNeteaseCloudMusicApi.responses["login_qr_check"] = FakeResponse({"code": 800})
     with pytest.raises(RuntimeError, match="过期"):
         NeteaseClient().poll_qrcode("unikey", timeout=10)
 
 
 def test_poll_qrcode_times_out(monkeypatch) -> None:
     """一直 801（等待扫码）直到超过 deadline → TimeoutError。"""
-    FakeNeteaseCloudMusicApi.responses["verify_qrcodestatus"] = FakeResponse({"code": 801})
+    FakeNeteaseCloudMusicApi.responses["login_qr_check"] = FakeResponse({"code": 801})
     ticks = {"n": 0}
 
     def fake_monotonic() -> float:

@@ -251,7 +251,7 @@ msv sync          # 开始同步
 | 包 | 符号 | 用途 |
 |---|---|---|
 | `preset_api.v1` | `BasePreset` / `PresetRegistration` / `PresetRegistry` | preset 声明与注册 |
-| `preset_api.v1` | `Quality` / `AudioFormat` / `LyricEncoding` / `MetadataSpec` / `audio_spec_key` | 处理规格枚举 |
+| `preset_api.v1` | `Quality` / `AudioFormat` / `LyricEncoding` / `MetadataSpec` / `MetadataField` / `audio_spec_key` | 处理规格枚举 |
 | `preset_api.render` | `standard_lrc_line` / `enhanced_lrc_line` / `plain_text_line` | 歌词渲染工具（单行） |
 | `target_api.v1` | `TargetRegistration` / `TargetRegistry` | sync_target 声明与注册 |
 | `target_api.v1` | `TargetSynchronizer` / `TargetContext` / `Operation` | 分发生命周期与上下文 |
@@ -277,8 +277,8 @@ class PortablePreset(BasePreset):
     quality = Quality.HIGHER          # 下载音质档位
     format = AudioFormat.MP3          # 输出格式（None=保持源格式）
     bitrate = "320k"                  # 输出码率（format=None 时忽略）
-    lyrics_encodings = (LyricEncoding.UTF_8,)
-    metadata = MetadataSpec.basic()   # 基础元数据 + 封面；full()=完整字段，none()=不嵌封面
+    lyrics_encoding = LyricEncoding.UTF_8   # 歌词文件编码（默认 UTF-8，单编码直写）
+    metadata = MetadataSpec.basic()   # 仅标题/艺术家/专辑 + 封面；full()=所有元数据，none()=无元数据
 
     def build_lyrics(self, line):
         from musicvault.preset_api.render import standard_lrc_line
@@ -292,7 +292,9 @@ def register(presets):
     )
 ```
 
-`build_lyrics(line)` 接收单行统一歌词格式（`LyricLine`），返回该行的目标文本（标准 LRC / 增强歌词 / 纯文本）；框架按行循环调用并拼接成 `.lrc` 文件内容，返回空字符串的行会被跳过、不输出。注册名须唯一；`PresetRegistration` 还支持 `enabled=False` 临时停用、`source` 标记来源。
+`build_lyrics(line)` 接收单行统一歌词格式（`LyricLine`），返回该行的目标文本（标准 LRC / 增强歌词 / 纯文本）；框架按行循环调用并拼接成 `.lrc` 文件内容，返回空字符串的行会被跳过、不输出。注册名须唯一；`PresetRegistration` 还支持 `enabled=False` 临时停用、`source` 标记来源。`metadata.fields` 是 `MetadataField` 位掩码，可用 `MetadataSpec(fields=MetadataField.TITLE | MetadataField.YEAR)` 精确控制写入字段。
+
+`lyrics_encoding` 指定歌词文件编码（默认 UTF-8，单编码直写）：`UTF_8` / `UTF_8_BOM`（带 BOM，便于设备识别）/ `GB18030`（覆盖全 Unicode）/ `GBK` / `GB2312`（简体中文）/ `BIG5` / `BIG5_HKSCS`（繁体中文）/ `SHIFT_JIS` / `EUC_JP`（日文）/ `EUC_KR`（韩文）。歌词文件固定命名为 `<track_id>.<preset>.lrc`，不含编码后缀。编码为有限字符集（GBK/GB2312/BIG5/SHIFT_JIS/EUC_KR 等）时，若歌词含无法编码的字符（如 emoji），该 preset 的歌词文件会被跳过并告警，不会用 `?` 静默替换。
 
 ### 编写 sync_target 脚本
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 import socket
 import threading
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
@@ -30,13 +32,93 @@ from mutagen.id3._frames import (
 from mutagen.mp3 import MP3
 
 from musicvault.domain.models import Track
-from musicvault.preset_api.v1 import MetadataSpec
+from musicvault.preset_api.v1 import MetadataField, MetadataSpec
+
+
+@dataclass(frozen=True)
+class _FieldBinding:
+    """单个元数据字段的提取函数与 MP3/FLAC 写入目标。"""
+
+    extract: Callable[[Track, dict[str, object]], str | None]
+    id3_frame_id: str
+    id3_frame_cls: type
+    vorbis_key: str
+    id3_comment: bool = False
 
 
 class MetadataWriter:
     def __init__(self) -> None:
         self._cover_cache: dict[str, bytes] = {}
         self._cover_cache_lock = threading.Lock()
+        self._fields: dict[MetadataField, _FieldBinding] = {
+            MetadataField.TITLE: _FieldBinding(
+                extract=lambda track, raw: track.name,
+                id3_frame_id="TIT2",
+                id3_frame_cls=TIT2,
+                vorbis_key="title",
+            ),
+            MetadataField.ARTIST: _FieldBinding(
+                extract=lambda track, raw: track.artist_text,
+                id3_frame_id="TPE1",
+                id3_frame_cls=TPE1,
+                vorbis_key="artist",
+            ),
+            MetadataField.ALBUM: _FieldBinding(
+                extract=lambda track, raw: track.album,
+                id3_frame_id="TALB",
+                id3_frame_cls=TALB,
+                vorbis_key="album",
+            ),
+            MetadataField.YEAR: _FieldBinding(
+                extract=lambda track, raw: self._extract_year(raw),
+                id3_frame_id="TDRC",
+                id3_frame_cls=TDRC,
+                vorbis_key="date",
+            ),
+            MetadataField.TRACK_NUMBER: _FieldBinding(
+                extract=lambda track, raw: self._extract_track_number(raw.get("no")),
+                id3_frame_id="TRCK",
+                id3_frame_cls=TRCK,
+                vorbis_key="tracknumber",
+            ),
+            MetadataField.DISC_NUMBER: _FieldBinding(
+                extract=lambda track, raw: self._extract_disc(raw.get("cd")),
+                id3_frame_id="TPOS",
+                id3_frame_cls=TPOS,
+                vorbis_key="discnumber",
+            ),
+            MetadataField.GENRE: _FieldBinding(
+                extract=lambda track, raw: self._extract_genre(raw.get("genre")),
+                id3_frame_id="TCON",
+                id3_frame_cls=TCON,
+                vorbis_key="genre",
+            ),
+            MetadataField.ALBUM_ARTIST: _FieldBinding(
+                extract=lambda track, raw: self._extract_album_artist(raw) or track.artist_text,
+                id3_frame_id="TPE2",
+                id3_frame_cls=TPE2,
+                vorbis_key="albumartist",
+            ),
+            MetadataField.COMPOSER: _FieldBinding(
+                extract=lambda track, raw: self._extract_named_people(raw.get("composer")),
+                id3_frame_id="TCOM",
+                id3_frame_cls=TCOM,
+                vorbis_key="composer",
+            ),
+            MetadataField.LYRICIST: _FieldBinding(
+                extract=lambda track, raw: self._extract_named_people(raw.get("lyricist")),
+                id3_frame_id="TEXT",
+                id3_frame_cls=TEXT,
+                vorbis_key="lyricist",
+            ),
+            MetadataField.COMMENT: _FieldBinding(
+                extract=lambda track, raw: self._extract_comment(raw, track),
+                id3_frame_id="COMM",
+                id3_frame_cls=COMM,
+                vorbis_key="comment",
+                id3_comment=True,
+            ),
+        }
 
     def write(
         self,
@@ -51,7 +133,7 @@ class MetadataWriter:
         if metadata.embed_cover:
             cover_data = self._download_cover(track.cover_url, cover_timeout, metadata.cover_max_size)
 
-        metadata_fields = frozenset(metadata.fields)
+        metadata_fields = metadata.fields
 
         if audio_file.suffix.lower() == ".mp3":
             self._write_mp3(audio_file, track, cover_data, metadata_fields)
@@ -67,25 +149,19 @@ class MetadataWriter:
         path: Path,
         track: Track,
         cover_data: bytes | None,
-        metadata_fields: frozenset[str],
+        metadata_fields: MetadataField,
     ) -> None:
         audio = MP3(str(path))
         tags = audio.tags or ID3()
         tags.clear()
 
-        self._set_id3_text(tags, "TIT2", TIT2, track.name)
-        self._set_id3_text(tags, "TPE1", TPE1, track.artist_text)
-        self._set_id3_text(tags, "TALB", TALB, track.album)
-
-        extras = self._build_extra_metadata(track, metadata_fields)
-        self._set_id3_text(tags, "TDRC", TDRC, extras.get("year"))
-        self._set_id3_text(tags, "TRCK", TRCK, extras.get("track_number"))
-        self._set_id3_text(tags, "TPOS", TPOS, extras.get("disc_number"))
-        self._set_id3_text(tags, "TCON", TCON, extras.get("genre"))
-        self._set_id3_text(tags, "TPE2", TPE2, extras.get("album_artist"))
-        self._set_id3_text(tags, "TCOM", TCOM, extras.get("composer"))
-        self._set_id3_text(tags, "TEXT", TEXT, extras.get("lyricist"))
-        self._set_id3_comment(tags, extras.get("comment"))
+        values = self._build_metadata(track, metadata_fields)
+        for field, binding in self._fields.items():
+            value = values.get(field)
+            if binding.id3_comment:
+                self._set_id3_comment(tags, value)
+            else:
+                self._set_id3_text(tags, binding.id3_frame_id, binding.id3_frame_cls, value)
 
         if cover_data:
             tags.delall("APIC")
@@ -103,22 +179,13 @@ class MetadataWriter:
         path: Path,
         track: Track,
         cover_data: bytes | None,
-        metadata_fields: frozenset[str],
+        metadata_fields: MetadataField,
     ) -> None:
         audio = FLAC(str(path))
-        audio["title"] = track.name
-        audio["artist"] = track.artist_text
-        audio["album"] = track.album
 
-        extras = self._build_extra_metadata(track, metadata_fields)
-        self._set_vorbis_text(audio, "date", extras.get("year"))
-        self._set_vorbis_text(audio, "tracknumber", extras.get("track_number"))
-        self._set_vorbis_text(audio, "discnumber", extras.get("disc_number"))
-        self._set_vorbis_text(audio, "genre", extras.get("genre"))
-        self._set_vorbis_text(audio, "albumartist", extras.get("album_artist"))
-        self._set_vorbis_text(audio, "composer", extras.get("composer"))
-        self._set_vorbis_text(audio, "lyricist", extras.get("lyricist"))
-        self._set_vorbis_text(audio, "comment", extras.get("comment"))
+        values = self._build_metadata(track, metadata_fields)
+        for field, binding in self._fields.items():
+            self._set_vorbis_text(audio, binding.vorbis_key, values.get(field))
 
         if cover_data:
             pic = Picture()
@@ -197,24 +264,13 @@ class MetadataWriter:
         return None
 
     # ------------------------------------------------------------------
-    # Extra metadata builders
+    # Metadata builders
     # ------------------------------------------------------------------
 
-    def _build_extra_metadata(self, track: Track, fields: frozenset[str]) -> dict[str, str | None]:
+    def _build_metadata(self, track: Track, fields: MetadataField) -> dict[MetadataField, str | None]:
+        """按字段开关构建已开启的元数据（key 为 MetadataField 成员）。"""
         raw = track.raw or {}
-        extras = {
-            "year": self._extract_year(raw),
-            "track_number": self._extract_track_number(raw.get("no")),
-            "disc_number": self._extract_disc(raw.get("cd")),
-            "genre": self._extract_genre(raw.get("genre")),
-            "album_artist": self._extract_album_artist(raw) or track.artist_text,
-            "composer": self._extract_named_people(raw.get("composer")),
-            "lyricist": self._extract_named_people(raw.get("lyricist")),
-            "comment": self._extract_comment(raw, track),
-        }
-        if fields:
-            return {k: v for k, v in extras.items() if k in fields}
-        return extras
+        return {field: binding.extract(track, raw) for field, binding in self._fields.items() if field in fields}
 
     def _extract_year(self, raw: dict[str, object]) -> str | None:
         ts = raw.get("publishTime")

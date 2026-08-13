@@ -2,7 +2,7 @@
 
 覆盖 preset 注入缺失、scan 形态过滤、单曲处理失败隔离、中断冒泡、
 track_id 推断失败、年份回退、spec 推断、已处理空标记、详情缓存
-与 LRC 编码回退。
+与 LRC 编码直写（默认 UTF-8、按声明编码、失败抛错）。
 """
 
 from __future__ import annotations
@@ -307,23 +307,21 @@ class TestSafeTrack:
 
 
 class TestWriteLrc:
-    def test_defaults_to_utf8_without_encodings(self, tmp_path: Path) -> None:
-        """encodings 为空：回退 utf-8 写出。"""
+    def test_defaults_to_utf8(self, tmp_path: Path) -> None:
+        """默认 UTF-8 直写。"""
         target = tmp_path / "x.lrc"
 
-        assert _write_lrc(target, "hello", encodings=()) == target
+        assert _write_lrc(target, "hello") == target
         assert target.read_bytes() == b"hello"
 
-    def test_falls_back_when_encoding_fails(self, tmp_path: Path) -> None:
-        """首选编码失败：跳过该编码并用 utf-8（replace）兜底写出。"""
-
-        class _FlakyStr(str):
-            def encode(self, encoding="utf-8", errors="strict"):
-                if errors == "strict":
-                    raise UnicodeEncodeError(encoding, self, 0, 1, "模拟编码失败")
-                return super().encode(encoding, errors=errors)
-
+    def test_writes_with_declared_encoding(self, tmp_path: Path) -> None:
+        """按声明的编码直写。"""
         target = tmp_path / "x.lrc"
-        _write_lrc(target, _FlakyStr("中文"), encodings=(LyricEncoding.UTF_8,))
+        _write_lrc(target, "中文", encoding=LyricEncoding.GB18030)
+        assert target.read_bytes() == "中文".encode("gb18030")
 
-        assert target.read_bytes() == "中文".encode("utf-8")
+    def test_raises_when_encoding_fails(self, tmp_path: Path) -> None:
+        """有限字符集编码遇不可编码字符：抛 UnicodeEncodeError（大声失败，不静默替换）。"""
+        target = tmp_path / "x.lrc"
+        with pytest.raises(UnicodeEncodeError):
+            _write_lrc(target, "歌词😀", encoding=LyricEncoding.GBK)

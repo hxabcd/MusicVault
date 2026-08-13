@@ -60,8 +60,8 @@ def build_source_client(config: Config, download_quality: Quality | None = None)
     """
     if download_quality is None:
         try:
-            download_quality = Quality(config.download_quality)
-        except ValueError:
+            download_quality = Quality[config.download_quality.upper()]
+        except KeyError:
             download_quality = Quality.HIRES
     return NeteaseClient(
         text_cleaning_enabled=config.text_cleaning_enabled,

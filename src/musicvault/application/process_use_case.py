@@ -23,6 +23,7 @@ from musicvault.preset_api.v1 import (
     AudioFormat,
     BasePreset,
     LyricEncoding,
+    MetadataField,
     MetadataSpec,
     PresetLoadError,
     audio_spec_key,
@@ -104,16 +105,15 @@ class ProcessUseCase:
         progress: ProgressReporter | None = None,
     ) -> ProcessResult:
         tasks: list[tuple[Path, Track]] = [(Path(item.source_file), item.track) for item in downloaded]
-        # 补充扫描 media_store 中已存在的 canonical 曲目：preset 声明变更（新增规格）后，
-        # 存量曲目按新 required_specs 重新处理；force 时无条件全部加入。
-        required_specs = {audio_spec_key(p.format, p.bitrate) for p in self.presets.values()}
+        # 补充扫描 media_store 中已存在的 canonical 曲目：preset 声明变更（新增规格或
+        # 缺失的 per-preset 歌词文件）后，存量曲目按需重新处理；force 时无条件全部加入。
         seen_ids = {item.track.id for item in downloaded}
         scan_skipped = 0
         scan_failed = 0
         for canon_path, track_id in self._scan_canonical_files():
             if track_id in seen_ids:
                 continue
-            if not force and self.process_state.is_processed(track_id, required_specs):
+            if not force and self._is_fully_processed(track_id):
                 scan_skipped += 1
                 continue
             try:
@@ -311,10 +311,13 @@ class ProcessUseCase:
 
         for spec_key, canon_path in audio_map.items():
             presets_for_spec = spec_presets.get(spec_key, [])
+            merged_fields = MetadataField.NONE
+            for preset in presets_for_spec:
+                merged_fields |= preset.metadata.fields
             merged = MetadataSpec(
                 embed_cover=any(p.metadata.embed_cover for p in presets_for_spec),
                 cover_max_size=max((p.metadata.cover_max_size for p in presets_for_spec), default=0),
-                fields=tuple(sorted(set().union(*(set(p.metadata.fields) for p in presets_for_spec)))),
+                fields=merged_fields,
             )
             self.metadata.write(canon_path, track_info, metadata=merged, cover_timeout=self.cfg.network_cover_timeout)
 
@@ -340,7 +343,17 @@ class ProcessUseCase:
             if not lyric_text:
                 continue
             lrc_path = track_dir / f"{track_id}.{preset_name}.lrc"
-            _write_lrc(lrc_path, lyric_text, encodings=preset.lyrics_encodings)
+            try:
+                _write_lrc(lrc_path, lyric_text, encoding=preset.lyrics_encoding)
+            except UnicodeEncodeError as exc:
+                logger.warning(
+                    "歌词编码失败（跳过该 preset 的歌词文件）：preset=%s track_id=%s 编码=%s，原因：%s",
+                    preset_name,
+                    track_id,
+                    preset.lyrics_encoding.value,
+                    exc,
+                )
+                continue
 
         # 清理临时文件
         if not is_canonical and not self.cfg.keep_downloads:
@@ -371,6 +384,23 @@ class ProcessUseCase:
     # 已处理状态（processed_files.json 已被 SQLite processed_tracks 替代）
     # ------------------------------------------------------------------
 
+    def _is_fully_processed(self, track_id: int) -> bool:
+        """曲目是否已完整处理：spec 覆盖且每个 preset 的歌词文件齐全。
+
+        无歌词原稿（get_lyrics 为空）的曲目不产出歌词文件，不要求歌词文件存在。
+        """
+        required_specs = {audio_spec_key(p.format, p.bitrate) for p in self.presets.values()}
+        if not self.process_state.is_processed(track_id, required_specs):
+            return False
+        if self.recorder.state.get_lyrics(track_id) and self._missing_lyrics_presets(track_id):
+            return False
+        return True
+
+    def _missing_lyrics_presets(self, track_id: int) -> list[str]:
+        """返回缺少 <tid>.<preset>.lrc 歌词文件的 preset 名列表。"""
+        track_dir = self.paths.media_store / str(track_id)
+        return [name for name in self.presets if not (track_dir / f"{track_id}.{name}.lrc").is_file()]
+
     def _filter_pending(
         self,
         tasks: list[tuple[Path, Track]],
@@ -379,14 +409,12 @@ class ProcessUseCase:
         if force:
             return tasks, 0
 
-        # 必需 spec 以注入的 preset 实例（v1 枚举）为准，不再读取领域 cfg.presets
-        required_specs = {audio_spec_key(p.format, p.bitrate) for p in self.presets.values()}
         pending: list[tuple[Path, Track]] = []
         skipped = 0
         for raw_file, track in tasks:
-            if self.process_state.is_processed(track.id, required_specs):
+            if self._is_fully_processed(track.id):
                 skipped += 1
-                logger.info("跳过已处理文件（spec 已覆盖）：track_id=%s", track.id)
+                logger.info("跳过已处理文件（spec 与歌词文件已覆盖）：track_id=%s", track.id)
                 continue
             pending.append((raw_file, track))
         return pending, skipped
@@ -431,17 +459,7 @@ class ProcessUseCase:
 def _write_lrc(
     target: Path,
     lyric_text: str,
-    encodings: tuple[LyricEncoding, ...] = (LyricEncoding.UTF_8,),
+    encoding: LyricEncoding = LyricEncoding.UTF_8,
 ) -> Path:
-    content = lyric_text or ""
-    encoding_values = tuple(e.value for e in encodings if isinstance(e, LyricEncoding))
-    if not encoding_values:
-        encoding_values = ("utf-8",)
-    for encoding in encoding_values:
-        try:
-            target.write_bytes(content.encode(encoding))
-            return target
-        except UnicodeEncodeError:
-            continue
-    target.write_bytes(content.encode("utf-8", errors="replace"))
+    target.write_bytes((lyric_text or "").encode(encoding.value))
     return target
