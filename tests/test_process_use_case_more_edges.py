@@ -57,7 +57,7 @@ def _process_svc(
 
 
 class _DefaultLyricsPreset(BasePreset):
-    """默认 build_lyrics（standard_lrc）：空行列表返回空文本。"""
+    """默认 build_lyrics（standard_lrc_line）：无歌词行时框架产出空文本。"""
 
     format = AudioFormat.FLAC
 

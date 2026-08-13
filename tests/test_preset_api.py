@@ -46,7 +46,7 @@ def test_base_preset_defaults():
     assert preset.format is None
     assert preset.lyrics_encodings == (LyricEncoding.UTF_8,)
     assert preset.metadata == MetadataSpec.basic()
-    assert preset.build_lyrics((LyricLine(1000, 0, "hello"),)) == "[00:01.000]hello"
+    assert preset.build_lyrics(LyricLine(1000, 0, "hello")) == "[00:01.000]hello"
 
 
 def test_base_preset_subclass_override():
@@ -54,13 +54,13 @@ def test_base_preset_subclass_override():
         quality = Quality.LOSSLESS
         format = AudioFormat.FLAC
 
-        def build_lyrics(self, lines):
-            del lines
+        def build_lyrics(self, line):
+            del line
             return "custom"
 
     preset = MyPreset()
     assert preset.quality is Quality.LOSSLESS
-    assert preset.build_lyrics(()) == "custom"
+    assert preset.build_lyrics(LyricLine(1000, 0, "hello")) == "custom"
 
 
 def test_audio_spec_key():

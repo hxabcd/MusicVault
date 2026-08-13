@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from musicvault.preset_api.render import enhanced_lrc
+from musicvault.preset_api.render import enhanced_lrc_line
 from musicvault.preset_api.v1 import (
     AudioFormat,
     BasePreset,
@@ -18,8 +18,8 @@ class ArchivePreset(BasePreset):
     format = AudioFormat.FLAC
     metadata = MetadataSpec.full()
 
-    def build_lyrics(self, lines):
-        return enhanced_lrc(lines, include_translation=True, include_romaji=True)
+    def build_lyrics(self, line):
+        return enhanced_lrc_line(line, include_translation=True, include_romaji=True)
 
 
 def register_builtin_presets(registry: PresetRegistry) -> None:

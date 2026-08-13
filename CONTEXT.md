@@ -27,7 +27,7 @@ _避免_：导出器（导出器只表达单向生成，不能覆盖后续目标
 **源快照（Source Snapshot）**：一次同步开始时确定的、供所有 Preset 共享的源侧不可变视图。
 _避免_：当前状态（当前状态可能在运行中变化，源快照强调一次运行内的一致性）
 
-**统一歌词格式（Unified Lyrics Format）**：按行结构化的歌词中间表示（LyricLine/LyricWord，含逐字、翻译、罗马音），由 pull 阶段从源端原始歌词转换后存入 SQLite，process 阶段离线消费；preset 的 `build_lyrics` 函数将其渲染为目标文本（标准 LRC、增强歌词等）。
+**统一歌词格式（Unified Lyrics Format）**：按行结构化的歌词中间表示（LyricLine/LyricWord，含逐字、翻译、罗马音），由 pull 阶段从源端原始歌词转换后存入 SQLite，process 阶段离线消费；preset 的 `build_lyrics` 函数逐行渲染为目标文本（标准 LRC、增强歌词等），由框架按行拼接成歌词文件。
 _避免_：文本级合并（文本级翻译合并已退役，渲染基于行模型）
 
 **单向同步（One-way Synchronization）**：数据只从 MusicVault 源侧流向目标端，目标端的修改不会反向写入源侧。

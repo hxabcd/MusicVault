@@ -319,11 +319,16 @@ class ProcessUseCase:
             self.metadata.write(canon_path, track_info, metadata=merged, cover_timeout=self.cfg.network_cover_timeout)
 
         # 歌词文件按 preset 独立（每 preset 一个 build_lyrics 输出）
-        # build_lyrics 是外部 preset 脚本代码：异常按 preset 隔离——该 preset 歌词文件跳过，
+        # build_lyrics 是外部 preset 脚本代码：逐行调用，异常按 preset 隔离——该 preset 歌词文件跳过，
         # 不阻塞其他 preset 的歌词文件与整曲状态（与 _save_lyrics 的降级风格一致）。
         for preset_name, preset in self.presets.items():
             try:
-                lyric_text = preset.build_lyrics(lines)
+                rendered = []
+                for line in lines:
+                    text = preset.build_lyrics(line)
+                    if text:
+                        rendered.append(text)
+                lyric_text = "\n".join(rendered)
             except Exception as exc:  # noqa: BLE001 - preset 脚本异常按 preset 降级
                 logger.warning(
                     "preset 歌词生成失败（跳过该 preset）：preset=%s track_id=%s，原因：%s",

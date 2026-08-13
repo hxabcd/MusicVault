@@ -134,5 +134,5 @@ def test_archive_preset_build_lyrics_enhanced(tmp_path: Path) -> None:
     """ArchivePreset.build_lyrics 使用增强歌词（翻译+罗马音）。"""
     from musicvault.domain.lyrics import LyricLine
 
-    lines = (LyricLine(1000, 3000, "hello", translation="你好", romaji="haro"),)
-    assert ArchivePreset().build_lyrics(lines) == ("[00:01.000]hello\n[00:01.000]你好\n[00:01.000]haro")
+    line = LyricLine(1000, 3000, "hello", translation="你好", romaji="haro")
+    assert ArchivePreset().build_lyrics(line) == "[00:01.000]hello\n[00:01.000]你好\n[00:01.000]haro"

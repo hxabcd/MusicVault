@@ -50,7 +50,6 @@ def test_archive_preset_declares_flac_full_metadata() -> None:
     assert preset.format == AudioFormat.FLAC
     assert preset.quality.value == "hires"
     assert preset.metadata.embed_cover is True
-    assert preset.build_lyrics(()) == ""
 
 
 def test_hardlink_links_audio_and_lyrics_to_owned_playlist(tmp_path: Path) -> None:

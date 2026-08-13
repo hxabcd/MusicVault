@@ -43,15 +43,15 @@ class _CustomLyricsPreset(BasePreset):
 
     def __init__(self, text: str = "custom lrc") -> None:
         self.text = text
-        self.received: tuple[LyricLine, ...] = ()
+        self.received: list[LyricLine] = []
 
-    def build_lyrics(self, lines: tuple[LyricLine, ...]) -> str:
-        self.received = lines
+    def build_lyrics(self, line: LyricLine) -> str:
+        self.received.append(line)
         return self.text
 
 
 class _DefaultLyricsPreset(BasePreset):
-    """默认 build_lyrics（standard_lrc）：空行列表返回空文本。"""
+    """默认 build_lyrics（standard_lrc_line）：无歌词行时框架产出空文本。"""
 
     format = AudioFormat.FLAC
 
@@ -112,7 +112,7 @@ def test_process_writes_lyrics_file_from_preset(tmp_path: Path) -> None:
 
     lrc = cfg.media_store_dir / "333" / "333.custom.lrc"
     assert lrc.read_text(encoding="utf-8") == "custom lrc"
-    assert preset.received == (LyricLine(1000, 0, "hello"),)
+    assert preset.received == [LyricLine(1000, 0, "hello")]
     # 完全离线：不再调用歌词 API
     api.get_track_lyrics.assert_not_called()
 
@@ -428,8 +428,8 @@ def test_process_build_lyrics_error_isolates_preset(tmp_path: Path, caplog) -> N
     class _ExplodingPreset(BasePreset):
         format = AudioFormat.FLAC
 
-        def build_lyrics(self, lines):
-            del lines
+        def build_lyrics(self, line):
+            del line
             raise RuntimeError("preset 脚本崩溃")
 
     p_bad = _ExplodingPreset()
@@ -448,6 +448,47 @@ def test_process_build_lyrics_error_isolates_preset(tmp_path: Path, caplog) -> N
     assert (cfg.media_store_dir / "333" / "333.good.lrc").read_text(encoding="utf-8") == "good lrc"
     # 警告记录含 preset 名与曲目 ID
     assert any("bad" in r.message and "333" in r.message for r in caplog.records)
+
+
+def test_process_multiline_lyrics_filters_empty_lines(tmp_path: Path) -> None:
+    """多行歌词：框架逐行调用 build_lyrics，空文本行被过滤，其余行 join 成 .lrc。"""
+    cfg = _make_cfg(tmp_path)
+    cfg.cache_dir.mkdir(parents=True)
+    repo = _repository(cfg)
+    repo.upsert_track(_make_track(333))
+    repo.save_lyrics(
+        333,
+        lyrics_to_json(
+            (
+                LyricLine(1000, 0, "first"),
+                LyricLine(2000, 0, "skip-me"),
+                LyricLine(3000, 0, "third"),
+            )
+        ),
+        0.0,
+    )
+
+    raw = cfg.cache_dir / "333.mp3"
+    raw.write_bytes(b"fake mp3")
+    canonical = cfg.media_store_dir / "333" / "333.flac"
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_bytes(b"fake flac")
+
+    class _LineFilteringPreset(BasePreset):
+        format = AudioFormat.FLAC
+
+        def build_lyrics(self, line: LyricLine) -> str:
+            if line.text == "skip-me":
+                return ""
+            return f"[{line.start_ms}]{line.text}"
+
+    organizer = MagicMock()
+    organizer.route_audio.return_value = {(AudioFormat.FLAC, None): canonical}
+    svc = _process_svc(cfg, repo, organizer=organizer, presets={"custom": _LineFilteringPreset()})
+    svc.run_process(downloaded=[_downloaded(333, raw)], force=False)
+
+    lrc = cfg.media_store_dir / "333" / "333.custom.lrc"
+    assert lrc.read_text(encoding="utf-8") == "[1000]first\n[3000]third"
 
 
 def test_safe_track_detail_cached_within_instance(tmp_path: Path) -> None:
