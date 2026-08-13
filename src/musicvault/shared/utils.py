@@ -97,6 +97,16 @@ def workspace_rel_path(path: Path, workspace: Path) -> str:
         return str(resolved)
 
 
+def audio_spec_key(fmt: Any, bitrate: str | None) -> str:
+    """音频规格标识：fmt 为 None → ORIGINAL；枚举按 .value.upper()，bitrate 拼后缀。"""
+    if fmt is None:
+        return "ORIGINAL"
+    fmt_upper = fmt.value.upper()
+    if bitrate:
+        return f"{fmt_upper}-{bitrate}"
+    return fmt_upper
+
+
 def load_json(path: Path, default: Any) -> Any:
     """读取 JSON 文件，不存在时返回默认值"""
     # 状态文件缺失或损坏时返回默认值，避免首次运行/中断写入后报错。
