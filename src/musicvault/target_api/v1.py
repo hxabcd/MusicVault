@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import re
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -150,6 +150,7 @@ class TargetRegistry:
 
     def __init__(self) -> None:
         self._registrations: dict[str, TargetRegistration] = {}
+        self._loading_source: str | None = None
 
     def register_target(self, registration: TargetRegistration) -> TargetRegistration:
         if registration.api_version != API_VERSION:
@@ -157,6 +158,8 @@ class TargetRegistry:
                 f"sync_target '{registration.name}' 使用不兼容的 API {registration.api_version}，"
                 f"当前支持 {API_VERSION}（来源：{registration.source}）"
             )
+        if registration.source == "<runtime>" and self._loading_source is not None:
+            registration = replace(registration, source=self._loading_source)
         previous = self._registrations.get(registration.name)
         if previous is not None:
             raise PresetLoadError(

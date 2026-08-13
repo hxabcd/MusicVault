@@ -167,6 +167,8 @@ class PresetRegistry:
                 f"preset '{registration.name}' 使用不兼容的 API {registration.api_version}，"
                 f"当前支持 {API_VERSION}（来源：{registration.source}）"
             )
+        if registration.source == "<runtime>" and self._loading_source is not None:
+            registration = replace(registration, source=self._loading_source)
         previous = self._registrations.get(registration.name) or self._target_registrations.get(registration.name)
         if previous is not None:
             raise PresetLoadError(f"发现同名 preset '{registration.name}'：{previous.source} 与 {registration.source}")
