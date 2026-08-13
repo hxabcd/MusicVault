@@ -45,7 +45,7 @@ class _CustomLyricsPreset(BasePreset):
         self.text = text
         self.received: list[LyricLine] = []
 
-    def build_lyrics(self, line: LyricLine) -> str:
+    def build_lyric_line(self, line: LyricLine) -> str:
         self.received.append(line)
         return self.text
 
@@ -514,7 +514,7 @@ def test_process_build_lyrics_error_isolates_preset(tmp_path: Path, caplog) -> N
     class _ExplodingPreset(BasePreset):
         format = AudioFormat.FLAC
 
-        def build_lyrics(self, line):
+        def build_lyric_line(self, line):
             del line
             raise RuntimeError("preset 脚本崩溃")
 
@@ -563,7 +563,7 @@ def test_process_multiline_lyrics_filters_empty_lines(tmp_path: Path) -> None:
     class _LineFilteringPreset(BasePreset):
         format = AudioFormat.FLAC
 
-        def build_lyrics(self, line: LyricLine) -> str:
+        def build_lyric_line(self, line: LyricLine) -> str:
             if line.text == "skip-me":
                 return ""
             return f"[{line.start_ms}]{line.text}"

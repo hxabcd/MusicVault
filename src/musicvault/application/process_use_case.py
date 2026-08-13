@@ -328,7 +328,7 @@ class ProcessUseCase:
             try:
                 rendered = []
                 for line in lines:
-                    text = preset.build_lyrics(line)
+                    text = preset.build_lyric_line(line)
                     if text:
                         rendered.append(text)
                 lyric_text = "\n".join(rendered)

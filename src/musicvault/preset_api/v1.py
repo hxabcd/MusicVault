@@ -227,7 +227,7 @@ class BasePreset:
     lyrics_encoding: LyricEncoding = LyricEncoding.UTF_8
     metadata: MetadataSpec = MetadataSpec.basic()
 
-    def build_lyrics(self, line: LyricLine) -> str:
+    def build_lyric_line(self, line: LyricLine) -> str:
         from musicvault.preset_api.render import standard_lrc_line
 
         return standard_lrc_line(line)
