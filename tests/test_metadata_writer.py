@@ -213,3 +213,37 @@ class TestWriteFlac:
         assert "lyrics" not in flac
         assert "description" not in flac
         assert not flac.pictures
+
+
+class TestWriteLyrics:
+    def test_mp3_writes_uslt_frame(self, tmp_path, writer) -> None:
+        audio = tmp_path / "l.mp3"
+        _make_mp3(audio)
+
+        writer.write_lyrics(audio, "[00:01.00]hello\n[00:02.00]world")
+
+        tags = _read_tags(audio)
+        uslt = tags.getall("USLT")
+        assert len(uslt) == 1
+        assert uslt[0].text == "[00:01.00]hello\n[00:02.00]world"
+
+    def test_flac_writes_lyrics_vorbis_comment(self, tmp_path, writer) -> None:
+        audio = tmp_path / "l.flac"
+        _make_flac(audio)
+
+        writer.write_lyrics(audio, "[00:01.00]hello")
+
+        flac = FLAC(str(audio))
+        assert flac["lyrics"] == ["[00:01.00]hello"]
+
+    def test_mp3_replaces_existing_uslt(self, tmp_path, writer) -> None:
+        audio = tmp_path / "l2.mp3"
+        _make_mp3(audio)
+        writer.write_lyrics(audio, "old lyrics")
+
+        writer.write_lyrics(audio, "new lyrics")
+
+        tags = _read_tags(audio)
+        uslt = tags.getall("USLT")
+        assert len(uslt) == 1
+        assert uslt[0].text == "new lyrics"

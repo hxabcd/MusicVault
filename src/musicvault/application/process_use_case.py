@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import time
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,6 +23,7 @@ from musicvault.ports.source_state import SourceStateRepository
 from musicvault.preset_api.v1 import (
     AudioFormat,
     BasePreset,
+    LyricEmbed,
     LyricEncoding,
     MetadataField,
     MetadataSpec,
@@ -74,10 +76,31 @@ class ProcessUseCase:
         if presets is None:
             raise PresetLoadError("ProcessUseCase 缺少 preset 实例索引（presets 参数）：请经 build_pipeline 组装注入")
         self._validate_preset_keys(presets)
+        self._validate_lyric_embed(presets)
         self.presets = presets
         # 曲目详情实例级缓存：存量 canonical 扫描与后续处理对同一曲目只打一次详情 API。
         # 无并发问题：scan 路径在主线程，_process_file 收到 prefetched_track 时不再走 _safe_track。
         self._track_detail_cache: dict[int, Track | None] = {}
+
+    @staticmethod
+    def _validate_lyric_embed(presets: Mapping[str, BasePreset]) -> None:
+        """每个音频规格下 OVRRIDE 内嵌 preset 至多一个。
+
+        OVERRIDE 覆盖共享 canonical 文件写歌词标签，会扩展到同 spec 的所有共享者；
+        多个 OVERRIDE 会相互覆盖，无法确定最终歌词，直接报错。
+        """
+        override_counts: dict[tuple[AudioFormat | None, str | None], int] = {}
+        for preset in presets.values():
+            if getattr(preset, "lyric_embed", LyricEmbed.NONE) is not LyricEmbed.OVERRIDE:
+                continue
+            spec = (preset.format, preset.bitrate)
+            override_counts[spec] = override_counts.get(spec, 0) + 1
+        for spec, count in override_counts.items():
+            if count > 1:
+                raise PresetLoadError(
+                    f"同一音频规格下只允许一个 OVERRIDE 内嵌 preset：{spec} 声明了 {count} 个"
+                    "（OVERRIDE 会覆盖共享 canonical，多个会相互覆盖）"
+                )
 
     @staticmethod
     def _validate_preset_keys(presets: Mapping[str, BasePreset]) -> None:
@@ -355,11 +378,53 @@ class ProcessUseCase:
                 )
                 continue
 
+            embedded_path = self._embed_lyrics(preset, preset_name, track_id, track_dir, audio_map, lyric_text)
+            if embedded_path is not None:
+                audio_map[preset.asset_spec] = embedded_path
+
         # 清理临时文件
         if not is_canonical and not self.cfg.keep_downloads:
             raw_file.unlink(missing_ok=True)
 
         return audio_map
+
+    def _embed_lyrics(
+        self,
+        preset: BasePreset,
+        preset_name: str,
+        track_id: int,
+        track_dir: Path,
+        audio_map: dict[str, Path],
+        lyric_text: str,
+    ) -> Path | None:
+        """按 preset.lyric_embed 策略写入歌词标签；失败按 preset 降级（不影响 .lrc 文件）。
+
+        OVERRIDE 覆盖共享 canonical（零额外空间），返回 None；SEPARATE 复制独立副本
+        <tid>.<preset>.<ext> 并返回副本路径，调用方以 preset.asset_spec 注册进状态。
+        """
+        if preset.lyric_embed is LyricEmbed.NONE:
+            return None
+        spec_key = audio_spec_key(preset.format, preset.bitrate)
+        canon_path = audio_map.get(spec_key)
+        if canon_path is None:
+            return None
+        try:
+            if preset.lyric_embed is LyricEmbed.OVERRIDE:
+                self.metadata.write_lyrics(canon_path, lyric_text)
+                return None
+            suffix = canon_path.suffix.lstrip(".") or "audio"
+            copy_path = track_dir / f"{track_id}.{preset_name}.{suffix}"
+            shutil.copy2(canon_path, copy_path)
+            self.metadata.write_lyrics(copy_path, lyric_text)
+            return copy_path
+        except Exception as exc:  # noqa: BLE001 - 内嵌失败按 preset 降级
+            logger.warning(
+                "preset 内嵌歌词失败（跳过内嵌）：preset=%s track_id=%s，原因：%s",
+                preset_name,
+                track_id,
+                exc,
+            )
+            return None
 
     def _spec_from_canonical(self, path: Path) -> tuple[AudioFormat | None, str | None] | None:
         name = path.stem

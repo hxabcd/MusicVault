@@ -28,6 +28,7 @@ from mutagen.id3._frames import (
     TPE2,
     TPOS,
     TRCK,
+    USLT,
 )
 from mutagen.mp3 import MP3
 
@@ -195,6 +196,31 @@ class MetadataWriter:
             audio.clear_pictures()
             audio.add_picture(pic)
 
+        audio.save()
+
+    # ------------------------------------------------------------------
+    # Lyrics embedding
+    # ------------------------------------------------------------------
+
+    def write_lyrics(self, audio_file: Path, lyric_text: str) -> None:
+        """把渲染后的歌词文本写入音频文件标签（MP3 USLT / FLAC LYRICS）。"""
+        if audio_file.suffix.lower() == ".mp3":
+            self._write_mp3_lyrics(audio_file, lyric_text)
+        elif audio_file.suffix.lower() == ".flac":
+            self._write_flac_lyrics(audio_file, lyric_text)
+
+    def _write_mp3_lyrics(self, path: Path, lyric_text: str) -> None:
+        audio = MP3(str(path))
+        tags = audio.tags or ID3()
+        tags.delall("USLT")
+        if lyric_text:
+            tags.add(USLT(encoding=3, lang="eng", desc="", text=lyric_text))
+        audio.tags = tags
+        audio.save(v2_version=3)
+
+    def _write_flac_lyrics(self, path: Path, lyric_text: str) -> None:
+        audio = FLAC(str(path))
+        self._set_vorbis_text(audio, "lyrics", lyric_text)
         audio.save()
 
     # ------------------------------------------------------------------

@@ -24,10 +24,15 @@ class HardlinkDistributor:
         return None
 
     def sync_item(self, track, context) -> None:
-        spec_key = audio_spec_key(self.preset.format, self.preset.bitrate)
-        asset = context.media_asset(track.id, spec=spec_key)
+        # 独立内嵌副本（SEPARATE preset）以 :embedded 变体 spec 注册进状态，
+        # 这里按 preset 声明的资产 spec 查询，由 resolver 透明命中，target 不感知内嵌逻辑。
+        spec = getattr(self.preset, "asset_spec", None)
+        if spec is None:
+            spec = audio_spec_key(self.preset.format, self.preset.bitrate)
+        asset = context.media_asset(track.id, spec=spec)
         if asset is None:
             return None
+        audio_path = asset.path
         lrc = context.lyrics_file(track.id, self.preset_name)
         owned_names = {safe_filename(pl.name) for pl in context.playlists if track.id in pl.track_ids}
         if not owned_names:
@@ -35,14 +40,14 @@ class HardlinkDistributor:
 
         if not context.dry_run:
             # 删除类副作用不进入 OperationExecutor 记录，dry-run 下必须跳过。
-            self._remove_stale_links(asset.path, lrc, owned_names)
+            self._remove_stale_links(audio_path, lrc, owned_names)
         stem = format_track_name(self.filename_template, track)
         for dirname in owned_names:
             dst_dir = self.target_root / dirname
             if not context.dry_run:
                 # 目录创建是副作用，dry-run 只计划链接（executor 的 PLANNED 语义）
                 dst_dir.mkdir(parents=True, exist_ok=True)
-            context.link(asset.path, dst_dir / f"{stem}{asset.path.suffix}")
+            context.link(audio_path, dst_dir / f"{stem}{audio_path.suffix}")
             if lrc is not None:
                 context.link(lrc, dst_dir / f"{stem}.lrc")
         return None

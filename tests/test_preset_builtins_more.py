@@ -131,8 +131,8 @@ def test_create_target_rejects_archive_without_declarations(tmp_path: Path) -> N
 
 
 def test_archive_preset_build_lyrics_enhanced(tmp_path: Path) -> None:
-    """ArchivePreset.build_lyrics 使用增强歌词（翻译+罗马音）。"""
+    """ArchivePreset.build_lyrics 使用增强歌词（翻译）。"""
     from musicvault.domain.lyrics import LyricLine
 
-    line = LyricLine(1000, 3000, "hello", translation="你好", romaji="haro")
-    assert ArchivePreset().build_lyric_line(line) == "[00:01.000]hello\n[00:01.000]你好\n[00:01.000]haro"
+    line = LyricLine(1000, 3000, "hello", translation="你好")
+    assert ArchivePreset().build_lyric_line(line) == "[00:01.000]hello\n[00:01.000]你好"

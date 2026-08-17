@@ -16,6 +16,7 @@ __all__ = [
     "API_VERSION",
     "AudioFormat",
     "BasePreset",
+    "LyricEmbed",
     "LyricEncoding",
     "MetadataField",
     "MetadataSpec",
@@ -129,6 +130,19 @@ class AudioFormat(Enum):
     OPUS = "opus"
 
 
+class LyricEmbed(Enum):
+    """歌词内嵌音频标签策略。"""
+
+    NONE = 0
+    """不内嵌歌词（默认），歌词以独立 .lrc 文件输出"""
+
+    OVERRIDE = 1
+    """覆盖该 spec 的共享 canonical 音频文件写歌词标签（零额外空间；该 spec 仅允许一个，见 process 校验）"""
+
+    SEPARATE = 2
+    """复制 canonical 为独立副本 <tid>.<preset>.<ext> 并内嵌歌词，只对该 preset 生效"""
+
+
 class LyricEncoding(Enum):
     """歌词文件编码（value 为 Python codec 名，可直接传给 str.encode）。"""
 
@@ -225,7 +239,20 @@ class BasePreset:
     bitrate: str | None = None
     # 歌词文件编码：单编码直写；有限字符集（GBK/GB2312/BIG5/SHIFT_JIS/EUC_KR 等）编码失败时该 preset 歌词文件跳过并告警
     lyrics_encoding: LyricEncoding = LyricEncoding.UTF_8
+    # 歌词内嵌音频标签策略：NONE（默认）/ OVERRIDE（覆盖共享 canonical）/ SEPARATE（独立副本）
+    lyric_embed: LyricEmbed = LyricEmbed.NONE
     metadata: MetadataSpec = MetadataSpec.basic()
+
+    @property
+    def asset_spec(self) -> str:
+        """该 preset 消费的音频资产 spec：SEPARATE 时指向内嵌副本（:embedded 变体），否则为 audio_spec_key。
+
+        target 按此 spec 查询媒体资产即可透明命中正确版本，无需感知内嵌逻辑。
+        """
+        base = audio_spec_key(self.format, self.bitrate)
+        if self.lyric_embed is LyricEmbed.SEPARATE:
+            return f"{base}:embedded"
+        return base
 
     def build_lyric_line(self, line: LyricLine) -> str:
         from musicvault.preset_api.render import standard_lrc_line

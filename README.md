@@ -15,6 +15,7 @@
 - **自动增量同步** — 拉取远端新增曲目，清理远端已删除曲目（以远端为准）
 - **多线程下载** — 自动根据 CPU 核心数调整并发数
 - **Preset 脚本化处理** — preset 是 Python 脚本声明的处理规格（音质、输出格式/码率、封面嵌入、歌词输出函数、元数据粒度），内置 `archive`（无损：Hi-Res 音质、逐字歌词 / 标准歌词含翻译、完整元数据 + 封面），可通过外部脚本目录自由增删改
+- **内嵌歌词** — preset 可声明 `lyric_embed` 把歌词写进音频文件标签（MP3 `USLT` / FLAC `LYRICS`）：`OVERRIDE` 覆盖共享 canonical（零额外空间），`SEPARATE` 复制独立副本 `<tid>.<preset>.<ext>`；target 按 preset 声明的资产规格透明命中副本，无需感知内嵌逻辑
 - **四阶段流水线** — `sync` 按 fetch（拉取元数据）→ pull（下载与歌词入库）→ process（按 preset 处理）→ distribute（分发到目标端）顺序执行
 - **歌词翻译合并** — 支持独立行带时间戳（separate）、同行前置（inline）、独立行无时间戳（notimestamp）三种翻译格式，可选附带罗马音
 - **多歌单共享曲目** — 同一曲目出现在多个歌单时使用硬链接，节省磁盘空间
@@ -251,7 +252,7 @@ msv sync          # 开始同步
 | 包 | 符号 | 用途 |
 |---|---|---|
 | `preset_api.v1` | `BasePreset` / `PresetRegistration` / `PresetRegistry` | preset 声明与注册 |
-| `preset_api.v1` | `Quality` / `AudioFormat` / `LyricEncoding` / `MetadataSpec` / `MetadataField` / `audio_spec_key` | 处理规格枚举 |
+| `preset_api.v1` | `Quality` / `AudioFormat` / `LyricEncoding` / `LyricEmbed` / `MetadataSpec` / `MetadataField` / `audio_spec_key` | 处理规格枚举 |
 | `preset_api.render` | `standard_lrc_line` / `enhanced_lrc_line` / `plain_text_line` | 歌词渲染工具（单行） |
 | `target_api.v1` | `TargetRegistration` / `TargetRegistry` | sync_target 声明与注册 |
 | `target_api.v1` | `TargetSynchronizer` / `TargetContext` / `Operation` | 分发生命周期与上下文 |
@@ -266,6 +267,7 @@ from musicvault.preset_api.v1 import (
     API_VERSION,
     AudioFormat,
     BasePreset,
+    LyricEmbed,
     LyricEncoding,
     MetadataSpec,
     PresetRegistration,
@@ -278,6 +280,7 @@ class PortablePreset(BasePreset):
     format = AudioFormat.MP3          # 输出格式（None=保持源格式）
     bitrate = "320k"                  # 输出码率（format=None 时忽略）
     lyrics_encoding = LyricEncoding.UTF_8   # 歌词文件编码（默认 UTF-8，单编码直写）
+    lyric_embed = LyricEmbed.NONE     # 歌词内嵌策略（默认 NONE 不内嵌）
     metadata = MetadataSpec.basic()   # 仅标题/艺术家/专辑 + 封面；full()=所有元数据，none()=无元数据
 
     def build_lyrics(self, line):
@@ -295,6 +298,14 @@ def register(presets):
 `build_lyrics(line)` 接收单行统一歌词格式（`LyricLine`），返回该行的目标文本（标准 LRC / 增强歌词 / 纯文本）；框架按行循环调用并拼接成 `.lrc` 文件内容，返回空字符串的行会被跳过、不输出。注册名须唯一；`PresetRegistration` 还支持 `enabled=False` 临时停用、`source` 标记来源。`metadata.fields` 是 `MetadataField` 位掩码，可用 `MetadataSpec(fields=MetadataField.TITLE | MetadataField.YEAR)` 精确控制写入字段。
 
 `lyrics_encoding` 指定歌词文件编码（默认 UTF-8，单编码直写）：`UTF_8` / `UTF_8_BOM`（带 BOM，便于设备识别）/ `GB18030`（覆盖全 Unicode）/ `GBK` / `GB2312`（简体中文）/ `BIG5` / `BIG5_HKSCS`（繁体中文）/ `SHIFT_JIS` / `EUC_JP`（日文）/ `EUC_KR`（韩文）。歌词文件固定命名为 `<track_id>.<preset>.lrc`，不含编码后缀。编码为有限字符集（GBK/GB2312/BIG5/SHIFT_JIS/EUC_KR 等）时，若歌词含无法编码的字符（如 emoji），该 preset 的歌词文件会被跳过并告警，不会用 `?` 静默替换。
+
+`lyric_embed` 指定是否把歌词写进音频文件标签（默认 `LyricEmbed.NONE`，歌词仍以 `.lrc` 文件输出）：
+
+- `LyricEmbed.NONE`（默认）— 不内嵌，歌词仅以 `<track_id>.<preset>.lrc` 输出。
+- `LyricEmbed.OVERRIDE` — 覆盖该 preset 音频规格（`format`/`bitrate`）对应的共享 canonical 文件，把渲染歌词写入其标签（MP3 `USLT` / FLAC `LYRICS`）。**零额外空间**；同一音频规格下至多一个 `OVERRIDE`，多个会报错。
+- `LyricEmbed.SEPARATE` — 复制 canonical 为独立副本 `<track_id>.<preset>.<ext>` 并写入歌词标签，只对该 preset 生效，不污染共享 canonical。副本以 `<audio_spec>:embedded` 变体规格注册进状态。
+
+内嵌歌词与 `.lrc` 文件并存（同一渲染文本双路输出）。target 消费音频时按 preset 声明的资产规格（`preset.asset_spec`）查询：`OVERRIDE`/`NONE` 命中 canonical，`SEPARATE` 命中内嵌副本；内置 `hardlink` 已自动处理，外部 sync_target 需用 `preset.asset_spec` 而非 `audio_spec_key(...)` 查询才能命中内嵌副本。
 
 ### 编写 sync_target 脚本
 
@@ -364,7 +375,7 @@ def register(targets):
 `TargetContext` 是 sync_target 访问源数据的唯一入口：
 
 - 快照视图：`context.snapshot` / `context.tracks` / `context.playlists` / `context.media_assets`
-- 资产解析：`context.media_asset(track_id, asset_type="audio", spec=None)` 按规格取媒体资产；`context.lyrics_file(track_id, preset_name)` 取对应 preset 的歌词文件（不存在返回 `None`）
+- 资产解析：`context.media_asset(track_id, asset_type="audio", spec=None)` 按规格取媒体资产；`context.lyrics_file(track_id, preset_name)` 取对应 preset 的歌词文件（不存在返回 `None`）。音频规格优先用注入 preset 的 `preset.asset_spec`（`SEPARATE` 内嵌 preset 会命中 `:embedded` 副本，普通 preset 与 `audio_spec_key(...)` 等价）
 - 写入操作：`context.link` / `context.copy` / `context.write_text` —— 写目标端必须经这些方法，操作会记录进 `context.operations`，且 `--dry-run` 下只计划不执行
 - 自定义操作：`context.custom_operation(...)` 声明结构化副作用（幂等、可重试、dry-run 语义）
 
@@ -383,7 +394,7 @@ def register(targets):
 workspace/
 ├── cache/                临时文件（下载缓存、解密中间产物，可随时清理）
 ├── media_store/
-│   └── <track_id>/       长期媒体资产（canonical 文件：{track_id}.flac/.mp3 及 {track_id}.{preset}.lrc）
+│   └── <track_id>/       长期媒体资产（canonical：{track_id}.flac/.mp3；衍生：{track_id}.{preset}.lrc 歌词、{track_id}.{preset}.{ext} 内嵌副本）
 ├── library/              可重建的目标视图（由 hardlink distribute 从 DB 重建，按歌单名分目录）
 │   └── <歌单名>/         如：<歌单名>/{artist} - {name}.flac
 ├── logs/                 运行日志

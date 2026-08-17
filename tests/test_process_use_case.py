@@ -13,7 +13,15 @@ from musicvault.application.process_use_case import ProcessUseCase
 from musicvault.core.config import Config
 from musicvault.domain.lyrics import LyricLine, lyrics_to_json
 from musicvault.domain.models import DownloadedTrack, Track
-from musicvault.preset_api.v1 import AudioFormat, BasePreset, LyricEncoding, MetadataField, MetadataSpec
+from musicvault.preset_api.v1 import (
+    AudioFormat,
+    BasePreset,
+    LyricEmbed,
+    LyricEncoding,
+    MetadataField,
+    MetadataSpec,
+    PresetLoadError,
+)
 
 
 def _make_cfg(tmp_path: Path) -> Config:
@@ -56,15 +64,33 @@ class _DefaultLyricsPreset(BasePreset):
     format = AudioFormat.FLAC
 
 
+class _OverrideFlacPreset(BasePreset):
+    format = AudioFormat.FLAC
+    lyric_embed = LyricEmbed.OVERRIDE
+
+
+class _SeparateFlacPreset(BasePreset):
+    format = AudioFormat.FLAC
+    lyric_embed = LyricEmbed.SEPARATE
+
+
+class _PlainFlacPreset(BasePreset):
+    format = AudioFormat.FLAC
+
+
 class _RecordingMetadata:
-    """记录 metadata.write 参数的 fake。"""
+    """记录 metadata.write 与 write_lyrics 参数的 fake。"""
 
     def __init__(self) -> None:
         self.calls: list[tuple[Path, MetadataSpec]] = []
+        self.lyric_calls: list[tuple[Path, str]] = []
 
     def write(self, audio_file: Path, _: Track, *, metadata: MetadataSpec, cover_timeout: int = 15) -> None:
         del cover_timeout
         self.calls.append((audio_file, metadata))
+
+    def write_lyrics(self, audio_file: Path, lyric_text: str) -> None:
+        self.lyric_calls.append((audio_file, lyric_text))
 
 
 def _process_svc(
@@ -222,6 +248,77 @@ def test_process_skips_lrc_when_encoding_fails(tmp_path: Path, caplog: pytest.Lo
 
     assert not (cfg.media_store_dir / "333" / "333.custom.lrc").exists()
     assert any("歌词编码失败" in r.message for r in caplog.records)
+
+
+def test_multiple_override_presets_same_spec_raises(tmp_path: Path) -> None:
+    """同 spec 下超过一个 OVERRIDE preset → 构造 ProcessUseCase 时报错。"""
+    cfg = _make_cfg(tmp_path)
+    repo = _repository(cfg)
+    presets = {"a": _OverrideFlacPreset(), "b": _OverrideFlacPreset()}
+    with pytest.raises(PresetLoadError, match="OVERRIDE"):
+        _process_svc(cfg, repo, organizer=MagicMock(), presets=presets)
+
+
+def test_override_with_plain_preset_same_spec_is_allowed(tmp_path: Path) -> None:
+    """OVERRIDE 与普通 preset 共享 spec 合法：override 扩展该 spec 内嵌，普通 preset 被动共享。"""
+    cfg = _make_cfg(tmp_path)
+    repo = _repository(cfg)
+    presets = {"a": _OverrideFlacPreset(), "b": _PlainFlacPreset()}
+    _process_svc(cfg, repo, organizer=MagicMock(), presets=presets)
+
+
+def test_process_override_embeds_lyrics_into_canonical(tmp_path: Path) -> None:
+    """OVERRIDE preset 把渲染歌词写入共享 canonical 音频标签（不新建副本）。"""
+    cfg = _make_cfg(tmp_path)
+    cfg.cache_dir.mkdir(parents=True)
+    repo = _repository(cfg)
+    repo.upsert_track(_make_track(333))
+    repo.save_lyrics(333, lyrics_to_json((LyricLine(1000, 0, "hello"),)), 0.0)
+
+    raw = cfg.cache_dir / "333.mp3"
+    raw.write_bytes(b"fake mp3")
+    canonical = cfg.media_store_dir / "333" / "333.flac"
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_bytes(b"fake flac")
+
+    recorder = _RecordingMetadata()
+    organizer = MagicMock()
+    organizer.route_audio.return_value = {(AudioFormat.FLAC, None): canonical}
+    svc = _process_svc(cfg, repo, organizer=organizer, metadata=recorder, presets={"a": _OverrideFlacPreset()})
+    svc.run_process(downloaded=[_downloaded(333, raw)], force=False)
+
+    assert recorder.lyric_calls == [(canonical, "[00:01.000]hello")]
+    # override 不产生独立副本文件
+    assert not (cfg.media_store_dir / "333" / "333.a.flac").exists()
+
+
+def test_process_separate_creates_embedded_copy(tmp_path: Path) -> None:
+    """SEPARATE preset 复制 canonical 为 <tid>.<preset>.<ext> 并写入歌词，不污染共享 canonical。"""
+    cfg = _make_cfg(tmp_path)
+    cfg.cache_dir.mkdir(parents=True)
+    repo = _repository(cfg)
+    repo.upsert_track(_make_track(333))
+    repo.save_lyrics(333, lyrics_to_json((LyricLine(1000, 0, "hello"),)), 0.0)
+
+    raw = cfg.cache_dir / "333.mp3"
+    raw.write_bytes(b"fake mp3")
+    canonical = cfg.media_store_dir / "333" / "333.flac"
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_bytes(b"fake flac")
+
+    recorder = _RecordingMetadata()
+    organizer = MagicMock()
+    organizer.route_audio.return_value = {(AudioFormat.FLAC, None): canonical}
+    svc = _process_svc(cfg, repo, organizer=organizer, metadata=recorder, presets={"sep": _SeparateFlacPreset()})
+    svc.run_process(downloaded=[_downloaded(333, raw)], force=False)
+
+    copy_path = cfg.media_store_dir / "333" / "333.sep.flac"
+    assert copy_path.exists()
+    assert copy_path.read_bytes() == b"fake flac"
+    # 歌词写入独立副本，共享 canonical 不被触碰
+    assert recorder.lyric_calls == [(copy_path, "[00:01.000]hello")]
+    # 副本以 :embedded 变体 spec 注册进状态，target 按 preset.asset_spec 可透明命中
+    assert {a.spec for a in repo.list_media_assets(333)} == {"FLAC", "FLAC:embedded"}
 
 
 def test_filter_pending_uses_preset_param_specs(tmp_path: Path) -> None:

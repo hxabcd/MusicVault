@@ -12,7 +12,7 @@ from pathlib import Path
 from musicvault.domain.models import MediaAsset, Playlist, SourceSnapshot, Track
 from musicvault.domain.operations import OperationStatus
 from musicvault.preset_api.builtins import ArchivePreset, register_builtin_presets
-from musicvault.preset_api.v1 import AudioFormat, PresetRegistry
+from musicvault.preset_api.v1 import AudioFormat, LyricEmbed, PresetRegistry
 from musicvault.target_api.builtins import HardlinkDistributor, register_builtin_targets
 from musicvault.target_api.v1 import TargetContext, TargetRegistry
 
@@ -181,6 +181,41 @@ def test_hardlink_finalize_dry_run_keeps_stale_dirs(tmp_path: Path) -> None:
     distributor = HardlinkDistributor(ArchivePreset(), "archive", library, "未分类")
     distributor.finalize(context)
     assert stale.exists()  # dry-run 不删除快照外目录
+
+
+def test_hardlink_prefers_separate_embedded_copy(tmp_path: Path) -> None:
+    """SEPARATE preset：hardlink 按 preset.asset_spec（FLAC:embedded）命中内嵌副本，target 无感内嵌逻辑。"""
+    media = tmp_path / "media_store"
+    audio_dir = media / "1"
+    audio_dir.mkdir(parents=True)
+    canonical = audio_dir / "1.flac"
+    canonical.write_bytes(b"FLAC")
+    copy = audio_dir / "1.archive.flac"
+    copy.write_bytes(b"FLAC")
+    (audio_dir / "1.archive.lrc").write_bytes(b"LRC")
+    library = tmp_path / "library"
+    library.mkdir()
+
+    class _SeparateArchivePreset(ArchivePreset):
+        lyric_embed = LyricEmbed.SEPARATE
+
+    track = Track(id=1, name="song", artists=[], album="", raw={})
+    snapshot = _snapshot(
+        track,
+        (Playlist(1, "fav", (1,)),),
+        (
+            MediaAsset(track_id=1, asset_type="audio", spec="FLAC", path=canonical, size=4),
+            MediaAsset(track_id=1, asset_type="audio", spec="FLAC:embedded", path=copy, size=4),
+        ),
+    )
+    context = _make_context(snapshot, media)
+    distributor = HardlinkDistributor(_SeparateArchivePreset(), "archive", library, "未分类")
+    distributor.sync_item(track, context)
+
+    assert isinstance(context.target, FakeTarget)
+    assert len(context.target.links) == 2
+    assert context.target.links[0][0] == copy
+    assert context.target.links[0][1] == library / "fav" / "Unknown Artist - song.flac"
 
 
 def test_register_builtin_presets_registers_archive() -> None:

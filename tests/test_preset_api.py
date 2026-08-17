@@ -6,6 +6,7 @@ from musicvault.domain.lyrics import LyricLine
 from musicvault.preset_api.v1 import (
     AudioFormat,
     BasePreset,
+    LyricEmbed,
     LyricEncoding,
     MetadataField,
     MetadataSpec,
@@ -78,8 +79,39 @@ def test_base_preset_defaults():
     assert preset.quality is Quality.HIRES
     assert preset.format is None
     assert preset.lyrics_encoding is LyricEncoding.UTF_8
+
+
+def test_lyric_embed_enum_values():
+    assert LyricEmbed.NONE.value == 0
+    assert LyricEmbed.OVERRIDE.value == 1
+    assert LyricEmbed.SEPARATE.value == 2
+
+
+def test_base_preset_lyric_embed_defaults_none():
+    preset = BasePreset()
+    assert preset.lyric_embed is LyricEmbed.NONE
     assert preset.metadata == MetadataSpec.basic()
     assert preset.build_lyric_line(LyricLine(1000, 0, "hello")) == "[00:01.000]hello"
+
+
+def test_asset_spec_reflects_lyric_embed():
+    class _Plain(BasePreset):
+        format = AudioFormat.FLAC
+        bitrate = "192k"
+
+    # 普通 / OVERRIDE preset：资产 spec 与 audio_spec_key 一致（OVERRIDE 已内嵌 canonical，无需区分）
+    assert _Plain().asset_spec == "FLAC-192k"
+
+    class _Override(_Plain):
+        lyric_embed = LyricEmbed.OVERRIDE
+
+    assert _Override().asset_spec == "FLAC-192k"
+
+    # SEPARATE preset：独立副本以 :embedded 变体 spec 注册，target 按 preset 声明的 spec 透明命中副本
+    class _Separate(_Plain):
+        lyric_embed = LyricEmbed.SEPARATE
+
+    assert _Separate().asset_spec == "FLAC-192k:embedded"
 
 
 def test_base_preset_subclass_override():
